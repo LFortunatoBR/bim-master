@@ -15,7 +15,7 @@ from pathfinding.core.diagonal_movement import DiagonalMovement
 from pathfinding.core.grid import Grid
 from pathfinding.finder.a_star import AStarFinder
 
-# Importação opcional do IfcOpenShell (API nativa se instalada, ou gerador STEP integrado)
+# Importação opcional do IfcOpenShell
 try:
     import ifcopenshell
     import ifcopenshell.api
@@ -30,10 +30,9 @@ from gerador_hidraulica_pdf import gerar_memorial_hidraulico, gerar_lista_materi
 # ==========================================
 # 1. CONFIGURAÇÃO GERAL E TELA DE LOGIN (SECRETS)
 # ==========================================
-st.set_page_config(layout="wide", page_title="BIM Master PRO V13 - Elétrica & Hidrossanitário", page_icon="🏢")
+st.set_page_config(layout="wide", page_title="BIM Master PRO V14 - Elétrica & Hidrossanitário", page_icon="🏢")
 
 def verificar_autenticacao():
-    """Valida a senha cadastrada em st.secrets['app_password'] no Streamlit Cloud."""
     if st.session_state.get("autenticado", False):
         return True
 
@@ -97,7 +96,6 @@ if 'quantitativos_master' not in st.session_state:
 # 2. FUNÇÕES DE ENGENHARIA E BIBLIOTECAS NORMATIVAS EXPANDIDAS
 # ==========================================
 TABELA_AMPACIDADE_NBR5410 = {
-    # Inclui Método A1 (parede isolante), B1 (embutido alvenaria), B2, C (aparente) e 90°C (EPR/XLPE)
     1.5:  {"A1_2": 14.5, "B1_2": 17.5, "B1_3": 15.5, "B2_2": 16.5, "C_2": 19.5, "B1_90": 23.0, "Area_Ext_mm2": 7.1},
     2.5:  {"A1_2": 19.5, "B1_2": 24.0, "B1_3": 21.0, "B2_2": 23.0, "C_2": 27.0, "B1_90": 31.0, "Area_Ext_mm2": 10.2},
     4.0:  {"A1_2": 26.0, "B1_2": 32.0, "B1_3": 28.0, "B2_2": 30.0, "C_2": 36.0, "B1_90": 42.0, "Area_Ext_mm2": 13.8},
@@ -110,14 +108,8 @@ TABELA_AMPACIDADE_NBR5410 = {
 }
 
 ELETRODUTOS_NBR5410 = {
-    16: 132.7,
-    20: 226.9,
-    25: 380.1,
-    32: 660.5,
-    40: 1017.8,
-    50: 1661.9,
-    60: 2463.0,
-    75: 3848.4
+    16: 132.7, 20: 226.9, 25: 380.1, 32: 660.5,
+    40: 1017.8, 50: 1661.9, 60: 2463.0, 75: 3848.4
 }
 
 DISJUNTORES_PADRAO_DIN = [10, 16, 20, 25, 32, 40, 50, 63, 70, 80, 100, 125]
@@ -134,7 +126,6 @@ COMPRIMENTO_EQUIVALENTE_CONEXOES = {
 }
 
 def obter_fca(num_circuitos):
-    """Fator de Correção de Agrupamento (Tabela 42 - NBR 5410) vindo do V12."""
     if num_circuitos <= 1: return 1.00
     elif num_circuitos == 2: return 0.80
     elif num_circuitos == 3: return 0.70
@@ -143,7 +134,6 @@ def obter_fca(num_circuitos):
     else: return 0.50
 
 def calcular_icc(tensao, bitola, distancia, material="Cobre"):
-    """Cálculo de Corrente de Curto-Circuito Presumida (Icc em Amperes) vindo do V12."""
     if not bitola or bitola == 0 or pd.isna(bitola): return 0.0
     rho = 0.021 if material == "Cobre" else 0.035
     r_cabo = rho * (2.0 * max(1.0, float(distancia))) / float(bitola)
@@ -152,7 +142,6 @@ def calcular_icc(tensao, bitola, distancia, material="Cobre"):
     return round(icc, 1)
 
 def calcular_disjuntor(corrente_projeto, bitola_capacidade):
-    """Seleção de disjuntor coordenado com a capacidade do cabo (V12 + NBR 5410)."""
     for d in DISJUNTORES_PADRAO_DIN:
         if d >= corrente_projeto and d <= bitola_capacidade:
             return d
@@ -161,10 +150,24 @@ def calcular_disjuntor(corrente_projeto, bitola_capacidade):
             return d
     return 125
 
+def calcular_fator_demanda_nbr5410(pot_total_w, qtd_tues=0):
+    """Validação Avançada 2: Fator de Demanda Concessionária / NBR 5410."""
+    kw = pot_total_w / 1000.0
+    if kw <= 1.0: fd_geral = 1.00
+    elif kw <= 3.0: fd_geral = 0.85
+    elif kw <= 6.0: fd_geral = 0.75
+    elif kw <= 10.0: fd_geral = 0.65
+    else: fd_geral = 0.55
+    # TUEs (chuveiros/ar-condicionado) aplicam fator de simultaneidade decrescente
+    if qtd_tues == 1: fd_tue = 1.00
+    elif qtd_tues == 2: fd_tue = 0.85
+    elif qtd_tues <= 4: fd_tue = 0.75
+    else: fd_tue = 0.65
+    return fd_geral, fd_tue
+
 def inicializar_bibliotecas_internas():
     if 'bib_hidro' not in st.session_state:
         st.session_state.bib_hidro = pd.DataFrame([
-            # ---- APARELHOS SANITÁRIOS E ELETRODOMÉSTICOS (ÁGUA + ESGOTO) ----
             {"Equipamento": "Bacia Sanitária (Caixa Acoplada) - Popular", "Vazao_Ls": 0.15, "Peso": 0.3, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
             {"Equipamento": "Bacia Sanitária (Caixa Acoplada) - Alto Padrão", "Vazao_Ls": 0.15, "Peso": 0.3, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
             {"Equipamento": "Bacia Sanitária (Válvula de Descarga)", "Vazao_Ls": 1.70, "Peso": 32.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 15, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
@@ -183,75 +186,20 @@ def inicializar_bibliotecas_internas():
             {"Equipamento": "Pia de Cozinha (Residencial)", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Pia de Cozinha - Cuba Simples", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Pia de Cozinha - Cuba Dupla Gourmet", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 15, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
-            {"Equipamento": "Pia de Cozinha (Industrial/Restaurante)", "Vazao_Ls": 0.50, "Peso": 1.5, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 15, "UHC": 4, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Máquina de Lavar Roupa", "Vazao_Ls": 0.30, "Peso": 1.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Máquina de Lavar Louça", "Vazao_Ls": 0.30, "Peso": 1.0, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 10, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 40},
-            {"Equipamento": "Máquina de Lavar Louça (8 Serviços)", "Vazao_Ls": 0.30, "Peso": 1.0, "Agua_mm": 20, "AQ_mm": 22, "Pressao_kpa": 10, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 40},
-            {"Equipamento": "Máquina de Lavar Louça (14 Serviços Premium)", "Vazao_Ls": 0.30, "Peso": 1.0, "Agua_mm": 20, "AQ_mm": 22, "Pressao_kpa": 10, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Tanque de Lavar Roupa", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 40, "Vent_mm": 40},
-            {"Equipamento": "Tanque de Lavar Roupa (Plástico)", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 40, "Vent_mm": 40},
-            {"Equipamento": "Tanque de Lavar Roupa (Inox/Apoio Luxo)", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 3, "Esgoto_mm": 40, "Vent_mm": 40},
             {"Equipamento": "Ducha Higiênica", "Vazao_Ls": 0.10, "Peso": 0.1, "Agua_mm": 20, "AQ_mm": 22, "Pressao_kpa": 10, "UHC": 1, "Esgoto_mm": 40, "Vent_mm": 0},
             {"Equipamento": "Bebedouro", "Vazao_Ls": 0.10, "Peso": 0.1, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 0.5, "Esgoto_mm": 40, "Vent_mm": 0},
             {"Equipamento": "Filtro/Purificador de Parede", "Vazao_Ls": 0.05, "Peso": 0.1, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 10, "UHC": 1, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Geladeira Side-by-Side (Filtro/Gelo)", "Vazao_Ls": 0.05, "Peso": 0.1, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 15, "UHC": 1, "Esgoto_mm": 0, "Vent_mm": 0},
             {"Equipamento": "Mictório Cerâmico (c/ válvula)", "Vazao_Ls": 0.50, "Peso": 2.8, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 15, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 40},
-
-            # ---- INFRAESTRUTURA DE ABASTECIMENTO (EXCLUSIVO ÁGUA) ----
             {"Equipamento": "Caixa d'Água (Reservatório Superior)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Cisterna (Reservatório Inferior)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
             {"Equipamento": "Bomba de Recalque", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 200, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
             {"Equipamento": "Bomba Pressurizadora Residencial", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 150, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Alimentação Rua (Concessionária)", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 150, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
             {"Equipamento": "Boiler (Aquecimento de Água Central)", "Vazao_Ls": 0.30, "Peso": 0.5, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 20, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
             {"Equipamento": "Aquecedor de Passagem a Gás", "Vazao_Ls": 0.30, "Peso": 0.5, "Agua_mm": 25, "AQ_mm": 22, "Pressao_kpa": 20, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-
-            # ---- SAÍDAS E REGISTROS DE ÁGUA ----
-            {"Equipamento": "Saída de Água Fria 32mm", "Vazao_Ls": 0.50, "Peso": 1.2, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Saída de Água Quente 22mm", "Vazao_Ls": 0.25, "Peso": 0.7, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Gaveta 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Gaveta 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Gaveta 32mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Gaveta 25mm (3/4)", "Vazao_Ls": 0.60, "Peso": 0.6, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Gaveta 22mm (1/2)", "Vazao_Ls": 0.30, "Peso": 0.3, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Pressão 32mm (1)", "Vazao_Ls": 0.00, "Peso": 9.5, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Pressão 25mm (3/4)", "Vazao_Ls": 0.00, "Peso": 7.4, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Registro de Pressão 22mm (1/2)", "Vazao_Ls": 0.00, "Peso": 5.4, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Válvula de Retenção 25mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Válvula de Retenção 32mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-
-            # ---- CONEXÕES DE ÁGUA ----
-            {"Equipamento": "Curva 90° 22mm", "Vazao_Ls": 0.00, "Peso": 0.4, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Curva 90° 25mm", "Vazao_Ls": 0.00, "Peso": 0.5, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Curva 90° 32mm", "Vazao_Ls": 0.00, "Peso": 0.6, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 90° 22mm", "Vazao_Ls": 0.00, "Peso": 1.1, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 90° 25mm", "Vazao_Ls": 0.00, "Peso": 1.2, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 90° 32mm", "Vazao_Ls": 0.00, "Peso": 1.5, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 45° 22mm", "Vazao_Ls": 0.00, "Peso": 0.4, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 45° 25mm", "Vazao_Ls": 0.00, "Peso": 0.5, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Joelho 45° 32mm", "Vazao_Ls": 0.00, "Peso": 0.7, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Tê 90° (Passagem Direta) 22mm", "Vazao_Ls": 0.00, "Peso": 0.7, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Tê 90° (Passagem Direta) 25mm", "Vazao_Ls": 0.00, "Peso": 0.8, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Tê 90° (Passagem Direta) 32mm", "Vazao_Ls": 0.00, "Peso": 0.9, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Junção Y 22mm", "Vazao_Ls": 0.00, "Peso": 0.5, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Junção Y 25mm", "Vazao_Ls": 0.00, "Peso": 0.6, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-            {"Equipamento": "Junção Y 32mm", "Vazao_Ls": 0.00, "Peso": 0.8, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-
-            # ---- ELEMENTOS E CONEXÕES DE ESGOTO ----
-            {"Equipamento": "Caixa Sifonada 100x100x50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Caixa Sifonada 150x150x50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
             {"Equipamento": "Caixa de Gordura", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 75, "Vent_mm": 50},
-            {"Equipamento": "Caixa de Inspeção", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
-            {"Equipamento": "Caixa de Passagem", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
-            {"Equipamento": "Ralo Sifonado", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 100, "Vent_mm": 40},
-            {"Equipamento": "Ralo Seco (Chuveiro)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 0},
-            {"Equipamento": "Ralo Linear Inox (Box Banheiro)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 0},
-            {"Equipamento": "Ralo de Varanda/Sacada", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 0},
-            {"Equipamento": "Ponto de Esgoto Geral", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
-            {"Equipamento": "Ponto de Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
-            {"Equipamento": "Ponto de Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 3, "Esgoto_mm": 75, "Vent_mm": 50},
-            {"Equipamento": "Ponto de Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 50, "Vent_mm": 40},
-            {"Equipamento": "Ponto de Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 1, "Esgoto_mm": 40, "Vent_mm": 40},
             {"Equipamento": "Tubo de Queda (TQ - Esgoto Primário)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 75},
             {"Equipamento": "Coluna de Ventilação", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 50},
             {"Equipamento": "Ponto de Gás (Fogão/Aquecedor)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 2.8, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
@@ -267,29 +215,12 @@ def inicializar_bibliotecas_internas():
             {"Equipamento": "Ar-Condicionado 12000 BTU", "Potência (W)": 1200, "Tensão (V)": 220, "Fator de Potência": 0.95, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
             {"Equipamento": "Fritadeira Elétrica (Air Fryer)", "Potência (W)": 1500, "Tensão (V)": 127, "Fator de Potência": 1.0, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
             {"Equipamento": "Computador Desktop", "Potência (W)": 500, "Tensão (V)": 127, "Fator de Potência": 0.9, "Tipo": "TUG", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
-            {"Equipamento": "Lâmpada LED 9W", "Potência (W)": 9, "Tensão (V)": 127, "Fator de Potência": 1.0, "Tipo": "Iluminação", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
-            {"Equipamento": "Refletor LED Área Externa 50W", "Potência (W)": 50, "Tensão (V)": 127, "Fator de Potência": 1.0, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Televisão LED/OLED > 42 polegadas", "Potência (W)": 200, "Tensão (V)": 127, "Fator de Potência": 0.95, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
-            {"Equipamento": "Chuveiro Elétrico 5500W", "Potência (W)": 5500, "Tensão (V)": 220, "Fator de Potência": 1.0, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Ar-Condicionado 9000 BTU", "Potência (W)": 900, "Tensão (V)": 220, "Fator de Potência": 0.95, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
-            {"Equipamento": "Ar-Condicionado 18000 BTU", "Potência (W)": 1800, "Tensão (V)": 220, "Fator de Potência": 0.95, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
-            {"Equipamento": "Ar-Condicionado 32000 BTU", "Potência (W)": 3500, "Tensão (V)": 220, "Fator de Potência": 0.95, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
             {"Equipamento": "Microondas", "Potência (W)": 1500, "Tensão (V)": 127, "Fator de Potência": 0.95, "Tipo": "TUG", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
             {"Equipamento": "Geladeira Frost Free", "Potência (W)": 400, "Tensão (V)": 127, "Fator de Potência": 0.85, "Tipo": "TUG", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
-            {"Equipamento": "Freezer Vertical Inverter", "Potência (W)": 350, "Tensão (V)": 127, "Fator de Potência": 0.92, "Tipo": "TUG", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
             {"Equipamento": "Forno Elétrico de Embutir", "Potência (W)": 3500, "Tensão (V)": 220, "Fator de Potência": 1.0, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Máquina de Lavar Louça", "Potência (W)": 2500, "Tensão (V)": 220, "Fator de Potência": 0.9, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Secadora de Roupas", "Potência (W)": 3500, "Tensão (V)": 220, "Fator de Potência": 1.0, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Motobomba de Piscina 1 CV", "Potência (W)": 746, "Tensão (V)": 127, "Fator de Potência": 0.75, "Tipo": "Motores", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Máquina de Café Espresso Pro", "Potência (W)": 1450, "Tensão (V)": 127, "Fator de Potência": 1.0, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
             {"Equipamento": "Carregador Veículo Elétrico (Wallbox) 7kW", "Potência (W)": 7000, "Tensão (V)": 220, "Fator de Potência": 1.0, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Trilho magnético (1m)", "Potência (W)": 60, "Tensão (V)": 127, "Fator de Potência": 0.9, "Tipo": "Iluminação", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
-            {"Equipamento": "Fita LED Perfil Embutido (5m)", "Potência (W)": 45, "Tensão (V)": 127, "Fator de Potência": 0.92, "Tipo": "Iluminação", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
-            {"Equipamento": "Espelho Automatizado (Led + Desembaçador)", "Potência (W)": 100, "Tensão (V)": 127, "Fator de Potência": 0.7, "Tipo": "Iluminação", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Toalheiro Térmico", "Potência (W)": 150, "Tensão (V)": 127, "Fator de Potência": 1.0, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
             {"Equipamento": "Bomba de Pressurização de Água", "Potência (W)": 750, "Tensão (V)": 127, "Fator de Potência": 0.75, "Tipo": "Dedicado", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
             {"Equipamento": "Lava e Seca (Roupas)", "Potência (W)": 750, "Tensão (V)": 127, "Fator de Potência": 0.7, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
-            {"Equipamento": "Central de Automação_Hub_Houter", "Potência (W)": 80, "Tensão (V)": 127, "Fator de Potência": 0.5, "Tipo": "Dedicado", "Curva Disjuntor": "B", "Uso de DR": "Não"}
         ])
 
     if 'bib_gas_avac' not in st.session_state:
@@ -335,7 +266,6 @@ def importar_projeto(arquivo_json):
         st.session_state.bib_gas_avac = pd.DataFrame(dados["bib_gas_avac"])
 
 def gerar_arquivo_excel_completo():
-    """Exporta todas as abas de cálculo e quantitativos para Excel (.xlsx) como no V12."""
     buffer = io.BytesIO()
     try:
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
@@ -357,7 +287,7 @@ def gerar_arquivo_excel_completo():
             return csv_bytes, "Projeto_Executivo_MEP.csv", "text/csv"
 
 # ==========================================
-# 3. MOTOR GEOMÉTRICO, ESTRUTURAL E DIMENSIONAMENTO NORMATIVO
+# 3. MOTOR GEOMÉTRICO E DIMENSIONAMENTO NORMATIVO
 # ==========================================
 def escalar_coord(val, fator=10): return int(round(val * fator))
 def desescalar_coord(val, fator=10): return val / fator
@@ -420,7 +350,6 @@ def checar_clash_detection(linhas_eletrica, linhas_hidro, tolerancia_metros=0.15
                         break
     return colisoes
 
-# --- DIMENSIONAMENTO NORMATIVO HIDRÁULICO (NBR 5626 & NBR 8160) ---
 def dimensionar_tubo_agua(soma_pesos):
     if soma_pesos <= 0: return 20
     vazao_ls = 0.30 * math.sqrt(soma_pesos)
@@ -461,23 +390,17 @@ def dimensionar_tubo_esgoto(soma_uhc):
     elif soma_uhc <= 20: return 75
     else: return 100
 
-# --- DIMENSIONAMENTO NORMATIVO ELÉTRICO (NBR 5410 + V12) ---
 def dimensionar_circuito_nbr5410(potencia_w, tensao_v, fp=0.95, metodo="B1", fca=0.80, fct=1.00, dist_m=15.0, tipo_circ="TUG", material="Cobre", isolacao="70°C (PVC)"):
     corrente_ib = potencia_w / (tensao_v * fp) if (tensao_v * fp) > 0 else 0.0
     corrente_corrigida = corrente_ib / (fca * fct) if (fca * fct) > 0 else corrente_ib
     secao_minima = 1.5 if str(tipo_circ).strip() == "Iluminação" else 2.5
     n_cond_carregados = 2 if tensao_v in [127, 220] else 3
 
-    if "90" in isolacao:
-        chave_metodo = "B1_90"
-    elif metodo == "A1":
-        chave_metodo = "A1_2"
-    elif metodo == "B1":
-        chave_metodo = f"B1_{n_cond_carregados}"
-    elif metodo == "B2":
-        chave_metodo = "B2_2"
-    else:
-        chave_metodo = "C_2"
+    if "90" in isolacao: chave_metodo = "B1_90"
+    elif metodo == "A1": chave_metodo = "A1_2"
+    elif metodo == "B1": chave_metodo = f"B1_{n_cond_carregados}"
+    elif metodo == "B2": chave_metodo = "B2_2"
+    else: chave_metodo = "C_2"
 
     bitola_escolhida = 50.0
     iz_escolhido = 151.0
@@ -485,8 +408,7 @@ def dimensionar_circuito_nbr5410(potencia_w, tensao_v, fp=0.95, metodo="B1", fca
     rho = 0.0172 if material == "Cobre" else 0.0282
 
     for bitola, dados in sorted(TABELA_AMPACIDADE_NBR5410.items()):
-        if bitola < secao_minima:
-            continue
+        if bitola < secao_minima: continue
         iz_tabela = dados.get(chave_metodo, dados["B1_2"])
         if iz_tabela >= corrente_corrigida:
             dv_volts = 2.0 * rho * dist_m * corrente_ib / bitola
@@ -520,21 +442,14 @@ def dimensionar_circuito_nbr5410(potencia_w, tensao_v, fp=0.95, metodo="B1", fca
             break
 
     icc_amp = calcular_icc(tensao_v, bitola_escolhida, dist_m, material)
-
     return {
-        "Corrente_Ib": round(corrente_ib, 2),
-        "Corrente_Corr": round(corrente_corrigida, 2),
-        "Bitola": bitola_escolhida,
-        "Queda_Tensao_Pct": round(queda_tensao_pct, 2),
-        "Disjuntor": disjuntor_in,
-        "Icc_A": icc_amp,
-        "Eletroduto_mm": eletroduto_mm,
-        "Ocupacao_Pct": round(ocupacao_pct, 1)
+        "Corrente_Ib": round(corrente_ib, 2), "Corrente_Corr": round(corrente_corrigida, 2),
+        "Bitola": bitola_escolhida, "Queda_Tensao_Pct": round(queda_tensao_pct, 2),
+        "Disjuntor": disjuntor_in, "Icc_A": icc_amp, "Eletroduto_mm": eletroduto_mm, "Ocupacao_Pct": round(ocupacao_pct, 1)
     }
 
 def balancear_fases_automatico(df_circuitos):
-    if df_circuitos.empty:
-        return df_circuitos
+    if df_circuitos.empty: return df_circuitos
     cargas_fases = {"R": 0.0, "S": 0.0, "T": 0.0}
     indices_ordenados = df_circuitos.sort_values(by="Potência Total (W)", ascending=False).index
     for idx in indices_ordenados:
@@ -552,52 +467,37 @@ def balancear_fases_automatico(df_circuitos):
             cargas_fases[fase_min] += pot
     return df_circuitos
 
-# --- ROTEAMENTO 3D COM EVASÃO DE VIGAS, PILARES, ESQUADRIAS, SHAFT E INTERRUPTORES 3W/4W ---
 def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_direito, h_viga=0.40):
-    if not elementos_arq or len(linha_3d) < 2:
-        return linha_3d
-
+    if not elementos_arq or len(linha_3d) < 2: return linha_3d
     nova_linha = [linha_3d[0]]
     for i in range(len(linha_3d) - 1):
-        p_ini = linha_3d[i]
-        p_fim = linha_3d[i + 1]
+        p_ini, p_fim = linha_3d[i], linha_3d[i + 1]
         z_seg = p_fim[2]
         desviou = False
-
         for elem in elementos_arq:
-            if abs(elem.get('z_base', 0) - z_base) > 0.5:
-                continue
+            if abs(elem.get('z_base', 0) - z_base) > 0.5: continue
             ex, ey = elem['x'], elem['y']
-            raio_influencia = elem.get('Largura', 1.0) / 2.0 + 0.15
-
-            if dist_2d(p_ini, p_fim) > 0.05 and (dist_2d(p_ini, (ex, ey)) <= raio_influencia or dist_2d(p_fim, (ex, ey)) <= raio_influencia):
+            raio_inf = elem.get('Largura', 1.0) / 2.0 + 0.15
+            if dist_2d(p_ini, p_fim) > 0.05 and (dist_2d(p_ini, (ex, ey)) <= raio_inf or dist_2d(p_fim, (ex, ey)) <= raio_inf):
                 if elem['Tipo'] == 'Pilar/Viga' and z_seg >= (z_base + pe_direito - h_viga):
                     z_sob_viga = z_base + pe_direito - h_viga - 0.05
-                    nova_linha.append((p_ini[0], p_ini[1], z_sob_viga))
-                    nova_linha.append((p_fim[0], p_fim[1], z_sob_viga))
-                    nova_linha.append(p_fim)
+                    nova_linha.extend([(p_ini[0], p_ini[1], z_sob_viga), (p_fim[0], p_fim[1], z_sob_viga), p_fim])
                     desviou = True
                     break
                 elif elem['Tipo'] == 'Esquadria':
                     peitoril = elem.get('Peitoril', 0.0)
                     altura_esq = elem.get('Altura', 2.10)
-                    z_min_vao = z_base + peitoril
-                    z_max_vao = z_base + peitoril + altura_esq
-                    if z_min_vao <= z_seg <= z_max_vao:
-                        z_desvio = (z_min_vao - 0.15) if peitoril >= 0.5 else min(z_base + pe_direito - 0.10, z_max_vao + 0.15)
-                        nova_linha.append((p_ini[0], p_ini[1], z_desvio))
-                        nova_linha.append((p_fim[0], p_fim[1], z_desvio))
-                        nova_linha.append(p_fim)
+                    if (z_base + peitoril) <= z_seg <= (z_base + peitoril + altura_esq):
+                        z_desvio = (z_base + peitoril - 0.15) if peitoril >= 0.5 else min(z_base + pe_direito - 0.10, z_base + peitoril + altura_esq + 0.15)
+                        nova_linha.extend([(p_ini[0], p_ini[1], z_desvio), (p_fim[0], p_fim[1], z_desvio), p_fim])
                         desviou = True
                         break
-        if not desviou:
-            nova_linha.append(p_fim)
+        if not desviou: nova_linha.append(p_fim)
     return nova_linha
 
 def rotear_hidro(df_bh, ctx):
     linhas_processadas = []
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-    
     for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
         x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
         x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
@@ -610,10 +510,7 @@ def rotear_hidro(df_bh, ctx):
             px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
             bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
 
-    h_af = ctx.get('h_agua_fria', 2.2)
-    h_aq = ctx.get('h_agua_quente', 1.1)
-    h_viga = ctx.get('altura_viga', 0.40)
-
+    h_af, h_aq, h_viga = ctx.get('h_agua_fria', 2.2), ctx.get('h_agua_quente', 1.1), ctx.get('altura_viga', 0.40)
     prumadas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Água Fria']
     prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
     caixas_dagua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
@@ -625,20 +522,13 @@ def rotear_hidro(df_bh, ctx):
         cx_sup = caixas_dagua[0]
         z_barrilete = cx_sup['z_base'] + 0.20
         for prum in prumadas_af:
-            pts_barrilete = [
-                (cx_sup['x'], cx_sup['y'], cx_sup['z_base'] + ctx.get('altura_caixa', 1.5)),
-                (cx_sup['x'], cx_sup['y'], z_barrilete),
-                (prum['x'], cx_sup['y'], z_barrilete),
-                (prum['x'], prum['y'], z_barrilete),
-                (prum['x'], prum['y'], 0.0)
-            ]
+            pts_barrilete = [(cx_sup['x'], cx_sup['y'], cx_sup['z_base'] + ctx.get('altura_caixa', 1.5)), (cx_sup['x'], cx_sup['y'], z_barrilete), (prum['x'], cx_sup['y'], z_barrilete), (prum['x'], prum['y'], z_barrilete), (prum['x'], prum['y'], 0.0)]
             linhas_processadas.append({'pontos': pts_barrilete, 'cor': '#0044cc', 'tipo': 'Barrilete / Coluna AF', 'diametro': 50})
 
     if prumadas_af:
         prum_af = prumadas_af[0]
         paf_x, paf_y = escalar_coord(prum_af['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(prum_af['y'] - ctx['min_y'] + ctx['offset'])
         liberar_caixa(matriz, paf_x, paf_y, ctx['grid_w'], ctx['grid_h'])
-        
         soma_pesos = 0.0
         for ap in df_bh:
             if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
@@ -646,53 +536,32 @@ def rotear_hidro(df_bh, ctx):
                 peso_ap = float(st.session_state.bib_hidro.loc[filtro_eq, 'Peso'].values[0])
                 soma_pesos += peso_ap
                 diametro_calculado = dimensionar_tubo_agua(soma_pesos)
-                
                 ap_x, ap_y = escalar_coord(ap['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(ap['y'] - ctx['min_y'] + ctx['offset'])
                 liberar_caixa(matriz, ap_x, ap_y, ctx['grid_w'], ctx['grid_h'])
-                
                 grid = Grid(matrix=matriz)
                 finder = AStarFinder(diagonal_movement=DiagonalMovement.never)
                 caminho_2d, _ = finder.find_path(grid.node(ap_x, ap_y), grid.node(paf_x, paf_y), grid)
-                
                 if caminho_2d:
-                    linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6))]
-                    linha_3d.append((ap['x'], ap['y'], ap['z_base'] + h_af))
-                    for p in caminho_2d:
-                        linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_af))
+                    linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6)), (ap['x'], ap['y'], ap['z_base'] + h_af)]
+                    for p in caminho_2d: linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_af))
                     linha_3d.append((prum_af['x'], prum_af['y'], ap['z_base'] + h_af))
                     linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
-                    linhas_processadas.append({
-                        'pontos': linha_3d, 'cor': 'blue', 'tipo': 'Água Fria',
-                        'diametro': diametro_calculado, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
-                    })
+                    linhas_processadas.append({'pontos': linha_3d, 'cor': 'blue', 'tipo': 'Água Fria', 'diametro': diametro_calculado, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']})
 
                     if ap['Equipamento'] in equips_aq_validos:
-                        linha_aq = [(ap['x'] + 0.10, ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6))]
-                        linha_aq.append((ap['x'] + 0.10, ap['y'], ap['z_base'] + h_aq))
-                        for p in caminho_2d:
-                            linha_aq.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'] + 0.08, desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_aq))
+                        linha_aq = [(ap['x'] + 0.10, ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6)), (ap['x'] + 0.10, ap['y'], ap['z_base'] + h_aq)]
+                        for p in caminho_2d: linha_aq.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'] + 0.08, desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_aq))
                         linha_aq.append((prum_af['x'] + 0.08, prum_af['y'], ap['z_base'] + h_aq))
                         linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
-                        linhas_processadas.append({
-                            'pontos': linha_aq, 'cor': 'red', 'tipo': 'Água Quente',
-                            'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
-                        })
+                        linhas_processadas.append({'pontos': linha_aq, 'cor': 'red', 'tipo': 'Água Quente', 'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']})
 
     if prumadas_esg:
         prum_esg = prumadas_esg[0]
         pe_x, pe_y = escalar_coord(prum_esg['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(prum_esg['y'] - ctx['min_y'] + ctx['offset'])
         liberar_caixa(matriz, pe_x, pe_y, ctx['grid_w'], ctx['grid_h'])
-        
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
-        linhas_processadas.append({
-            'pontos': [(prum_esg['x'], prum_esg['y'], z_topo_vent), (prum_esg['x'], prum_esg['y'], 0.0)],
-            'cor': '#5c3a21', 'tipo': 'Tubo de Queda (TQ)', 'diametro': 100
-        })
-        linhas_processadas.append({
-            'pontos': [(prum_esg['x'] + 0.15, prum_esg['y'], z_topo_vent), (prum_esg['x'] + 0.15, prum_esg['y'], 0.0)],
-            'cor': '#2ca02c', 'tipo': 'Coluna de Ventilação', 'diametro': 50
-        })
-
+        linhas_processadas.append({'pontos': [(prum_esg['x'], prum_esg['y'], z_topo_vent), (prum_esg['x'], prum_esg['y'], 0.0)], 'cor': '#5c3a21', 'tipo': 'Tubo de Queda (TQ)', 'diametro': 100})
+        linhas_processadas.append({'pontos': [(prum_esg['x'] + 0.15, prum_esg['y'], z_topo_vent), (prum_esg['x'] + 0.15, prum_esg['y'], 0.0)], 'cor': '#2ca02c', 'tipo': 'Coluna de Ventilação', 'diametro': 50})
         soma_uhc = 0.0
         for ap in df_bh:
             if ap['Tipo_BIM'] == 'Aparelho Hidráulico':
@@ -701,49 +570,29 @@ def rotear_hidro(df_bh, ctx):
                 uhc_ap = float(st.session_state.bib_hidro.loc[filtro_eq, 'UHC'].values[0])
                 esg_mm_ap = int(st.session_state.bib_hidro.loc[filtro_eq, 'Esgoto_mm'].values[0])
                 if esg_mm_ap <= 0: continue
-
                 soma_uhc += uhc_ap
                 diam_esg = max(esg_mm_ap, dimensionar_tubo_esgoto(soma_uhc))
                 declividade = 0.01 if diam_esg >= 100 else 0.02
-
                 ap_x, ap_y = escalar_coord(ap['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(ap['y'] - ctx['min_y'] + ctx['offset'])
                 liberar_caixa(matriz, ap_x, ap_y, ctx['grid_w'], ctx['grid_h'])
-                
                 grid = Grid(matrix=matriz)
                 finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
                 caminho_2d, _ = finder.find_path(grid.node(ap_x, ap_y), grid.node(pe_x, pe_y), grid)
-                
                 if caminho_2d:
                     z_inicio_ramal = ap['z_base'] - 0.15
                     linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.1)), (ap['x'], ap['y'], z_inicio_ramal)]
-                    dist_acum = 0.0
-                    pt_ant = (ap['x'], ap['y'])
+                    dist_acum, pt_ant = 0.0, (ap['x'], ap['y'])
                     for p in caminho_2d:
-                        px_real = desescalar_coord(p.x) + ctx['min_x'] - ctx['offset']
-                        py_real = desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']
+                        px_real, py_real = desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']
                         dist_acum += dist_2d(pt_ant, (px_real, py_real))
-                        z_com_caimento = z_inicio_ramal - (dist_acum * declividade)
-                        linha_3d.append((px_real, py_real, z_com_caimento))
+                        linha_3d.append((px_real, py_real, z_inicio_ramal - (dist_acum * declividade)))
                         pt_ant = (px_real, py_real)
-                    z_chegada_tq = z_inicio_ramal - (dist_acum * declividade)
-                    linha_3d.append((prum_esg['x'], prum_esg['y'], z_chegada_tq))
-                    linhas_processadas.append({
-                        'pontos': linha_3d, 'cor': 'brown', 'tipo': 'Esgoto',
-                        'diametro': diam_esg, 'declividade_pct': declividade * 100,
-                        'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
-                    })
-                    
+                    linha_3d.append((prum_esg['x'], prum_esg['y'], z_inicio_ramal - (dist_acum * declividade)))
+                    linhas_processadas.append({'pontos': linha_3d, 'cor': 'brown', 'tipo': 'Esgoto', 'diametro': diam_esg, 'declividade_pct': declividade * 100, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']})
     return linhas_processadas
 
 def rotear_eletrica(df_be, ctx, evitar_linhas=None):
-    """
-    Roteamento Elétrico unificando:
-    - Evasão de vigas, pilares, vãos de esquadrias e tubulações hidráulicas
-    - Lógica de Shaft Vertical entre andares (V12)
-    - Lógica de Interruptores Simples, Paralelos (Three-Way 2R) e Intermediários (Four-Way 4R) (V12)
-    """
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-    
     for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
         x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
         x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
@@ -769,8 +618,7 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
 
     linhas_processadas = []
     qg = next((b for b in df_be if b['Tipo_BIM'] == 'Quadro Geral'), None)
-    h_viga = ctx.get('altura_viga', 0.40)
-    usar_shaft = ctx.get('incluir_shaft', True)
+    h_viga, usar_shaft = ctx.get('altura_viga', 0.40), ctx.get('incluir_shaft', True)
 
     def achar_caminho(origem, destino, cor, fios, id_ref=""):
         ox, oy = escalar_coord(origem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(origem['y'] - ctx['min_y'] + ctx['offset'])
@@ -784,109 +632,77 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
             z_origem_teto = origem['z_base'] + origem.get('pe_direito', 3.0)
             z_destino_teto = destino['z_base'] + destino.get('pe_direito', 3.0)
             linha_3d = [(origem['x'], origem['y'], origem['z_base'] + origem['z_relativo'])]
-
-            # Lógica de Shaft Vertical entre andares (V12)
             if usar_shaft and abs(origem['z_base'] - destino['z_base']) > 0.1:
                 linha_3d.append((origem['x'], origem['y'], z_origem_teto))
-                for p in caminho_2d:
-                    linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_origem_teto))
-                linha_3d.append((destino['x'], destino['y'], z_origem_teto))
-                linha_3d.append((destino['x'], destino['y'], z_destino_teto))
+                for p in caminho_2d: linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_origem_teto))
+                linha_3d.extend([(destino['x'], destino['y'], z_origem_teto), (destino['x'], destino['y'], z_destino_teto)])
             else:
                 z_nav = max(z_origem_teto, z_destino_teto)
                 linha_3d.append((origem['x'], origem['y'], z_nav))
-                for p in caminho_2d:
-                    linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_nav))
+                for p in caminho_2d: linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_nav))
                 linha_3d.append((destino['x'], destino['y'], z_nav))
-
             linha_3d.append((destino['x'], destino['y'], destino['z_base'] + destino['z_relativo']))
             linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, origem['z_base'], origem.get('pe_direito', 3.0), h_viga)
-            linhas_processadas.append({
-                'pontos': linha_3d, 'cor': cor, 'fios': fios,
-                'id_origem': id_ref, 'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2)
-            })
+            linhas_processadas.append({'pontos': linha_3d, 'cor': cor, 'fios': fios, 'id_origem': id_ref, 'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2)})
 
     if qg:
         luminarias = {b['ID_CAD']: b for b in df_be if b['Tipo_BIM'] == 'Luminária'}
         caixas = {b['ID_CAD']: b for b in df_be if 'Caixa' in b['Tipo_BIM']}
         controle_lum = {lum_id: [] for lum_id in luminarias.keys()}
-
         for cx_id, cx_dados in caixas.items():
-            if cx_dados.get('Qtd_Tomadas', 0) > 0:
-                achar_caminho(cx_dados, qg, 'yellow' if evitar_linhas else 'green', 'F N T', cx_id)
+            if cx_dados.get('Qtd_Tomadas', 0) > 0: achar_caminho(cx_dados, qg, 'yellow' if evitar_linhas else 'green', 'F N T', cx_id)
             if cx_dados.get('Qtd_Interruptores', 0) > 0 and cx_dados.get('Luminarias_Controladas'):
-                lums = [l.strip() for l in str(cx_dados['Luminarias_Controladas']).split(',') if l.strip()]
-                for l in lums:
-                    if l in controle_lum:
-                        controle_lum[l].append(cx_id)
+                for l in [l.strip() for l in str(cx_dados['Luminarias_Controladas']).split(',') if l.strip()]:
+                    if l in controle_lum: controle_lum[l].append(cx_id)
 
-        # Roteamento de Luminárias + Automação Three-Way (2R) e Four-Way (4R) do V12
         for lum_id, lum in luminarias.items():
             achar_caminho(lum, qg, 'cyan', 'N T', lum_id)
             caixas_comando = controle_lum.get(lum_id, [])
-
             if len(caixas_comando) == 1:
-                cx = caixas[caixas_comando[0]]
-                achar_caminho(cx, lum, 'orange', 'F R', cx['ID_CAD'])
+                achar_caminho(caixas[caixas_comando[0]], lum, 'orange', 'F R', caixas_comando[0])
             elif len(caixas_comando) == 2:
                 cx1, cx2 = caixas[caixas_comando[0]], caixas[caixas_comando[1]]
                 achar_caminho(cx1, qg, 'orange', 'F', cx1['ID_CAD'])
                 achar_caminho(cx1, cx2, 'orange', '2R (3W)', cx1['ID_CAD'])
                 achar_caminho(cx2, lum, 'orange', 'R', cx2['ID_CAD'])
             elif len(caixas_comando) >= 3:
-                cx_inicio = caixas[caixas_comando[0]]
-                cx_fim = caixas[caixas_comando[-1]]
+                cx_inicio, cx_fim = caixas[caixas_comando[0]], caixas[caixas_comando[-1]]
                 achar_caminho(cx_inicio, qg, 'orange', 'F', cx_inicio['ID_CAD'])
                 cx_atual = cx_inicio
                 for cx_meio_id in caixas_comando[1:-1]:
-                    cx_meio = caixas[cx_meio_id]
-                    achar_caminho(cx_atual, cx_meio, '#ff5500', '4R (4W)', cx_atual['ID_CAD'])
-                    cx_atual = cx_meio
+                    achar_caminho(cx_atual, caixas[cx_meio_id], '#ff5500', '4R (4W)', cx_atual['ID_CAD'])
+                    cx_atual = caixas[cx_meio_id]
                 achar_caminho(cx_atual, cx_fim, 'orange', '2R (3W)', cx_atual['ID_CAD'])
                 achar_caminho(cx_fim, lum, 'orange', 'R', cx_fim['ID_CAD'])
-
     return linhas_processadas
 
 # ==========================================
-# 3.B MOTOR DE QUANTITATIVOS TOTAIS (BOM) EXTRAÍDO DA MALHA 3D
+# 3.B QUANTITATIVOS TOTAIS (BOM)
 # ==========================================
 def calcular_angulo_deflexao(p_ant, p_atual, p_prox):
     v1 = (p_atual[0] - p_ant[0], p_atual[1] - p_ant[1], p_atual[2] - p_ant[2])
     v2 = (p_prox[0] - p_atual[0], p_prox[1] - p_atual[1], p_prox[2] - p_atual[2])
-    m1 = math.sqrt(sum(c**2 for c in v1))
-    m2 = math.sqrt(sum(c**2 for c in v2))
-    if m1 < 1e-4 or m2 < 1e-4:
-        return 0.0
-    cos_ang = max(-1.0, min(1.0, sum(v1[k]*v2[k] for k in range(3)) / (m1 * m2)))
-    return math.degrees(math.acos(cos_ang))
+    m1, m2 = math.sqrt(sum(c**2 for c in v1)), math.sqrt(sum(c**2 for c in v2))
+    if m1 < 1e-4 or m2 < 1e-4: return 0.0
+    return math.degrees(math.acos(max(-1.0, min(1.0, sum(v1[k]*v2[k] for k in range(3)) / (m1 * m2)))))
 
 def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_be, df_bh):
     bom_af, bom_aq, bom_esg = {}, {}, {}
-
-    def add_item(dicionario, item, unid, qtd):
-        chave = (item, unid)
-        dicionario[chave] = dicionario.get(chave, 0.0) + qtd
+    def add_item(d, item, unid, qtd): d[(item, unid)] = d.get((item, unid), 0.0) + qtd
 
     for rota in linhas_hidro:
-        pts = rota['pontos']
-        tipo = rota.get('tipo', 'Água Fria')
-        dn = int(rota.get('diametro', 25))
+        pts, tipo, dn = rota['pontos'], rota.get('tipo', 'Água Fria'), int(rota.get('diametro', 25))
         comp_m = calcular_comprimento_rota(pts)
-
-        joelhos_90, joelhos_45 = 0, 0
+        j90, j45 = 0, 0
         for i in range(1, len(pts) - 1):
             ang = calcular_angulo_deflexao(pts[i-1], pts[i], pts[i+1])
-            if 70 <= ang <= 115:
-                joelhos_90 += 1
-            elif 25 <= ang < 70:
-                joelhos_45 += 1
-
+            if 70 <= ang <= 115: j90 += 1
+            elif 25 <= ang < 70: j45 += 1
         luvas = int(comp_m // 3.0) + 1
-
         if 'Água Fria' in tipo or 'Barrilete' in tipo:
             add_item(bom_af, f"Tubo PVC Soldável Marrom DN {dn}mm", "m", round(comp_m * 1.05, 1))
-            if joelhos_90 > 0: add_item(bom_af, f"Joelho 90° Soldável {dn}mm", "un", joelhos_90)
-            if joelhos_45 > 0: add_item(bom_af, f"Joelho 45° Soldável {dn}mm", "un", joelhos_45)
+            if j90 > 0: add_item(bom_af, f"Joelho 90° Soldável {dn}mm", "un", j90)
+            if j45 > 0: add_item(bom_af, f"Joelho 45° Soldável {dn}mm", "un", j45)
             add_item(bom_af, f"Tê 90° Soldável {dn}mm", "un", 1)
             add_item(bom_af, f"Luva Soldável {dn}mm", "un", luvas)
             if 'Barrilete' not in tipo:
@@ -894,14 +710,14 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
                 add_item(bom_af, f"Registro de Pressão / Gaveta {dn}mm", "un", 1)
         elif 'Água Quente' in tipo:
             add_item(bom_aq, f"Tubo CPVC/PPR Água Quente DN {dn}mm", "m", round(comp_m * 1.05, 1))
-            if joelhos_90 > 0: add_item(bom_aq, f"Joelho 90° CPVC/PPR {dn}mm", "un", joelhos_90)
-            if joelhos_45 > 0: add_item(bom_aq, f"Joelho 45° CPVC/PPR {dn}mm", "un", joelhos_45)
+            if j90 > 0: add_item(bom_aq, f"Joelho 90° CPVC/PPR {dn}mm", "un", j90)
+            if j45 > 0: add_item(bom_aq, f"Joelho 45° CPVC/PPR {dn}mm", "un", j45)
             add_item(bom_aq, f"Tê 90° CPVC/PPR {dn}mm", "un", 1)
             add_item(bom_aq, f"Misturador / Conector Metálico {dn}mm", "un", 1)
         else:
             add_item(bom_esg, f"Tubo PVC Esgoto Série Normal DN {dn}mm", "m", round(comp_m * 1.05, 1))
-            if joelhos_45 > 0: add_item(bom_esg, f"Joelho 45° Esgoto {dn}mm", "un", joelhos_45)
-            if joelhos_90 > 0: add_item(bom_esg, f"Curva Curta 90° Esgoto {dn}mm", "un", joelhos_90)
+            if j45 > 0: add_item(bom_esg, f"Joelho 45° Esgoto {dn}mm", "un", j45)
+            if j90 > 0: add_item(bom_esg, f"Curva Curta 90° Esgoto {dn}mm", "un", j90)
             add_item(bom_esg, f"Junção Simples 45° (Y) Esgoto {dn}mm", "un", 1)
             add_item(bom_esg, f"Luva Simples c/ Anel de Borracha {dn}mm", "un", luvas)
 
@@ -911,21 +727,17 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
 
     bom_el = {}
     for rota in linhas_elet:
-        pts = rota['pontos']
-        comp_m = calcular_comprimento_rota(pts) * 1.10
-        fios_str = rota.get('fios', 'F N T')
+        pts, comp_m, fios_str = rota['pontos'], calcular_comprimento_rota(rota['pontos']) * 1.10, rota.get('fios', 'F N T')
         add_item(bom_el, "Eletroduto PVC Flexível Corrugado Reforçado DN 25mm", "m", round(comp_m, 1))
         curvas_el = sum(1 for i in range(1, len(pts)-1) if calcular_angulo_deflexao(pts[i-1], pts[i], pts[i+1]) >= 60)
-        if curvas_el > 0:
-            add_item(bom_el, "Curva 90° Eletroduto PVC 25mm / Luva de Emenda", "un", curvas_el)
+        if curvas_el > 0: add_item(bom_el, "Curva 90° Eletroduto PVC 25mm / Luva de Emenda", "un", curvas_el)
         add_item(bom_el, "Par Bucha e Arruela Zamac 3/4\" (25mm)", "par", 2)
-
-        if 'F' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Fase - Vermelho/Preto) 2.5mm²", "m", round(comp_m, 1))
-        if 'N' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Neutro - Azul Claro) 2.5mm²", "m", round(comp_m, 1))
-        if 'T' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Terra PE - Verde) 2.5mm²", "m", round(comp_m, 1))
-        if '4R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Four-Way - Amarelo) 1.5mm²", "m", round(comp_m * 4, 1))
-        elif '2R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Three-Way - Amarelo) 1.5mm²", "m", round(comp_m * 2, 1))
-        elif 'R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Simples - Amarelo) 1.5mm²", "m", round(comp_m, 1))
+        if 'F' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Fase) 2.5mm²", "m", round(comp_m, 1))
+        if 'N' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Neutro) 2.5mm²", "m", round(comp_m, 1))
+        if 'T' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Terra PE) 2.5mm²", "m", round(comp_m, 1))
+        if '4R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Four-Way) 1.5mm²", "m", round(comp_m * 4, 1))
+        elif '2R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Three-Way) 1.5mm²", "m", round(comp_m * 2, 1))
+        elif 'R' in fios_str: add_item(bom_el, "Cabo de Cobre Flexível 750V (Retorno Simples) 1.5mm²", "m", round(comp_m, 1))
 
     for b in df_be:
         tb = b.get('Tipo_BIM', '')
@@ -936,157 +748,124 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
 
     if not df_circuitos.empty:
         for _, r_c in df_circuitos.iterrows():
-            disj = r_c.get('Disjuntor (A)', 16)
-            curva = r_c.get('Curva', 'B')
-            bit = r_c.get('Bitola (mm²)', 2.5)
-            dist = float(r_c.get('Distância (m)', 15.0))
-            add_item(bom_el, f"Disjuntor Termomagnético DIN {disj}A Curva {curva}", "un", 1)
+            disj, bit, dist = r_c.get('Disjuntor (A)', 16), r_c.get('Bitola (mm²)', 2.5), float(r_c.get('Distância (m)', 15.0))
+            add_item(bom_el, f"Disjuntor Termomagnético DIN {disj}A", "un", 1)
             add_item(bom_el, f"Terminal Tubular Ilhós Isolado {bit}mm²", "un", 4)
-            if float(bit) > 2.5:
-                add_item(bom_el, f"Cabo de Cobre Flexível 750V {bit}mm² (Circuito TUE)", "m", round(dist * 3.0, 1))
         add_item(bom_el, "Interruptor Diferencial Residual (IDR) Tetrapolar 40A / 30mA", "un", 2)
         add_item(bom_el, "Dispositivo Protetor de Surtos (DPS) Classe II 275V 20kA", "un", 3)
 
     def dict_to_df(d):
-        if not d:
-            return pd.DataFrame(columns=["Descrição do Material / Peça", "Unid.", "Quantidade Total"])
-        rows = [{"Descrição do Material / Peça": k[0], "Unid.": k[1], "Quantidade Total": round(v, 1)} for k, v in sorted(d.items())]
-        return pd.DataFrame(rows)
+        if not d: return pd.DataFrame(columns=["Descrição do Material / Peça", "Unid.", "Quantidade Total"])
+        return pd.DataFrame([{"Descrição do Material / Peça": k[0], "Unid.": k[1], "Quantidade Total": round(v, 1)} for k, v in sorted(d.items())])
 
-    return {
-        'eletrica': dict_to_df(bom_el),
-        'agua_fria': dict_to_df(bom_af),
-        'agua_quente': dict_to_df(bom_aq),
-        'esgoto': dict_to_df(bom_esg)
-    }
+    return {'eletrica': dict_to_df(bom_el), 'agua_fria': dict_to_df(bom_af), 'agua_quente': dict_to_df(bom_aq), 'esgoto': dict_to_df(bom_esg)}
 
 # ==========================================
-# 3.C MOTOR DE DESENHO TÉCNICO CAD DE PEÇAS E CONEXÕES
+# 3.C MOTOR DE DESENHO TÉCNICO CAD DE PEÇAS (EXPANDIDO - +20 ITENS)
 # ==========================================
 def gerar_desenho_tecnico_peca_plotly(peca_tipo, dn_mm=25):
     fig = go.Figure()
     d = float(dn_mm)
-    esp = max(2.0, d * 0.08)
-    bolsa = d * 0.65
+    esp, bolsa = max(2.0, d * 0.08), d * 0.65
 
     def add_cota(x0, y0, x1, y1, texto, offset_y=0.0, offset_x=0.0):
         fig.add_trace(go.Scatter(
             x=[x0+offset_x, x1+offset_x], y=[y0+offset_y, y1+offset_y],
-            mode='lines+markers+text',
-            line=dict(color='#d62728', width=1.5, dash='dot'),
+            mode='lines+markers+text', line=dict(color='#d62728', width=1.5, dash='dot'),
             marker=dict(symbol='line-ns-open' if offset_y != 0 else 'line-ew-open', size=8, color='#d62728'),
-            text=["", texto], textposition="top center" if offset_y >= 0 else "bottom center",
-            showlegend=False
+            text=["", texto], textposition="top center" if offset_y >= 0 else "bottom center", showlegend=False
         ))
 
-    if peca_tipo == "Joelho 90° (Corte Técnico)":
+    if "Joelho 90°" in peca_tipo:
         r_m = d * 1.1
         fig.add_shape(type="rect", x0=-d/2-esp, y0=-r_m-bolsa, x1=d/2+esp, y1=d/2+esp, line=dict(color="#1f77b4", width=2.5), fillcolor="rgba(31,119,180,0.12)")
         fig.add_shape(type="rect", x0=-d/2-esp, y0=-d/2-esp, x1=r_m+bolsa, y1=d/2+esp, line=dict(color="#1f77b4", width=2.5), fillcolor="rgba(31,119,180,0.12)")
-        fig.add_shape(type="rect", x0=-d/2, y0=-r_m-bolsa, x1=d/2, y1=d/2, line=dict(color="#003366", width=1.5), fillcolor="white")
-        fig.add_shape(type="rect", x0=-d/2, y0=-d/2, x1=r_m+bolsa, y1=d/2, line=dict(color="#003366", width=1.5), fillcolor="white")
-        fig.add_trace(go.Scatter(x=[0, 0, r_m+bolsa+10], y=[-r_m-bolsa-10, 0, 0], mode='lines', line=dict(color='gray', width=1, dash='dashdot'), name='Eixo de Centro'))
         add_cota(-d/2, -r_m-bolsa, d/2, -r_m-bolsa, f"DN {int(d)} mm", offset_y=-8)
-        add_cota(r_m, d/2+esp, r_m+bolsa, d/2+esp, f"Bolsa {bolsa:.1f} mm", offset_y=8)
-
-    elif peca_tipo == "Joelho 45° (Corte Técnico)":
+    elif "Joelho 45°" in peca_tipo:
         L = d * 1.4
-        pts_x = [-d/2, d/2, d/2 + L*0.7, L*0.7 - d/2, -d/2]
-        pts_y = [-L, -L, L*0.7, L*0.7 + d*0.7, -L]
-        fig.add_trace(go.Scatter(x=pts_x, y=pts_y, fill="toself", line=dict(color="#1f77b4", width=2.5), name="Corpo 45°"))
-        fig.add_trace(go.Scatter(x=[0, 0, L*0.8], y=[-L-10, 0, L*0.8], mode='lines', line=dict(color='gray', width=1, dash='dashdot'), name='Eixo 45°'))
-        add_cota(-d/2, -L, d/2, -L, f"DN {int(d)} mm (α = 45°)", offset_y=-8)
-
-    elif peca_tipo == "Tê 90° de Passagem / Derivação":
+        fig.add_trace(go.Scatter(x=[-d/2, d/2, d/2 + L*0.7, L*0.7 - d/2, -d/2], y=[-L, -L, L*0.7, L*0.7 + d*0.7, -L], fill="toself", line=dict(color="#1f77b4", width=2.5)))
+        add_cota(-d/2, -L, d/2, -L, f"DN {int(d)} mm (45°)", offset_y=-8)
+    elif "Tê 90°" in peca_tipo:
         L = d * 1.8
         fig.add_shape(type="rect", x0=-L, y0=-d/2-esp, x1=L, y1=d/2+esp, line=dict(color="#1f77b4", width=2.5), fillcolor="rgba(31,119,180,0.12)")
         fig.add_shape(type="rect", x0=-d/2-esp, y0=0, x1=d/2+esp, y1=L, line=dict(color="#1f77b4", width=2.5), fillcolor="rgba(31,119,180,0.12)")
-        fig.add_trace(go.Scatter(x=[-L-10, L+10], y=[0, 0], mode='lines', line=dict(color='gray', width=1, dash='dashdot'), showlegend=False))
-        fig.add_trace(go.Scatter(x=[0, 0], y=[0, L+10], mode='lines', line=dict(color='gray', width=1, dash='dashdot'), showlegend=False))
-        add_cota(-L, -d/2-esp, L, -d/2-esp, f"Comprimento Total = {2*L:.1f} mm | DN {int(d)} mm", offset_y=-10)
-
-    elif peca_tipo == "Junção Simples 45° (Y - Esgoto NBR 8160)":
+        add_cota(-L, -d/2-esp, L, -d/2-esp, f"Tê 90° DN {int(d)} mm", offset_y=-10)
+    elif "Junção 45°" in peca_tipo or "Y" in peca_tipo:
         L = d * 2.0
         fig.add_shape(type="rect", x0=-L, y0=-d/2, x1=L, y1=d/2, line=dict(color="#8c564b", width=2.5), fillcolor="rgba(140,86,75,0.15)")
-        ramal_x = [-d/2, d/2, d/2 + L*0.7, -d/2 + L*0.7, -d/2]
-        ramal_y = [0, 0, L*0.7, L*0.7, 0]
-        fig.add_trace(go.Scatter(x=ramal_x, y=ramal_y, fill="toself", line=dict(color="#8c564b", width=2.5), name="Ramal 45°"))
-        add_cota(-L, -d/2, L, -d/2, f"Junção Y 45° DN {int(d)} x {int(d)} mm", offset_y=-12)
-
-    elif peca_tipo == "Caixa Sifonada 150x150x50mm (Corte c/ Fecho Hídrico)":
+        fig.add_trace(go.Scatter(x=[-d/2, d/2, d/2 + L*0.7, -d/2 + L*0.7, -d/2], y=[0, 0, L*0.7, L*0.7, 0], fill="toself", line=dict(color="#8c564b", width=2.5)))
+        add_cota(-L, -d/2, L, -d/2, f"Junção Y 45° DN {int(d)} mm", offset_y=-12)
+    elif "Curva Longa" in peca_tipo:
+        fig.add_shape(type="circle", x0=-d*1.5, y0=-d*1.5, x1=d*1.5, y1=d*1.5, line=dict(color="#1f77b4", width=3), fillcolor="rgba(31,119,180,0.1)")
+        add_cota(-d*1.5, 0, d*1.5, 0, f"Curva Longa Raio 3x DN {int(d)} mm", offset_y=15)
+    elif "Luva" in peca_tipo or "União" in peca_tipo:
+        fig.add_shape(type="rect", x0=-d*0.8, y0=-d/2-esp*1.5, x1=d*0.8, y1=d/2+esp*1.5, line=dict(color="#2ca02c", width=2.5), fillcolor="rgba(44,160,44,0.15)")
+        add_cota(-d*0.8, -d/2, d*0.8, -d/2, f"Luva de Correr/Simples DN {int(d)} mm", offset_y=-10)
+    elif "Redução" in peca_tipo:
+        fig.add_shape(type="rect", x0=-d, y0=-d/2, x1=0, y1=d/2, line=dict(color="#9467bd", width=2.5), fillcolor="rgba(148,103,189,0.15)")
+        fig.add_shape(type="rect", x0=0, y0=-d*0.35, x1=d, y1=d*0.35, line=dict(color="#9467bd", width=2.5), fillcolor="rgba(148,103,189,0.15)")
+        add_cota(-d, -d/2, d, -d/2, f"Redução Excêntrica / Conêntrica DN {int(d)} mm", offset_y=-10)
+    elif "Cap" in peca_tipo or "Tampão" in peca_tipo:
+        fig.add_shape(type="rect", x0=-d*0.3, y0=-d/2-esp, x1=0, y1=d/2+esp, line=dict(color="#8c564b", width=2.5), fillcolor="rgba(140,86,75,0.2)")
+        add_cota(-d*0.3, -d/2, 0, -d/2, f"Cap / Bujão Roscado/Soldável {int(d)} mm", offset_y=-10)
+    elif "Registro de Gaveta" in peca_tipo or "Registro de Pressão" in peca_tipo:
+        fig.add_shape(type="rect", x0=-d, y0=-d/2, x1=d, y1=d/2, line=dict(color="#e377c2", width=2.5), fillcolor="rgba(227,119,194,0.15)")
+        fig.add_shape(type="rect", x0=-d*0.2, y0=d/2, x1=d*0.2, y1=d*1.5, line=dict(color="#e377c2", width=2.5), fillcolor="rgba(227,119,194,0.15)")
+        add_cota(-d, -d/2, d, -d/2, f"{peca_tipo} DN {int(d)} mm", offset_y=-10)
+    elif "Caixa Sifonada" in peca_tipo or "Ralo" in peca_tipo:
         fig.add_shape(type="rect", x0=-75, y0=-150, x1=75, y1=0, line=dict(color="#2ca02c", width=2.5), fillcolor="rgba(44,160,44,0.1)")
         fig.add_shape(type="rect", x0=-72, y0=-148, x1=72, y1=-85, line=dict(color="#1f77b4", width=1), fillcolor="rgba(31,119,180,0.35)")
         fig.add_shape(type="line", x0=25, y0=-30, x1=25, y1=-115, line=dict(color="black", width=4))
-        fig.add_shape(type="rect", x0=75, y0=-95, x1=115, y1=-45, line=dict(color="#2ca02c", width=2))
-        fig.add_shape(type="rect", x0=-110, y0=-70, x1=-75, y1=-30, line=dict(color="#2ca02c", width=2))
-        add_cota(-75, 0, 75, 0, "Grelha Ø 150 mm", offset_y=12)
         add_cota(-75, -148, 75, -85, "Fecho Hídrico ≥ 50 mm (NBR 8160)", offset_y=-15)
-
-    elif peca_tipo == "Caixa de Passagem Elétrica 4x2\" (Vista e Corte)":
+    elif "Caixa de Gordura" in peca_tipo or "Caixa de Inspeção" in peca_tipo:
+        fig.add_shape(type="rect", x0=-120, y0=-120, x1=120, y1=120, line=dict(color="#8c564b", width=3), fillcolor="rgba(140,86,75,0.12)")
+        add_cota(-120, -120, 120, -120, f"{peca_tipo} (Cesto Removível / Inspeção)", offset_y=-15)
+    elif "Caixa" in peca_tipo or "Octogonal" in peca_tipo:
         fig.add_shape(type="rect", x0=-25, y0=-50, x1=25, y1=50, line=dict(color="#ff7f0e", width=3), fillcolor="rgba(255,127,14,0.15)")
-        for ky in [-30, 0, 30]:
-            fig.add_shape(type="circle", x0=-10, y0=ky-10, x1=10, y1=ky+10, line=dict(color="#333", width=1.5, dash="dot"))
-        add_cota(-25, -50, 25, -50, "Largura 50 mm (2\")", offset_y=-12)
-        add_cota(25, -50, 25, 50, "Altura 100 mm (4\") | Furos Ø 20/25mm", offset_x=25)
-
-    else:
+        add_cota(-25, -50, 25, -50, f"{peca_tipo}", offset_y=-12)
+    elif "Eletroduto" in peca_tipo or "Canaleta" in peca_tipo:
+        fig.add_shape(type="circle", x0=-d, y0=-d, x1=d, y1=d, line=dict(color="#1f77b4", width=2.5), fillcolor="rgba(31,119,180,0.1)")
+        add_cota(-d, 0, d, 0, f"Eletroduto Corrugado/Rígido DN {int(d)}mm", offset_y=12)
+    else: # Disjuntor / IDR / DPS / Contator / Barramento
         fig.add_shape(type="rect", x0=-9, y0=-40, x1=9, y1=40, line=dict(color="#222", width=2.5), fillcolor="#f0f2f6")
         fig.add_shape(type="rect", x0=-6, y0=-8, x1=6, y1=8, line=dict(color="#d62728", width=2), fillcolor="#d62728")
-        fig.add_shape(type="circle", x0=-4, y0=25, x1=4, y1=33, line=dict(color="#555", width=2))
-        fig.add_shape(type="circle", x0=-4, y0=-33, x1=4, y1=-25, line=dict(color="#555", width=2))
-        fig.add_shape(type="rect", x0=30, y0=-40, x1=95, y1=40, line=dict(color="#222", width=2), fillcolor="#e6e9ef")
-        fig.add_shape(type="rect", x0=26, y0=-17.5, x1=35, y1=17.5, line=dict(color="#1f77b4", width=2), fillcolor="white")
-        add_cota(-9, -40, 9, -40, "1 Módulo DIN = 17.5 mm", offset_y=-10)
-        add_cota(30, 40, 95, 40, "Prof. 65 mm (Encaixe Trilho DIN 35mm)", offset_y=10)
+        add_cota(-9, -40, 9, -40, f"{peca_tipo} (Módulo DIN 35mm)", offset_y=-10)
 
     fig.update_layout(
-        title=f"Desenho Técnico Paramétrico: {peca_tipo} (Escala 1:1 em mm)",
-        xaxis=dict(title="Dimensão X (mm)", zeroline=False, showgrid=True, gridcolor="#eee", scaleanchor="y", scaleratio=1),
-        yaxis=dict(title="Dimensão Y (mm)", zeroline=False, showgrid=True, gridcolor="#eee"),
+        title=f"Desenho Técnico Paramétrico: {peca_tipo} (DN/Dimensão: {dn_mm} mm)",
+        xaxis=dict(title="X (mm)", zeroline=False, showgrid=True, gridcolor="#eee", scaleanchor="y", scaleratio=1),
+        yaxis=dict(title="Y (mm)", zeroline=False, showgrid=True, gridcolor="#eee"),
         plot_bgcolor="white", height=520, margin=dict(l=20, r=20, t=50, b=20)
     )
     return fig
 
 # ==========================================
-# 3.D SIMBOLOGIA ABNT DXF (DO V12) E EXPORTADORES DXF / IFC
+# 3.D SIMBOLOGIA ABNT DXF E EXPORTADORES DXF / IFC
 # ==========================================
 def desenhar_simbologia_abnt(msp, p1, p2, fios_str):
-    """Desenha os símbolos normativos de Fase, Neutro, Terra e Retorno sobre os eletrodutos no DXF (V12)."""
     dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-    if abs(dx) < 0.05 and abs(dy) < 0.05:
-        return
+    if abs(dx) < 0.05 and abs(dy) < 0.05: return
     angulo_tubo = math.atan2(dy, dx)
     angulo_perp = angulo_tubo + (math.pi / 2.0)
     cx, cy = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
-    z = p1[2]
-    tamanho = 0.35
-    px_dir, py_dir = math.cos(angulo_perp), math.sin(angulo_perp)
-    afastamento = -0.25
-
-    fios_limpos = fios_str.replace("(3W)", "").replace("(4W)", "").replace(" ", "")
-    for char in fios_limpos:
-        if char in ['2', '4']:
-            continue
-        bx = cx + (math.cos(angulo_tubo) * afastamento)
-        by = cy + (math.sin(angulo_tubo) * afastamento)
-        tx = bx + (px_dir * tamanho)
-        ty = by + (py_dir * tamanho)
-        if char == 'F':
-            msp.add_line((bx - (px_dir * tamanho/2), by - (py_dir * tamanho/2), z), (tx, ty, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 1})
+    z, tamanho, px_dir, py_dir, afastamento = p1[2], 0.35, math.cos(angulo_perp), math.sin(angulo_perp), -0.25
+    for char in fios_str.replace("(3W)", "").replace("(4W)", "").replace(" ", ""):
+        if char in ['2', '4']: continue
+        bx, by = cx + (math.cos(angulo_tubo) * afastamento), cy + (math.sin(angulo_tubo) * afastamento)
+        tx, ty = bx + (px_dir * tamanho), by + (py_dir * tamanho)
+        if char == 'F': msp.add_line((bx - (px_dir * tamanho/2), by - (py_dir * tamanho/2), z), (tx, ty, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 1})
         elif char == 'N':
             msp.add_line((bx, by, z), (tx, ty, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 5})
             msp.add_line((tx, ty, z), (tx + math.cos(angulo_tubo)*0.15, ty + math.sin(angulo_tubo)*0.15, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 5})
         elif char == 'T':
             msp.add_line((bx, by, z), (tx, ty, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 3})
             msp.add_line((tx - math.cos(angulo_tubo)*0.15, ty - math.sin(angulo_tubo)*0.15, z), (tx + math.cos(angulo_tubo)*0.15, ty + math.sin(angulo_tubo)*0.15, z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 3})
-        elif char == 'R':
-            msp.add_line((bx, by, z), (bx + (px_dir * tamanho/2), by + (py_dir * tamanho/2), z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 2})
+        elif char == 'R': msp.add_line((bx, by, z), (bx + (px_dir * tamanho/2), by + (py_dir * tamanho/2), z), dxfattribs={'layer': 'SIMBOLOS_FIOS_ABNT', 'color': 2})
         afastamento += 0.22
 
 def exportar_malha_para_dxf(linhas_elet, linhas_hidro, paredes_raw, modo="UNIFICADO"):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
-
     doc.layers.add(name="ARQ_PAREDES_3D", color=8)
     doc.layers.add(name="MEP_ELETRICA_ELETRODUTOS", color=2)
     doc.layers.add(name="SIMBOLOS_FIOS_ABNT", color=1)
@@ -1094,53 +873,35 @@ def exportar_malha_para_dxf(linhas_elet, linhas_hidro, paredes_raw, modo="UNIFIC
     doc.layers.add(name="MEP_HIDRO_AGUA_QUENTE", color=1)
     doc.layers.add(name="MEP_HIDRO_ESGOTO", color=30)
     doc.layers.add(name="MEP_CONEXOES_CAIXAS", color=3)
-
-    for p1, p2 in paredes_raw:
-        msp.add_line(p1, p2, dxfattribs={'layer': 'ARQ_PAREDES_3D'})
-
+    for p1, p2 in paredes_raw: msp.add_line(p1, p2, dxfattribs={'layer': 'ARQ_PAREDES_3D'})
     if modo in ["ELETRICA", "UNIFICADO"]:
         for rota in linhas_elet:
-            pts = rota['pontos']
-            fios_str = rota.get('fios', 'F N T')
+            pts, fios_str = rota['pontos'], rota.get('fios', 'F N T')
             for i in range(len(pts)-1):
                 msp.add_line(pts[i], pts[i+1], dxfattribs={'layer': 'MEP_ELETRICA_ELETRODUTOS'})
-                if dist_2d(pts[i], pts[i+1]) >= 0.6:
-                    desenhar_simbologia_abnt(msp, pts[i], pts[i+1], fios_str)
-            for pt in pts:
-                msp.add_circle(pt, radius=0.04, dxfattribs={'layer': 'MEP_CONEXOES_CAIXAS'})
-
+                if dist_2d(pts[i], pts[i+1]) >= 0.6: desenhar_simbologia_abnt(msp, pts[i], pts[i+1], fios_str)
+            for pt in pts: msp.add_circle(pt, radius=0.04, dxfattribs={'layer': 'MEP_CONEXOES_CAIXAS'})
     if modo in ["HIDRO", "UNIFICADO"]:
         for rota in linhas_hidro:
-            pts = rota['pontos']
-            tipo = rota.get('tipo', 'Água Fria')
+            pts, tipo = rota['pontos'], rota.get('tipo', 'Água Fria')
             layer_dest = "MEP_HIDRO_ESGOTO" if "Esgoto" in tipo or "Queda" in tipo else ("MEP_HIDRO_AGUA_QUENTE" if "Quente" in tipo else "MEP_HIDRO_AGUA_FRIA")
-            for i in range(len(pts)-1):
-                msp.add_line(pts[i], pts[i+1], dxfattribs={'layer': layer_dest})
-            for pt in pts:
-                msp.add_circle(pt, radius=0.05, dxfattribs={'layer': 'MEP_CONEXOES_CAIXAS'})
-
+            for i in range(len(pts)-1): msp.add_line(pts[i], pts[i+1], dxfattribs={'layer': layer_dest})
+            for pt in pts: msp.add_circle(pt, radius=0.05, dxfattribs={'layer': 'MEP_CONEXOES_CAIXAS'})
     with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
         doc.saveas(tmp.name)
         tmp_path = tmp.name
-    with open(tmp_path, "rb") as f:
-        dxf_bytes = f.read()
+    with open(tmp_path, "rb") as f: dxf_bytes = f.read()
     os.unlink(tmp_path)
     return dxf_bytes
 
 def exportar_malha_para_ifc_step(linhas_elet, linhas_hidro, modo="UNIFICADO"):
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
     linhas_ifc = [
-        "ISO-10303-21;",
-        "HEADER;",
-        f"FILE_DESCRIPTION(('ViewDefinition [CoordinationView_V2.0] - Modo {modo}'),('2;1'));",
+        "ISO-10303-21;", "HEADER;", f"FILE_DESCRIPTION(('ViewDefinition [CoordinationView_V2.0] - Modo {modo}'),('2;1'));",
         f"FILE_NAME('Projeto_BIM_{modo}.ifc','{timestamp}',('Engenharia BIM Master'),('UFF / BIM Master PRO'),'IFC4','BIM Master Engine','');",
-        "FILE_SCHEMA(('IFC4'));",
-        "ENDSEC;",
-        "DATA;",
+        "FILE_SCHEMA(('IFC4'));", "ENDSEC;", "DATA;",
         "#1=IFCPROJECT('0xScRe4tE00001',$,'Projeto Executivo MEP Integrado',$,$,$,$,$,#2);",
-        "#2=IFCUNITASSIGNMENT((#3,#4));",
-        "#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);",
-        "#4=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);",
+        "#2=IFCUNITASSIGNMENT((#3,#4));", "#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);", "#4=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);",
         "#10=IFCSITE('0xScRe4tE00010',$,'Terreno Padrao',$,$,$,$,$,.ELEMENT.,$,$,$,$,$);",
         "#20=IFCBUILDING('0xScRe4tE00020',$,'Edificacao BIM',$,$,$,$,$,.ELEMENT.,$,$,$);",
         "#30=IFCBUILDINGSTOREY('0xScRe4tE00030',$,'Pavimento Tipo',$,$,$,$,$,.ELEMENT.,0.0);",
@@ -1150,32 +911,15 @@ def exportar_malha_para_ifc_step(linhas_elet, linhas_hidro, modo="UNIFICADO"):
     id_step = 100
     if modo in ["ELETRICA", "UNIFICADO"]:
         for idx_r, rota in enumerate(linhas_elet):
-            pts = rota['pontos']
-            comp = calcular_comprimento_rota(pts)
-            guid_seg = str(uuid.uuid4())[:22]
-            linhas_ifc.append(f"#{id_step}=IFCCABLESEGMENT('{guid_seg}',$,'Eletroduto_Circ_{idx_r+1}','Fios: {rota.get('fios','F N T')} | L={comp:.2f}m',$,$,$,$,.CABLESEGMENT.);")
+            pts, comp = rota['pontos'], calcular_comprimento_rota(rota['pontos'])
+            linhas_ifc.append(f"#{id_step}=IFCCABLESEGMENT('{str(uuid.uuid4())[:22]}',$,'Eletroduto_Circ_{idx_r+1}','Fios: {rota.get('fios','F N T')} | L={comp:.2f}m',$,$,$,$,.CABLESEGMENT.);")
             id_step += 1
-            for i in range(1, len(pts)-1):
-                guid_fit = str(uuid.uuid4())[:22]
-                linhas_ifc.append(f"#{id_step}=IFCJUNCTIONBOX('{guid_fit}',$,'Curva_Caixa_Elet_{idx_r}_{i}','Coord: {pts[i]}',$,$,$,$,.POWER.);")
-                id_step += 1
-
     if modo in ["HIDRO", "UNIFICADO"]:
         for idx_h, rota in enumerate(linhas_hidro):
-            pts = rota['pontos']
-            comp = calcular_comprimento_rota(pts)
-            dn = rota.get('diametro', 25)
-            tp = rota.get('tipo', 'Agua Fria')
-            guid_pipe = str(uuid.uuid4())[:22]
-            linhas_ifc.append(f"#{id_step}=IFCPIPESEGMENT('{guid_pipe}',$,'Tubo_{tp}_DN{dn}mm','L={comp:.2f}m | DN={dn}mm',$,$,$,$,.RIGIDSEGMENT.);")
+            pts, comp, dn, tp = rota['pontos'], calcular_comprimento_rota(rota['pontos']), rota.get('diametro', 25), rota.get('tipo', 'Agua Fria')
+            linhas_ifc.append(f"#{id_step}=IFCPIPESEGMENT('{str(uuid.uuid4())[:22]}',$,'Tubo_{tp}_DN{dn}mm','L={comp:.2f}m | DN={dn}mm',$,$,$,$,.RIGIDSEGMENT.);")
             id_step += 1
-            for i in range(1, len(pts)-1):
-                guid_fit = str(uuid.uuid4())[:22]
-                linhas_ifc.append(f"#{id_step}=IFCPIPEFITTING('{guid_fit}',$,'Conexao_Joelho_Te_{tp}_DN{dn}mm','Coord: {pts[i]}',$,$,$,$,.BEND.);")
-                id_step += 1
-
-    linhas_ifc.append("ENDSEC;")
-    linhas_ifc.append("END-ISO-10303-21;")
+    linhas_ifc.extend(["ENDSEC;", "END-ISO-10303-21;"])
     return "\n".join(linhas_ifc)
 
 def gerar_fluxograma_ifc_plotly(linhas_elet, linhas_hidro, config_andares):
@@ -1183,66 +927,35 @@ def gerar_fluxograma_ifc_plotly(linhas_elet, linhas_hidro, config_andares):
     G.add_node("IfcProject\n(Projeto BIM Master)", nivel=0, cor="#1f77b4")
     G.add_node("IfcBuilding\n(Edificação)", nivel=1, cor="#2ca02c")
     G.add_edge("IfcProject\n(Projeto BIM Master)", "IfcBuilding\n(Edificação)")
-
     andares_nomes = [f"IfcBuildingStorey\n(Pav {c['ordem']} - PD {c['pe_direito']}m)" for c in config_andares] if config_andares else ["IfcBuildingStorey\n(Pavimento Térreo)"]
     for a_nome in andares_nomes:
         G.add_node(a_nome, nivel=2, cor="#ff7f0e")
         G.add_edge("IfcBuilding\n(Edificação)", a_nome)
-
-    sis_el = f"IfcDistributionSystem\n[ELÉTRICA - {len(linhas_elet)} Ramais]"
-    sis_af = "IfcDistributionSystem\n[ÁGUA FRIA/QUENTE]"
-    sis_esg = "IfcDistributionSystem\n[ESGOTO & VENTILAÇÃO]"
-
+    sis_el, sis_af, sis_esg = f"IfcDistributionSystem\n[ELÉTRICA - {len(linhas_elet)} Ramais]", "IfcDistributionSystem\n[ÁGUA FRIA/QUENTE]", "IfcDistributionSystem\n[ESGOTO & VENTILAÇÃO]"
     for s_node, cor_s in [(sis_el, "#d62728"), (sis_af, "#0066cc"), (sis_esg, "#8c564b")]:
         G.add_node(s_node, nivel=3, cor=cor_s)
-        for a_nome in andares_nomes:
-            G.add_edge(a_nome, s_node)
-
-    nos_finais = [
+        for a_nome in andares_nomes: G.add_edge(a_nome, s_node)
+    for pai, filho, cor_f in [
         (sis_el, "IfcElectricDistributionBoard\n(QDG + Disjuntores + IDR + DPS)", "#e377c2"),
         (sis_el, "IfcCableCarrierSegment\n(Eletrodutos + Caixas 4x2/Oct.)", "#e377c2"),
         (sis_af, "IfcPipeSegment & IfcPipeFitting\n(Tubos AF/AQ + Joelhos/Tês/Registros)", "#17becf"),
         (sis_esg, "IfcSanitaryTerminal & IfcPipeFitting\n(TQ + Cx Sifonada + Junções 45°)", "#bcbd22")
-    ]
-    for pai, filho, cor_f in nos_finais:
+    ]:
         G.add_node(filho, nivel=4, cor=cor_f)
         G.add_edge(pai, filho)
-
-    pos = {}
-    niveis = {}
-    for n, data in G.nodes(data=True):
-        niv = data.get('nivel', 0)
-        niveis.setdefault(niv, []).append(n)
-    for niv, lista_nos in niveis.items():
-        larg = len(lista_nos)
-        for i, n in enumerate(lista_nos):
-            pos[n] = ((i - (larg - 1) / 2.0) * 3.0, -niv * 2.0)
-
+    pos, niveis = {}, {}
+    for n, data in G.nodes(data=True): niveis.setdefault(data.get('nivel', 0), []).append(n)
+    for niv, lista in niveis.items():
+        for i, n in enumerate(lista): pos[n] = ((i - (len(lista) - 1) / 2.0) * 3.0, -niv * 2.0)
     edge_x, edge_y = [], []
-    for u, v in G.edges():
-        x0, y0 = pos[u]
-        x1, y1 = pos[v]
-        edge_x.extend([x0, x1, None])
-        edge_y.extend([y0, y1, None])
-
+    for u, v in G.edges(): edge_x.extend([pos[u][0], pos[v][0], None]); edge_y.extend([pos[u][1], pos[v][1], None])
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode='lines', line=dict(width=2, color='#888'), hoverinfo='none'))
-    node_x = [pos[n][0] for n in G.nodes()]
-    node_y = [pos[n][1] for n in G.nodes()]
-    node_c = [G.nodes[n]['cor'] for n in G.nodes()]
-    node_t = list(G.nodes())
-
     fig.add_trace(go.Scatter(
-        x=node_x, y=node_y, mode='markers+text', text=node_t, textposition="bottom center",
-        marker=dict(size=28, color=node_c, line=dict(width=2, color='white')),
-        hoverinfo='text'
+        x=[pos[n][0] for n in G.nodes()], y=[pos[n][1] for n in G.nodes()], mode='markers+text',
+        text=list(G.nodes()), textposition="bottom center", marker=dict(size=28, color=[G.nodes[n]['cor'] for n in G.nodes()], line=dict(width=2, color='white')), hoverinfo='text'
     ))
-    fig.update_layout(
-        title="Fluxograma Topológico IFC 4 (Esquema de Classes e Sistemas MEP)",
-        showlegend=False, xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        plot_bgcolor="white", height=480, margin=dict(l=10, r=10, t=45, b=30)
-    )
+    fig.update_layout(title="Fluxograma Topológico IFC 4 (Esquema de Classes e Sistemas MEP)", showlegend=False, xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), plot_bgcolor="white", height=480, margin=dict(l=10, r=10, t=45, b=30))
     return fig
 
 # ==========================================
@@ -1250,22 +963,12 @@ def gerar_fluxograma_ifc_plotly(linhas_elet, linhas_hidro, config_andares):
 # ==========================================
 with st.sidebar:
     st.header("💾 Arquivo do Projeto")
-    
     arquivo_projeto = st.file_uploader("Abrir Projeto Salvo (.bim)", type=["bim", "json"])
-    if arquivo_projeto is not None:
-        if st.button("📂 Carregar Dados do Arquivo", use_container_width=True):
-            importar_projeto(arquivo_projeto)
-            st.success("Projeto carregado com sucesso!")
-            st.rerun()
-            
-    st.download_button(
-        label="💾 Salvar Projeto Atual (.bim)",
-        data=exportar_projeto(),
-        file_name="meu_projeto.bim",
-        mime="application/json",
-        use_container_width=True,
-        type="primary"
-    )
+    if arquivo_projeto is not None and st.button("📂 Carregar Dados do Arquivo", use_container_width=True):
+        importar_projeto(arquivo_projeto)
+        st.success("Projeto carregado com sucesso!")
+        st.rerun()
+    st.download_button(label="💾 Salvar Projeto Atual (.bim)", data=exportar_projeto(), file_name="meu_projeto.bim", mime="application/json", use_container_width=True, type="primary")
     
     st.divider()
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
@@ -1279,7 +982,6 @@ with st.sidebar:
     
     st.markdown("**Organização e Alturas dos Pavimentos**")
     config_andares = []
-    
     if arquivos_dxf:
         for i, arq in enumerate(arquivos_dxf):
             st.markdown(f"📄 `{arq.name}`")
@@ -1298,12 +1000,9 @@ with st.sidebar:
     
     st.divider()
     st.subheader("🚰 Config. Caixa d'Água (NBR 5626)")
-    pessoas = st.number_input("Pessoas", min_value=1, value=4)
-    consumo_pc = st.number_input("Consumo (L/dia)", min_value=50, value=150)
-    dias_reserva = st.number_input("Dias Reserva", min_value=1, value=2)
+    pessoas, consumo_pc, dias_reserva = st.number_input("Pessoas", min_value=1, value=4), st.number_input("Consumo (L/dia)", min_value=50, value=150), st.number_input("Dias Reserva", min_value=1, value=2)
     vol_caixa = pessoas * consumo_pc * dias_reserva
-    caixas_comerciais = [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000]
-    vol_comercial = next((v for v in caixas_comerciais if v >= vol_caixa), vol_caixa)
+    vol_comercial = next((v for v in [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000] if v >= vol_caixa), vol_caixa)
     st.info(f"Volume Calc: **{vol_caixa} L** | Comercial: **{vol_comercial} L**")
 
     st.divider()
@@ -1315,18 +1014,14 @@ with st.sidebar:
 # 5. ABAS PRINCIPAIS
 # ==========================================
 tab_bim, tab_clash, tab_eletrica, tab_hidro, tab_pecas_ifc, tab_export = st.tabs([
-    "🗺️ BIM 3D & Roteamento",
-    "⚠️ Clash Detection",
-    "⚡ Eng. Elétrica, Alimentador & QDG",
-    "💧 Eng. Hidrossanitária (NBR 5626/8160)",
-    "📐 Peças CAD, Quantitativos & IFC",
-    "📦 Config. & Bibliotecas"
+    "🗺️ BIM 3D & Roteamento", "⚠️ Clash Detection",
+    "⚡ Eng. Elétrica, Alimentador & QDG", "💧 Eng. Hidrossanitária (NBR 5626/8160)",
+    "📐 Peças CAD, Quantitativos & IFC", "📦 Config. & Bibliotecas"
 ])
 
 # --- ABA 1: MODELAGEM BIM 3D ---
 with tab_bim:
     st.title("Modelagem e Roteamento Multidisciplinar Consciente de Estrutura")
-    
     if arquivos_dxf:
         todas_layers = []
         dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
@@ -1348,166 +1043,98 @@ with tab_bim:
         layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers)
 
         st.divider()
-        st.subheader("Configuração de Altura de Tubulações e Modo de Projeto")
         col_h1, col_h2, col_h3 = st.columns(3)
-        h_agua_fria = col_h1.number_input("Altura Tubulação Água Fria na Parede (m)", value=2.20, step=0.1)
-        h_agua_quente = col_h2.number_input("Altura Tubulação Água Quente na Parede (m)", value=1.10, step=0.1)
-        modo_visualizacao = col_h3.selectbox("Visualização e Escopo do Projeto:", ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica", "Apenas Hidrossanitário"])
+        h_agua_fria, h_agua_quente, modo_visualizacao = col_h1.number_input("Altura Água Fria (m)", value=2.20, step=0.1), col_h2.number_input("Altura Água Quente (m)", value=1.10, step=0.1), col_h3.selectbox("Visualização:", ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica", "Apenas Hidrossanitário"])
 
-        blocos_elet, blocos_hidro, paredes_raw, elementos_arquitetonicos = [], [], [], []
-        max_z_projeto = 0.0
-        z_acumulado = 0.0
-
+        blocos_elet, blocos_hidro, paredes_raw, elementos_arquitetonicos, max_z_projeto, z_acumulado = [], [], [], [], 0.0, 0.0
         for andar_idx, config in enumerate(config_andares):
-            dxf_file = config["arquivo"]
-            pe_direito_atual = config["pe_direito"]
-            z_base = z_acumulado
+            dxf_file, pe_direito_atual, z_base = config["arquivo"], config["pe_direito"], z_acumulado
             if z_base > max_z_projeto: max_z_projeto = z_base
-
             if dxf_file.name.lower().endswith(".dxf"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
                     tmp_file.write(dxf_file.getvalue())
                     temp_path = tmp_file.name
                 doc = ezdxf.readfile(temp_path)
                 msp = doc.modelspace()
-                
                 for le in layer_esquadrias:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
-                        nome_bloco_u = e.dxf.name.upper()
-                        eh_porta = "PORTA" in nome_bloco_u or "PT" in nome_bloco_u or "P1" in nome_bloco_u
-                        elementos_arquitetonicos.append({
-                            "ID_CAD": f"{e.dxf.name}_ESQ", "Tipo": "Esquadria",
-                            "Subtipo": "Porta" if eh_porta else "Janela",
-                            "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base,
-                            "Largura": 0.90 if eh_porta else 1.20,
-                            "Peitoril": 0.0 if eh_porta else 1.00,
-                            "Altura": 2.10 if eh_porta else 1.10
-                        })
+                        eh_porta = "PORTA" in e.dxf.name.upper() or "PT" in e.dxf.name.upper()
+                        elementos_arquitetonicos.append({"ID_CAD": f"{e.dxf.name}_ESQ", "Tipo": "Esquadria", "Subtipo": "Porta" if eh_porta else "Janela", "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Largura": 0.90 if eh_porta else 1.20, "Peitoril": 0.0 if eh_porta else 1.00, "Altura": 2.10 if eh_porta else 1.10})
                 for le in layer_estrutural:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
-                        elementos_arquitetonicos.append({
-                            "ID_CAD": f"{e.dxf.name}_EST", "Tipo": "Pilar/Viga",
-                            "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base,
-                            "Largura": 0.40, "Altura_Viga": altura_viga
-                        })
-
+                        elementos_arquitetonicos.append({"ID_CAD": f"{e.dxf.name}_EST", "Tipo": "Pilar/Viga", "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Largura": 0.40, "Altura_Viga": altura_viga})
                 for le in layer_elet:
-                    for i, e in enumerate(msp.query(f'INSERT[layer=="{le}"]')):
-                        blocos_elet.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
+                    for i, e in enumerate(msp.query(f'INSERT[layer=="{le}"]')): blocos_elet.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
                 for lh in layer_hidro:
-                    for i, e in enumerate(msp.query(f'INSERT[layer=="{lh}"]')):
-                        blocos_hidro.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
+                    for i, e in enumerate(msp.query(f'INSERT[layer=="{lh}"]')): blocos_hidro.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
                 for e in msp.query('LINE LWPOLYLINE'):
                     if e.dxf.layer in layer_arq:
-                        pts = []
-                        if e.dxftype() == 'LINE':
-                            pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base))]
-                        elif e.dxftype() == 'LWPOLYLINE':
+                        if e.dxftype() == 'LINE': pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base))]
+                        else:
                             pontos = list(e.get_points(format='xy'))
-                            for i in range(len(pontos)-1):
-                                pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base)))
+                            pts = [((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base)) for i in range(len(pontos)-1)]
                         paredes_raw.extend(pts)
                 os.unlink(temp_path)
-            
             z_acumulado += pe_direito_atual + espessura_laje
         
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            st.subheader("⚡ Equipamentos Elétricos")
+            st.subheader("⚡ Equipamentos Elétricos & Validação NBR 5410")
             df_be = pd.DataFrame(blocos_elet) if blocos_elet else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "z_relativo"])
-            
             if not df_be.empty:
                 df_be['Tipo_BIM'] = 'Luminária'
                 df_be.loc[df_be['Nome_Bloco'].str.contains("QUADRO|QDG", case=False, na=False), 'Tipo_BIM'] = 'Quadro Geral'
                 df_be.loc[df_be['Nome_Bloco'].str.contains("TOMADA|CX", case=False, na=False), 'Tipo_BIM'] = 'Caixa 4x2'
-                df_be.loc[df_be['Nome_Bloco'].str.contains("4X4", case=False, na=False), 'Tipo_BIM'] = 'Caixa 4x4'
-                
                 df_be['Qtd_Tomadas'] = 1
                 df_be['Amperagem_Tomadas'] = '10A'
                 df_be['Tensao_V'] = tensao_fase
                 df_be['Qtd_Interruptores'] = 0
                 df_be['Luminarias_Controladas'] = ""
                 df_be['Equipamento_Associado'] = "Tomada Uso Geral (TUG)"
-                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', 'Qtd_Tomadas'] = 0
-                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', 'Equipamento_Associado'] = "Lâmpada LED 15W"
-                df_be.loc[df_be['Nome_Bloco'].str.contains("CHUV", case=False, na=False), 'Equipamento_Associado'] = "Chuveiro Elétrico 7500W"
-                
+                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', ['Qtd_Tomadas', 'Equipamento_Associado']] = [0, "Lâmpada LED 15W"]
                 df_be['z_relativo'] = 1.3
-                mask_lum = df_be['Tipo_BIM'] == 'Luminária'
-                df_be.loc[mask_lum, 'z_relativo'] = df_be.loc[mask_lum, 'pe_direito']
+                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', 'z_relativo'] = df_be['pe_direito']
                 
-                opcoes_eq_elet = list(st.session_state.bib_eletrica['Equipamento'])
-                df_editado_elet = st.data_editor(
-                    df_be,
-                    column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]),
-                        "Equipamento_Associado": st.column_config.SelectboxColumn("Carga (Biblioteca)", options=opcoes_eq_elet),
-                        "Amperagem_Tomadas": st.column_config.SelectboxColumn("Amperagem", options=["10A", "20A"]),
-                        "Tensao_V": st.column_config.SelectboxColumn("Tensão (V)", options=[127, 220]),
-                        "Qtd_Tomadas": st.column_config.NumberColumn("Qtd Tomadas", min_value=0, max_value=4),
-                        "Qtd_Interruptores": st.column_config.NumberColumn("Qtd Interruptores", min_value=0, max_value=6)
-                    },
-                    use_container_width=True, hide_index=True
-                )
+                df_editado_elet = st.data_editor(df_be, column_config={
+                    "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]),
+                    "Equipamento_Associado": st.column_config.SelectboxColumn("Carga", options=list(st.session_state.bib_eletrica['Equipamento'])),
+                    "Amperagem_Tomadas": st.column_config.SelectboxColumn("Amperagem", options=["10A", "20A"]),
+                    "Tensao_V": st.column_config.SelectboxColumn("Tensão (V)", options=[127, 220]),
+                    "Qtd_Tomadas": st.column_config.NumberColumn("Qtd Tomadas", min_value=0, max_value=4),
+                    "Qtd_Interruptores": st.column_config.NumberColumn("Qtd Interruptores", min_value=0, max_value=6)
+                }, use_container_width=True, hide_index=True)
 
-                st.markdown("**🔗 Painel de Comandos (Interruptores Simples, Paralelos Three-Way e Four-Way)**")
-                st.caption("Se 2 caixas controlarem a mesma luminária, o sistema cria automaticamente ligação Three-Way (2R). Se 3+ caixas controlarem, cria Four-Way (4R).")
-                opcoes_luminarias = df_editado_elet[df_editado_elet['Tipo_BIM'] == 'Luminária']['ID_CAD'].tolist()
                 for idx, row in df_editado_elet.iterrows():
                     if 'Caixa' in row['Tipo_BIM'] and row['Qtd_Interruptores'] > 0:
-                        selecionadas = st.multiselect(f"🔌 Caixa {row['ID_CAD']} controla:", options=opcoes_luminarias, key=f"ms_{row['ID_CAD']}")
-                        df_editado_elet.at[idx, 'Luminarias_Controladas'] = ",".join(selecionadas)
+                        sel = st.multiselect(f"🔌 Caixa {row['ID_CAD']} controla:", options=df_editado_elet[df_editado_elet['Tipo_BIM'] == 'Luminária']['ID_CAD'].tolist(), key=f"ms_{row['ID_CAD']}")
+                        df_editado_elet.at[idx, 'Luminarias_Controladas'] = ",".join(sel)
             else:
-                st.warning("Nenhum bloco elétrico detectado nas layers selecionadas.")
+                st.warning("Nenhum bloco elétrico detectado.")
                 df_editado_elet = pd.DataFrame()
 
         with col_t2:
             st.subheader("💧 Equipamentos Hidráulicos")
             df_bh = pd.DataFrame(blocos_hidro) if blocos_hidro else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "Equipamento", "z_relativo"])
-            
             if not df_bh.empty:
                 opcoes_equip = list(st.session_state.bib_hidro['Equipamento'])
-                
                 df_bh['Tipo_BIM'] = 'Aparelho Hidráulico'
                 df_bh.loc[df_bh['Nome_Bloco'].str.contains("PRUMADA|AGUA|AF", case=False, na=False), 'Tipo_BIM'] = 'Prumada Água Fria'
                 df_bh.loc[df_bh['Nome_Bloco'].str.contains("ESGOTO|TUBO_QUEDA|TQ", case=False, na=False), 'Tipo_BIM'] = 'Prumada Esgoto'
                 df_bh.loc[df_bh['Nome_Bloco'].str.contains("CAIXA|RES|TANQUE", case=False, na=False), 'Tipo_BIM'] = 'Caixa d\'Água'
                 df_bh['Equipamento'] = opcoes_equip[0] if opcoes_equip else ""
                 df_bh['z_relativo'] = 0.5
-                
-                df_editado_hidro = st.data_editor(
-                    df_bh,
-                    column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=["Prumada Água Fria", "Prumada Esgoto", "Aparelho Hidráulico", "Caixa d'Água"]),
-                        "Equipamento": st.column_config.SelectboxColumn("Eq. (Biblioteca)", options=opcoes_equip)
-                    },
-                    use_container_width=True, hide_index=True
-                )
-                
-                tem_caixa = not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty
-                if tem_caixa:
-                    st.markdown("**🚰 Parâmetros da Caixa d'Água 3D**")
-                    c_cx1, c_cx2 = st.columns(2)
-                    altura_caixa = c_cx1.number_input("Altura acima da última laje (m)", min_value=0.5, value=1.5, step=0.1)
-                    num_barriletes = c_cx2.number_input("Nº de Barriletes", min_value=1, value=1, step=1)
-                else:
-                    altura_caixa = 1.5
-                    num_barriletes = 1
+                df_editado_hidro = st.data_editor(df_bh, column_config={"Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=["Prumada Água Fria", "Prumada Esgoto", "Aparelho Hidráulico", "Caixa d'Água"]), "Equipamento": st.column_config.SelectboxColumn("Eq.", options=opcoes_equip)}, use_container_width=True, hide_index=True)
+                altura_caixa = st.number_input("Altura Caixa d'Água Acima da Laje (m)", min_value=0.5, value=1.5, step=0.1) if not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty else 1.5
             else:
-                st.warning("Nenhum bloco hidrossanitário detectado nas layers selecionadas.")
-                df_editado_hidro = pd.DataFrame()
-                altura_caixa = 1.5
-                num_barriletes = 1
+                st.warning("Nenhum bloco hidráulico detectado.")
+                df_editado_hidro, altura_caixa = pd.DataFrame(), 1.5
 
         st.divider()
         col_btn_proc, col_tog1, col_tog2 = st.columns([2, 1, 1])
-        with col_tog1:
-            mostrar_tubos = st.toggle("Ver Tubos / Eletrodutos 3D", value=True)
-        with col_tog2:
-            mostrar_fios = st.toggle("Ver Rótulos de Fios 3D (F N T / 2R)", value=True)
+        mostrar_tubos, mostrar_fios = col_tog1.toggle("Ver Tubos / Eletrodutos 3D", value=True), col_tog2.toggle("Ver Rótulos Fios 3D", value=True)
 
-        if col_btn_proc.button("🚀 Processar Rotas Multidisciplinares, Dimensionamento ABNT e Quantitativos", type="primary", use_container_width=True):
-            with st.spinner("Mapeando vigas, pilares, vãos de esquadrias, Three-Way/Four-Way e calculando malhas ABNT..."):
+        if col_btn_proc.button("🚀 Processar Rotas, Validações NBR 5410/5626 & Quantitativos", type="primary", use_container_width=True):
+            with st.spinner("Executando motor BIM, auditoria de cargas, quedas e pressões..."):
                 pontos_gerais = []
                 if not df_editado_elet.empty: pontos_gerais.extend(df_editado_elet.to_dict('records'))
                 if not df_editado_hidro.empty: pontos_gerais.extend(df_editado_hidro.to_dict('records'))
@@ -1523,495 +1150,246 @@ with tab_bim:
 
                 df_h_processar = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
                 for b in df_h_processar:
-                    if b['Tipo_BIM'] == 'Caixa d\'Água':
-                        b['z_base'] = z_cobertura
+                    if b['Tipo_BIM'] == 'Caixa d\'Água': b['z_base'] = z_cobertura
 
                 st.session_state.contexto_bim = {
-                    'paredes': paredes_raw,
-                    'elementos_arquitetonicos': elementos_arquitetonicos,
+                    'paredes': paredes_raw, 'elementos_arquitetonicos': elementos_arquitetonicos,
                     'df_eletrica': df_editado_elet.to_dict('records') if not df_editado_elet.empty else [],
-                    'df_hidro': df_h_processar,
-                    'min_x': min_x, 'min_y': min_y, 'offset': offset, 'grid_w': grid_w, 'grid_h': grid_h, 
-                    'pe_direito': ultimo_pe_direito, 'max_z_cobertura': z_cobertura,
-                    'altura_caixa': altura_caixa, 'num_barriletes': num_barriletes,
-                    'h_agua_fria': h_agua_fria, 'h_agua_quente': h_agua_quente, 'altura_viga': altura_viga,
-                    'incluir_shaft': incluir_shaft
+                    'df_hidro': df_h_processar, 'min_x': min_x, 'min_y': min_y, 'offset': offset,
+                    'grid_w': grid_w, 'grid_h': grid_h, 'pe_direito': ultimo_pe_direito, 'max_z_cobertura': z_cobertura,
+                    'altura_caixa': altura_caixa, 'h_agua_fria': h_agua_fria, 'h_agua_quente': h_agua_quente,
+                    'altura_viga': altura_viga, 'incluir_shaft': incluir_shaft
                 }
 
                 ctx = st.session_state.contexto_bim
                 linhas_hidro = rotear_hidro(ctx['df_hidro'], ctx) if modo_visualizacao != "Apenas Elétrica" else []
                 linhas_elet = rotear_eletrica(ctx['df_eletrica'], ctx) if modo_visualizacao != "Apenas Hidrossanitário" else []
-                
                 st.session_state.linhas_3d_master = {'eletrica': linhas_elet, 'hidro': linhas_hidro, 'equipamentos_3d': pontos_gerais}
-                st.session_state.colisoes_detectadas = []
 
-                novos_circuitos = []
-                for idx_e, b_el in enumerate(ctx['df_eletrica']):
-                    if b_el['Tipo_BIM'] == 'Quadro Geral':
-                        continue
+                # Executa Circuitos e Validação NBR 5410 (Seção 9)
+                novos_circuitos, qtd_tues = [], 0
+                for b_el in ctx['df_eletrica']:
+                    if b_el['Tipo_BIM'] == 'Quadro Geral': continue
                     eq_nome = b_el.get('Equipamento_Associado', 'Tomada Uso Geral (TUG)')
                     filtro_el = st.session_state.bib_eletrica['Equipamento'] == eq_nome
                     if filtro_el.any():
                         row_bib = st.session_state.bib_eletrica.loc[filtro_el].iloc[0]
-                        pot_unit = float(row_bib['Potência (W)'])
-                        tensao_eq = int(b_el.get('Tensao_V', row_bib['Tensão (V)']))
-                        fp_eq = float(row_bib['Fator de Potência'])
-                        tipo_eq = str(row_bib['Tipo'])
-                        curva_eq = str(row_bib['Curva Disjuntor'])
-                        uso_dr = str(row_bib['Uso de DR'])
+                        pot_unit, tensao_eq, fp_eq, tipo_eq, curva_eq, uso_dr = float(row_bib['Potência (W)']), int(b_el.get('Tensao_V', row_bib['Tensão (V)'])), float(row_bib['Fator de Potência']), str(row_bib['Tipo']), str(row_bib['Curva Disjuntor']), str(row_bib['Uso de DR'])
                     else:
                         pot_unit, tensao_eq, fp_eq, tipo_eq, curva_eq, uso_dr = 100.0, 127, 1.0, "TUG", "B", "Opcional"
 
-                    # Se o usuário marcou 20A em TUG comum, ajusta para 600W como no V12
-                    if b_el.get('Amperagem_Tomadas') == '20A' and pot_unit == 100.0:
-                        pot_unit = 600.0
-
+                    if tipo_eq == "TUE": qtd_tues += 1
+                    if b_el.get('Amperagem_Tomadas') == '20A' and pot_unit == 100.0: pot_unit = 600.0
                     qtd_pts = max(1, int(b_el.get('Qtd_Tomadas', 1))) if 'Caixa' in b_el['Tipo_BIM'] else 1
                     pot_total = pot_unit * qtd_pts
                     rota_assoc = next((r for r in linhas_elet if r.get('id_origem') == b_el['ID_CAD']), None)
                     dist_circ = rota_assoc['comprimento_m'] if rota_assoc else 15.0
-                    elet_ref = f"Eletroduto {b_el.get('Andar', 'Pav 0')} - {'Teto' if b_el['Tipo_BIM']=='Luminária' else 'Parede'}"
 
                     dim_5410 = dimensionar_circuito_nbr5410(pot_total, tensao_eq, fp_eq, "B1", 0.80, 1.00, dist_circ, tipo_eq)
                     novos_circuitos.append({
-                        "ID": f"C{len(novos_circuitos)+1}",
-                        "Ambiente": b_el.get('Andar', 'Pav 0'),
-                        "Equipamento": f"{eq_nome} ({b_el['ID_CAD']})",
-                        "Qtd": qtd_pts,
-                        "Potência Total (W)": pot_total,
-                        "Tensão (V)": tensao_eq,
-                        "Fator de Potência": fp_eq,
-                        "Método Inst.": "B1",
-                        "Eletroduto (Ref)": elet_ref,
-                        "FCA": 0.80,
-                        "FCT": 1.00,
-                        "Corrente (A)": dim_5410["Corrente_Ib"],
-                        "Corrente Corrigida (A)": dim_5410["Corrente_Corr"],
-                        "Bitola (mm²)": dim_5410["Bitola"],
-                        "Queda Tensão (%)": dim_5410["Queda_Tensao_Pct"],
-                        "Disjuntor (A)": dim_5410["Disjuntor"],
-                        "Curva": curva_eq,
-                        "Icc (A)": dim_5410["Icc_A"],
-                        "Distância (m)": dist_circ,
-                        "Fase": "R",
-                        "Grupo DR": "DR 1 (Áreas Molhadas)" if uso_dr == "Obrigatório" else "DR 2 (Geral)",
-                        "Eletroduto (mm)": dim_5410["Eletroduto_mm"],
-                        "Ocupação (%)": dim_5410["Ocupacao_Pct"]
+                        "ID": f"C{len(novos_circuitos)+1}", "Ambiente": b_el.get('Andar', 'Pav 0'),
+                        "Equipamento": f"{eq_nome} ({b_el['ID_CAD']})", "Qtd": qtd_pts, "Potência Total (W)": pot_total,
+                        "Tensão (V)": tensao_eq, "Fator de Potência": fp_eq, "Método Inst.": "B1",
+                        "Eletroduto (Ref)": f"Eletroduto {b_el.get('Andar','')} - Teto/Parede", "FCA": 0.80, "FCT": 1.00,
+                        "Corrente (A)": dim_5410["Corrente_Ib"], "Corrente Corrigida (A)": dim_5410["Corrente_Corr"],
+                        "Bitola (mm²)": dim_5410["Bitola"], "Queda Tensão (%)": dim_5410["Queda_Tensao_Pct"],
+                        "Disjuntor (A)": dim_5410["Disjuntor"], "Curva": curva_eq, "Icc (A)": dim_5410["Icc_A"],
+                        "Distância (m)": dist_circ, "Fase": "R", "Grupo DR": "DR 1 (Áreas Molhadas)" if uso_dr == "Obrigatório" else "DR 2 (Geral)",
+                        "Eletroduto (mm)": dim_5410["Eletroduto_mm"], "Ocupação (%)": dim_5410["Ocupacao_Pct"]
                     })
-                if novos_circuitos:
-                    st.session_state.circuitos = balancear_fases_automatico(pd.DataFrame(novos_circuitos))
+                if novos_circuitos: st.session_state.circuitos = balancear_fases_automatico(pd.DataFrame(novos_circuitos))
 
-                novos_pontos_hidro = []
-                z_res_mca = z_cobertura + altura_caixa
+                # Executa Hidráulica e Validação NBR 5626 (Pressão Estática Máxima <= 40 mca)
+                novos_pontos_hidro, z_res_mca = [], z_cobertura + altura_caixa
                 for b_hd in ctx['df_hidro']:
-                    if b_hd['Tipo_BIM'] != 'Aparelho Hidráulico':
-                        continue
+                    if b_hd['Tipo_BIM'] != 'Aparelho Hidráulico': continue
                     eq_h = b_hd['Equipamento']
                     filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
-                    if not filtro_h.any():
-                        continue
+                    if not filtro_h.any(): continue
                     row_h = st.session_state.bib_hidro.loc[filtro_h].iloc[0]
-                    peso_h = float(row_h['Peso'])
-                    uhc_h = float(row_h['UHC'])
-                    af_mm = int(row_h['Agua_mm'])
-                    esg_mm = int(row_h['Esgoto_mm'])
-                    pressao_req_kpa = float(row_h['Pressao_kpa'])
-
+                    peso_h, uhc_h, af_mm, esg_mm, pressao_req_kpa = float(row_h['Peso']), float(row_h['UHC']), int(row_h['Agua_mm']), int(row_h['Esgoto_mm']), float(row_h['Pressao_kpa'])
                     rota_af = next((r for r in linhas_hidro if r.get('id_ap') == b_hd['ID_CAD'] and r.get('tipo') == 'Água Fria'), None)
                     comp_real_af = calcular_comprimento_rota(rota_af['pontos']) if rota_af else 8.0
-                    vazao_ls, j_unit, comp_eq, perda_mca = calcular_perda_carga_nbr5626(peso_h, max(20, af_mm), comp_real_af)
+                    vazao_ls, _, comp_eq, perda_mca = calcular_perda_carga_nbr5626(peso_h, max(20, af_mm), comp_real_af)
                     z_ponto = b_hd['z_base'] + b_hd.get('z_relativo', 0.5)
                     desnivel_estatico_mca = max(1.5, z_res_mca - z_ponto)
+                    pressao_estatica_mca = desnivel_estatico_mca
                     pressao_disp_mca = max(0.0, desnivel_estatico_mca - perda_mca)
                     pressao_disp_kpa = round(pressao_disp_mca * 9.81, 1)
-                    status_pressao = "OK (NBR 5626)" if pressao_disp_kpa >= pressao_req_kpa else "Pressurizar!"
+
+                    # Validação Avançada 3: Pressão Estática Máxima <= 40 mca (NBR 5626)
+                    status_pressao = "OK (NBR 5626)"
+                    if pressao_disp_kpa < pressao_req_kpa: status_pressao = "⚠️ Pressurizar!"
+                    elif pressao_estatica_mca > 40.0: status_pressao = "⚠️ Instalar VRP (> 40 m.c.a.)"
 
                     novos_pontos_hidro.append({
-                        "ID": b_hd['ID_CAD'],
-                        "Andar": b_hd.get('Andar', 'Pav 0'),
-                        "Ambiente": b_hd.get('Andar', 'Banheiro/Cozinha'),
-                        "Equipamento": eq_h,
-                        "z": round(z_ponto, 2),
-                        "Peso (NBR 5626)": peso_h,
-                        "Vazão (L/s)": vazao_ls,
-                        "Tubo AF (mm)": af_mm,
-                        "L Real + Eq (m)": round(comp_real_af + comp_eq, 2),
-                        "Perda Carga (m.c.a.)": perda_mca,
-                        "Pressão Disp. (kPa)": pressao_disp_kpa,
-                        "Pressão Mín. (kPa)": pressao_req_kpa,
-                        "Status Pressão": status_pressao,
-                        "UHC": uhc_h,
-                        "Tubo Esgoto (mm)": esg_mm,
-                        "Declividade Esg. (%)": 1.0 if esg_mm >= 100 else (2.0 if esg_mm > 0 else 0.0)
+                        "ID": b_hd['ID_CAD'], "Andar": b_hd.get('Andar', 'Pav 0'), "Ambiente": b_hd.get('Andar', 'Banheiro'),
+                        "Equipamento": eq_h, "z": round(z_ponto, 2), "Peso (NBR 5626)": peso_h, "Vazão (L/s)": vazao_ls,
+                        "Tubo AF (mm)": af_mm, "L Real + Eq (m)": round(comp_real_af + comp_eq, 2), "Perda Carga (m.c.a.)": perda_mca,
+                        "Pressão Estática (m.c.a.)": round(pressao_estatica_mca, 1), "Pressão Disp. (kPa)": pressao_disp_kpa,
+                        "Status Pressão": status_pressao, "UHC": uhc_h, "Tubo Esgoto (mm)": esg_mm, "Declividade Esg. (%)": 1.0 if esg_mm >= 100 else 2.0
                     })
                 st.session_state.pontos_hidro = novos_pontos_hidro
-
-                st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
-                    linhas_elet, linhas_hidro, st.session_state.circuitos, ctx['df_eletrica'], ctx['df_hidro']
-                )
-
-                st.success("✅ Roteamento 3D, Dimensionamento Normativo (NBR 5410/5626/8160) e Quantitativos concluídos!")
+                st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, st.session_state.circuitos, ctx['df_eletrica'], ctx['df_hidro'])
+                st.success("✅ Roteamento concluído com auditoria normativa NBR 5410 e NBR 5626 (VRP) aplicada!")
 
         if st.session_state.linhas_3d_master['eletrica'] or st.session_state.linhas_3d_master['hidro'] or paredes_raw:
-            # Métricas Rápidas estilo V12
-            metragem_el = sum(calcular_comprimento_rota(r['pontos']) for r in st.session_state.linhas_3d_master['eletrica'])
-            metragem_hd = sum(calcular_comprimento_rota(r['pontos']) for r in st.session_state.linhas_3d_master['hidro'])
-            df_el_ctx = st.session_state.contexto_bim.get('df_eletrica', [])
-            cb1, cb2, cb3, cb4 = st.columns(4)
-            cb1.metric("Eletroduto Total", f"{metragem_el:.1f} m")
-            cb2.metric("Tubulação Hidrossanitária", f"{metragem_hd:.1f} m")
-            cb3.metric("Caixas 4x2 / 4x4", sum(1 for b in df_el_ctx if 'Caixa' in b.get('Tipo_BIM', '')))
-            cb4.metric("Pontos de Iluminação", sum(1 for b in df_el_ctx if b.get('Tipo_BIM') == 'Luminária'))
-
             fig = go.Figure()
-            for p1, p2 in paredes_raw:
-                fig.add_trace(go.Scatter3d(x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]], mode='lines', line=dict(color='#cccccc', width=2), showlegend=False))
-
-            for elem in elementos_arquitetonicos:
-                if elem['Tipo'] == 'Pilar/Viga':
-                    fig.add_trace(go.Scatter3d(
-                        x=[elem['x'], elem['x']], y=[elem['y'], elem['y']], z=[elem['z_base'], elem['z_base'] + 3.0],
-                        mode='lines', line=dict(color='#444444', width=8), name='Pilar/Viga Estrutural'
-                    ))
-                elif elem['Tipo'] == 'Esquadria':
-                    z_inf = elem['z_base'] + elem.get('Peitoril', 0.0)
-                    z_sup = z_inf + elem.get('Altura', 2.10)
-                    fig.add_trace(go.Scatter3d(
-                        x=[elem['x']], y=[elem['y']], z=[(z_inf + z_sup)/2.0],
-                        mode='markers', marker=dict(size=7, color='#ff9900', symbol='diamond'), name=f"Vão ({elem.get('Subtipo','Esquadria')})"
-                    ))
-
+            for p1, p2 in paredes_raw: fig.add_trace(go.Scatter3d(x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]], mode='lines', line=dict(color='#cccccc', width=2), showlegend=False))
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
                 for linha in st.session_state.linhas_3d_master['eletrica']:
-                    pts = linha['pontos']
-                    fios_txt = linha.get('fios', 'F N T')
-                    if mostrar_tubos:
-                        fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines+markers', marker=dict(size=3), line=dict(color=linha['cor'], width=4), name=f"Elétrica ({fios_txt})"))
+                    pts, fios_txt = linha['pontos'], linha.get('fios', 'F N T')
+                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines', line=dict(color=linha['cor'], width=4), name=f"Elétrica ({fios_txt})"))
                     if mostrar_fios and len(pts) >= 2:
-                        mid_idx = len(pts) // 2
-                        p_mid = pts[mid_idx]
-                        fig.add_trace(go.Scatter3d(
-                            x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2] + 0.15],
-                            mode='text', text=[fios_txt], textposition="top center",
-                            textfont=dict(color="black", size=12, family="Arial Black"), showlegend=False
-                        ))
-
+                        p_mid = pts[len(pts) // 2]
+                        fig.add_trace(go.Scatter3d(x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2]+0.15], mode='text', text=[fios_txt], textposition="top center", textfont=dict(color="black", size=11, family="Arial Black"), showlegend=False))
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Hidrossanitário"]:
                 for linha in st.session_state.linhas_3d_master['hidro']:
                     pts = linha['pontos']
-                    if mostrar_tubos:
-                        fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines+markers', marker=dict(size=3), line=dict(color=linha['cor'], width=6), name=f"{linha.get('tipo', 'Hidro')} DN{linha.get('diametro',25)}"))
-
-            # Marcadores 3D com Hovertext detalhado do V12
-            if df_el_ctx:
-                fig.add_trace(go.Scatter3d(
-                    x=[b['x'] for b in df_el_ctx], y=[b['y'] for b in df_el_ctx], z=[b['z_base'] + b.get('z_relativo', 1.3) for b in df_el_ctx],
-                    mode='markers',
-                    hovertext=[f"{b['ID_CAD']} ({b.get('Andar','')} | z: {b['z_base']+b.get('z_relativo',1.3):.2f}m)" for b in df_el_ctx],
-                    hoverinfo="text",
-                    marker=dict(size=7, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
-                    name="Pontos Elétricos"
-                ))
-
-            df_h_proc = st.session_state.contexto_bim.get('df_hidro', [])
-            cx_box = next((b for b in df_h_proc if b['Tipo_BIM'] == 'Caixa d\'Água'), None)
-            if cx_box:
-                fig.add_trace(go.Scatter3d(x=[cx_box['x']], y=[cx_box['y']], z=[cx_box['z_base'] + st.session_state.contexto_bim.get('altura_caixa', 1.5)], mode='markers', marker=dict(size=22, color='blue', symbol='square'), name='Caixa d\'Água'))
-
-            fig.update_layout(scene=dict(aspectmode='data', bgcolor='#f5f5f5'), height=750, margin=dict(l=0, r=0, b=0, t=0))
+                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines', line=dict(color=linha['cor'], width=6), name=f"{linha.get('tipo')} DN{linha.get('diametro')}"))
+            fig.update_layout(scene=dict(aspectmode='data', bgcolor='#ffffff'), height=750, margin=dict(l=0, r=0, b=0, t=0))
             st.plotly_chart(fig, use_container_width=True)
-
     else:
-        st.info("Suba os arquivos DXF/IFC das plantas na barra lateral para iniciar a coordenação.")
+        st.info("Suba os arquivos DXF/IFC na barra lateral.")
 
 # --- ABA 2: CLASH DETECTION ---
 with tab_clash:
-    st.subheader("Verificação de Interferências (Hard & Soft Clash) e Avoidance")
-    
+    st.subheader("Verificação de Interferências (Hard & Soft Clash)")
     if st.button("🔍 Rodar Verificação de Colisões", type="primary"):
         if st.session_state.linhas_3d_master['eletrica'] and st.session_state.linhas_3d_master['hidro']:
-            with st.spinner("Analisando malha 3D e detectando intersecções..."):
-                st.session_state.colisoes_detectadas = checar_clash_detection(
-                    st.session_state.linhas_3d_master['eletrica'],
-                    st.session_state.linhas_3d_master['hidro'],
-                    tolerancia_metros=0.15
-                )
-                if not st.session_state.colisoes_detectadas:
-                    st.success("✅ O Projeto está limpo! Nenhuma interferência entre Elétrica e Hidráulica.")
-        else:
-            st.warning("Processe as rotas primeiro na aba BIM 3D.")
-
+            st.session_state.colisoes_detectadas = checar_clash_detection(st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro'], 0.15)
+            if not st.session_state.colisoes_detectadas: st.success("✅ O Projeto está limpo! Nenhuma interferência.")
+        else: st.warning("Processe as rotas primeiro.")
     if st.session_state.colisoes_detectadas:
-        colisoes = st.session_state.colisoes_detectadas
-        st.error(f"⚠️ Foram detectados {len(colisoes)} pontos de colisão na malha 3D!")
-        st.dataframe(pd.DataFrame(colisoes), use_container_width=True)
-        
-        if st.button("🛡️ Evitar Colisões Automaticamente (Re-rotear Elétrica)", type="primary"):
-            with st.spinner("Recalculando rotas elétricas desviando das tubulações..."):
-                ctx = st.session_state.contexto_bim
-                linhas_elet_evasivas = rotear_eletrica(ctx['df_eletrica'], ctx, evitar_linhas=st.session_state.linhas_3d_master['hidro'])
-                st.session_state.linhas_3d_master['eletrica'] = linhas_elet_evasivas
-                st.session_state.colisoes_detectadas = []
-                st.success("✅ Evasão concluída! Verifique o modelo 3D (aba anterior).")
-                st.rerun()
-
-# --- ABA 3: ENGENHARIA ELÉTRICA, ALIMENTADOR GERAL & MONTAGEM VISUAL QDG ---
-with tab_eletrica:
-    st.title("⚡ Engenharia Elétrica Executiva (NBR 5410 + Recursos V12)")
-
-    df_circ = st.session_state.circuitos
-    if not df_circ.empty:
-        # 1. Dashboard de Demanda e Alimentador Geral (do V12)
-        pot_instalada = pd.to_numeric(df_circ['Potência Total (W)'], errors='coerce').fillna(0).sum()
-        demanda_est = pot_instalada * 0.80
-        tensao_alim = 220 if ("Trifásico" in sistema_fornecimento or "Bifásico" in sistema_fornecimento) else tensao_fase
-        fator_fases = 1.732 if "Trifásico" in sistema_fornecimento else 1.0
-        corrente_geral = demanda_est / (tensao_alim * fator_fases) if tensao_alim > 0 else 0.0
-        disj_geral = calcular_disjuntor(corrente_geral, 125)
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Potência Instalada Total", f"{pot_instalada:.0f} W")
-        m2.metric("Demanda Estimada (FD 0.8)", f"{demanda_est:.0f} W")
-        m3.metric("Corrente do Alimentador", f"{corrente_geral:.1f} A")
-        m4.metric("Disjuntor Geral QDG", f"{disj_geral} A")
-
-        st.divider()
-        st.subheader("⚖️ Balanceamento de Fases (R, S, T) e Ramal Alimentador (Medidor → QDG)")
-        c_r, c_s, c_t = 0.0, 0.0, 0.0
-        for _, r_f in df_circ.iterrows():
-            f_str = str(r_f.get('Fase', 'R'))
-            i_val = float(r_f.get('Corrente (A)', 0.0))
-            if '+' in f_str:
-                partes = f_str.split('+')
-                if 'R' in partes: c_r += i_val / 2.0
-                if 'S' in partes: c_s += i_val / 2.0
-                if 'T' in partes: c_t += i_val / 2.0
-            else:
-                if f_str == 'R': c_r += i_val
-                elif f_str == 'S': c_s += i_val
-                elif f_str == 'T': c_t += i_val
-
-        cf1, cf2, cf3 = st.columns(3)
-        cf1.metric("Corrente Fase R", f"{c_r:.1f} A")
-        cf2.metric("Corrente Fase S", f"{c_s:.1f} A")
-        cf3.metric("Corrente Fase T", f"{c_t:.1f} A")
-        correntes_f = [c_r, c_s, c_t]
-        if max(correntes_f) > 0 and (max(correntes_f) - min(correntes_f)) / max(correntes_f) > 0.20:
-            st.warning("⚠️ Desbalanceamento superior a 20% detectado entre fases! Clique no botão abaixo para rebalancear.")
-        else:
-            st.success("✅ Fases equilibradas dentro da tolerância normativa.")
-
-        col_mat, col_temp, col_dist = st.columns(3)
-        material_alim = col_mat.selectbox("Material do Cabo Alimentador", ["Cobre", "Alumínio"])
-        temp_alim = col_temp.selectbox("Isolação Térmica", ["70°C (PVC)", "90°C (EPR/XLPE)"])
-        dist_alim = col_dist.number_input("Distância Medidor → QDG (m)", min_value=1.0, value=20.0, step=1.0)
-
-        condutividade = 56.0 if material_alim == "Cobre" else 35.0
-        res_alim = dimensionar_circuito_nbr5410(demanda_est, tensao_alim, 0.95, "B1", 1.0, 1.0, dist_alim, "TUE", material_alim, temp_alim)
-        bitola_alim = max(6.0, res_alim["Bitola"])
-        queda_v_alim = (fator_fases * dist_alim * corrente_geral * 0.95) / (condutividade * bitola_alim)
-        queda_perc_alim = (queda_v_alim / tensao_alim) * 100.0 if tensao_alim > 0 else 0.0
-
-        if queda_perc_alim <= 2.0:
-            st.success(f"🔌 **Ramal Alimentador Recomendado:** Cabo de {material_alim} **{bitola_alim} mm²** ({temp_alim}) | **Queda no Alimentador:** {queda_perc_alim:.2f}% (OK ≤ 2.0% NBR 5410)")
-        else:
-            st.error(f"⚠️ **Ramal Alimentador:** {bitola_alim} mm² apresenta queda de **{queda_perc_alim:.2f}%** (> 2.0% NBR 5410). Aumente a seção do cabo de entrada!")
-
-    st.divider()
-    st.subheader("📋 Quadro Geral de Cargas, Curto-Circuito (Icc) e FCA Automático por Eletroduto")
-    if st.button("🚀 Recalcular Fatores (FCA Automático por Eletroduto + Icc + Balanceamento R/S/T)", type="primary", use_container_width=True):
-        if not st.session_state.circuitos.empty:
-            df_calc = st.session_state.circuitos.copy()
-            if 'Eletroduto (Ref)' not in df_calc.columns:
-                df_calc['Eletroduto (Ref)'] = 'Eletroduto Geral'
-            contagem_tubos = df_calc['Eletroduto (Ref)'].value_counts().to_dict()
-
-            for idx, r in df_calc.iterrows():
-                qtd_no_tubo = contagem_tubos.get(r.get('Eletroduto (Ref)', 'Eletroduto Geral'), 1)
-                fca_auto = obter_fca(qtd_no_tubo)
-                res = dimensionar_circuito_nbr5410(
-                    float(r.get("Potência Total (W)", 100)),
-                    int(r.get("Tensão (V)", 127)),
-                    float(r.get("Fator de Potência", 0.95)),
-                    str(r.get("Método Inst.", "B1")),
-                    fca_auto,
-                    float(r.get("FCT", 1.00)),
-                    float(r.get("Distância (m)", 15.0)),
-                    "Iluminação" if "Lâmpada" in str(r.get("Equipamento", "")) else "TUG"
-                )
-                df_calc.at[idx, "FCA"] = fca_auto
-                df_calc.at[idx, "Corrente (A)"] = res["Corrente_Ib"]
-                df_calc.at[idx, "Corrente Corrigida (A)"] = res["Corrente_Corr"]
-                df_calc.at[idx, "Bitola (mm²)"] = res["Bitola"]
-                df_calc.at[idx, "Queda Tensão (%)"] = res["Queda_Tensao_Pct"]
-                df_calc.at[idx, "Disjuntor (A)"] = res["Disjuntor"]
-                df_calc.at[idx, "Icc (A)"] = res["Icc_A"]
-                df_calc.at[idx, "Eletroduto (mm)"] = res["Eletroduto_mm"]
-                df_calc.at[idx, "Ocupação (%)"] = res["Ocupacao_Pct"]
-
-            st.session_state.circuitos = balancear_fases_automatico(df_calc)
-            st.success("✅ Engenharia reprocessada com FCA automático por eletroduto, corrente de curto-circuito (Icc) e fases equilibradas!")
+        st.error(f"⚠️ Foram detectados {len(st.session_state.colisoes_detectadas)} pontos de colisão!")
+        st.dataframe(pd.DataFrame(st.session_state.colisoes_detectadas), use_container_width=True)
+        if st.button("🛡️ Evitar Colisões (Re-rotear Elétrica)", type="primary"):
+            ctx = st.session_state.contexto_bim
+            st.session_state.linhas_3d_master['eletrica'] = rotear_eletrica(ctx['df_eletrica'], ctx, evitar_linhas=st.session_state.linhas_3d_master['hidro'])
+            st.session_state.colisoes_detectadas = []
+            st.success("✅ Evasão concluída!")
             st.rerun()
 
-    df_circ_edit = st.data_editor(st.session_state.circuitos, num_rows="dynamic", use_container_width=True)
-    st.session_state.circuitos = df_circ_edit
+# --- ABA 3: ENGENHARIA ELÉTRICA, ALIMENTADOR E QDG ---
+with tab_eletrica:
+    st.title("⚡ Engenharia Elétrica, Fator de Demanda e QDG")
+    df_circ = st.session_state.circuitos
+    if not df_circ.empty:
+        pot_inst = pd.to_numeric(df_circ['Potência Total (W)'], errors='coerce').fillna(0).sum()
+        df_el_ctx = st.session_state.contexto_bim.get('df_eletrica', [])
+        tues_count = sum(1 for b in df_el_ctx if "Chuveiro" in str(b.get('Equipamento_Associado','')) or "Ar-Condicionado" in str(b.get('Equipamento_Associado','')))
+        fd_geral, fd_tue = calcular_fator_demanda_nbr5410(pot_inst, tues_count)
+        demanda_calc = pot_inst * fd_geral
 
-    # Montagem Física Visual em HTML do QDG (trazida do V12)
-    if not st.session_state.circuitos.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Potência Instalada", f"{pot_inst:.0f} W")
+        c2.metric("Fator de Demanda Aplicado", f"{fd_geral*100:.0f}%")
+        c3.metric("Demanda Calculada", f"{demanda_calc:.0f} W")
+        tensao_alim = 220 if "Trifásico" in sistema_fornecimento else tensao_fase
+        fator_f = 1.732 if "Trifásico" in sistema_fornecimento else 1.0
+        corr_alim = demanda_calc / (tensao_alim * fator_f)
+        c4.metric("Disjuntor Geral QDG", f"{calcular_disjuntor(corr_alim, 125)} A")
+
         st.divider()
-        st.subheader("🎛️ Montagem Física Visual do QDG (Pré-Visualização Trilho DIN)")
-        df_q = st.session_state.circuitos
-        if 'Grupo DR' not in df_q.columns: df_q['Grupo DR'] = 'DR 1 (Geral)'
-        grupos_dr_usados = df_q[df_q['Grupo DR'] != 'Nenhum']['Grupo DR'].unique()
-        qtd_drs = len(grupos_dr_usados)
-        modulos_protecao = 2 + (qtd_drs * 4) + 2
-        total_ocupado = modulos_protecao + len(df_q)
-        espaco_reserva = max(2, math.ceil(total_ocupado * 0.25))
-        caixa_ideal = next((c for c in [12, 18, 24, 36, 48, 72, 100] if c >= (total_ocupado + espaco_reserva)), 100)
+        st.subheader("📋 Quadro Geral de Cargas Executivo (NBR 5410)")
+        df_circ_edit = st.data_editor(df_circ, num_rows="dynamic", use_container_width=True)
+        st.session_state.circuitos = df_circ_edit
 
-        st.info(f"📦 **Caixa Recomendada:** Quadro Embutir para **{caixa_ideal} Módulos DIN** (Ocupados: {total_ocupado} | Reserva Técnica NBR 5410: {espaco_reserva})")
+        st.divider()
+        st.subheader("🎛️ Montagem Física Visual do QDG (Trilho DIN)")
+        grupos_dr = df_circ['Grupo DR'].unique() if 'Grupo DR' in df_circ.columns else ['DR 1']
+        mod_tot = 2 + (len(grupos_dr) * 4) + 2 + len(df_circ)
+        res_tot = max(2, math.ceil(mod_tot * 0.25))
+        st.info(f"📦 **Caixa Recomendada:** Quadro para **{next((c for c in [12,18,24,36,48,72,100] if c >= (mod_tot+res_tot)), 100)} Módulos DIN** (Ocupados: {mod_tot} | Reserva NBR 5410: {res_tot})")
 
-        html_caixa = """
-        <div style="background-color: #e0e0e0; padding: 20px; border-radius: 10px; border: 2px solid #9e9e9e; max-width: 850px; margin: auto;">
-            <div style="background-color: #d5d5d5; padding: 10px; margin-bottom: 18px; display: flex; gap: 6px; flex-wrap: wrap; border-radius: 6px;">
-                <div style="background-color: #f44336; color: white; padding: 14px 10px; border-radius: 5px; font-weight: bold; width: 65px; text-align: center; font-size: 12px;">GERAL<br>3P</div>
-        """
-        for dr_nome in grupos_dr_usados:
-            html_caixa += f'<div style="background-color: #2196f3; color: white; padding: 14px 6px; border-radius: 5px; font-weight: bold; width: 115px; text-align: center; font-size: 11px;">{dr_nome}<br>IDR 4P 30mA</div>'
-        html_caixa += '<div style="background-color: #ff9800; color: white; padding: 14px 10px; border-radius: 5px; font-weight: bold; width: 65px; text-align: center; font-size: 12px;">DPS<br>275V</div></div>'
-
-        html_caixa += '<div style="background-color: #d5d5d5; padding: 10px; display: flex; gap: 6px; flex-wrap: wrap; border-radius: 6px;">'
-        for _, row in df_q.iterrows():
-            html_caixa += f'<div style="background-color: #4caf50; color: white; padding: 12px 5px; border-radius: 5px; font-weight: bold; width: 52px; text-align: center; font-size: 11px;">{row.get("ID", "?")}<br>{row.get("Disjuntor (A)", "-")}A<br><span style="color:#ffeb3b;font-size:10px;">{row.get("Fase","R")}</span></div>'
-        for _ in range(espaco_reserva):
-            html_caixa += '<div style="background-color: #9e9e9e; color: white; padding: 14px 5px; border-radius: 5px; font-weight: bold; width: 48px; text-align: center; font-size: 10px;">Reserva</div>'
-        html_caixa += '</div></div>'
-        st.markdown(html_caixa, unsafe_allow_html=True)
+        html_qdg = '<div style="background-color:#e0e0e0;padding:15px;border-radius:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:850px;margin:auto;">'
+        html_qdg += '<div style="background-color:#f44336;color:white;padding:12px 8px;border-radius:4px;font-weight:bold;text-align:center;font-size:11px;">GERAL<br>3P</div>'
+        for dr in grupos_dr: html_qdg += f'<div style="background-color:#2196f3;color:white;padding:12px 6px;border-radius:4px;font-weight:bold;text-align:center;font-size:10px;">{dr}<br>IDR 4P</div>'
+        html_qdg += '<div style="background-color:#ff9800;color:white;padding:12px 8px;border-radius:4px;font-weight:bold;text-align:center;font-size:11px;">DPS<br>275V</div>'
+        for _, r in df_circ.iterrows(): html_qdg += f'<div style="background-color:#4caf50;color:white;padding:10px 4px;border-radius:4px;font-weight:bold;text-align:center;font-size:10px;width:45px;">{r.get("ID","?")}<br>{r.get("Disjuntor (A)","-")}A</div>'
+        for _ in range(res_tot): html_qdg += '<div style="background-color:#9e9e9e;color:white;padding:10px 4px;border-radius:4px;font-weight:bold;text-align:center;font-size:9px;">RES</div>'
+        html_qdg += '</div>'
+        st.markdown(html_qdg, unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("📄 Exportação de Memoriais, Diagramas e Planilha Excel")
-    c_pdf1, c_pdf2, c_pdf3 = st.columns(3)
-    with c_pdf1:
-        if not st.session_state.circuitos.empty:
-            caminho_unif = gerar_memorial_unifilar(st.session_state.circuitos, "Memorial_Unifilar_NBR5410.pdf")
-            with open(caminho_unif, "rb") as f_pdf:
-                st.download_button("📥 Baixar Memorial + Diagrama Unifilar (PDF)", data=f_pdf.read(), file_name="Memorial_Unifilar_NBR5410.pdf", mime="application/pdf", type="primary", use_container_width=True)
-    with c_pdf2:
-        if not st.session_state.circuitos.empty:
-            caminho_qdg = gerar_pdf_qdg(st.session_state.circuitos, "Layout_QDG_DIN.pdf")
-            with open(caminho_qdg, "rb") as f_qdg:
-                st.download_button("📥 Baixar Layout Físico do QDG (PDF)", data=f_qdg.read(), file_name="Layout_QDG_DIN.pdf", mime="application/pdf", use_container_width=True)
-    with c_pdf3:
-        if not st.session_state.circuitos.empty:
-            excel_bytes, excel_nome, excel_mime = gerar_arquivo_excel_completo()
-            st.download_button("📊 Baixar Planilha Completa (.XLSX)", data=excel_bytes, file_name=excel_nome, mime=excel_mime, use_container_width=True)
+    ep1, ep2, ep3 = st.columns(3)
+    if not df_circ.empty:
+        with ep1:
+            with open(gerar_memorial_unifilar(df_circ, "Memorial.pdf"), "rb") as f: st.download_button("📥 Baixar Memorial Unifilar (PDF)", f.read(), "Memorial_NBR5410.pdf", "application/pdf", use_container_width=True)
+        with ep2:
+            with open(gerar_pdf_qdg(df_circ, "QDG.pdf"), "rb") as f: st.download_button("📥 Baixar Layout QDG (PDF)", f.read(), "Layout_QDG.pdf", "application/pdf", use_container_width=True)
+        with ep3:
+            eb, en, em = gerar_arquivo_excel_completo()
+            st.download_button("📊 Baixar Planilha Completa (.XLSX)", eb, en, em, use_container_width=True)
 
-# --- ABA 4: ENGENHARIA HIDROSSANITÁRIA (NBR 5626 & NBR 8160) ---
+# --- ABA 4: HIDROSSANITÁRIO ---
 with tab_hidro:
-    st.title("💧 Engenharia Hidrossanitária Executiva (NBR 5626 & NBR 8160)")
-    st.subheader("📋 Verificação de Pressões, Perda de Carga (Fair-Whipple-Hsiao) e Declividades")
-    st.markdown("Inclui cálculo automático de comprimentos equivalentes ($L_{eq}$), perda de carga localizada + distribuída, pressão dinâmica disponível em cada ponto de utilização e declividades de esgoto.")
-
-    df_h_display = pd.DataFrame(st.session_state.pontos_hidro) if st.session_state.pontos_hidro else pd.DataFrame(columns=[
-        "ID", "Andar", "Ambiente", "Equipamento", "z", "Peso (NBR 5626)", "Vazão (L/s)",
-        "Tubo AF (mm)", "L Real + Eq (m)", "Perda Carga (m.c.a.)", "Pressão Disp. (kPa)",
-        "Pressão Mín. (kPa)", "Status Pressão", "UHC", "Tubo Esgoto (mm)", "Declividade Esg. (%)"
-    ])
+    st.title("💧 Engenharia Hidrossanitária (NBR 5626 & NBR 8160)")
+    df_h_display = pd.DataFrame(st.session_state.pontos_hidro) if st.session_state.pontos_hidro else pd.DataFrame(columns=["ID", "Andar", "Ambiente", "Equipamento", "z", "Vazão (L/s)", "Tubo AF (mm)", "Pressão Estática (m.c.a.)", "Status Pressão", "UHC", "Tubo Esgoto (mm)"])
     df_hidro_edit = st.data_editor(df_h_display, num_rows="dynamic", use_container_width=True)
     st.session_state.pontos_hidro = df_hidro_edit.to_dict('records')
-
     st.divider()
-    st.subheader("📄 Exportação de Memorial Hidrossanitário e Lista de Materiais (PDF)")
-    ch_pdf1, ch_pdf2 = st.columns(2)
-    with ch_pdf1:
-        if not df_hidro_edit.empty:
-            dados_res = {"diario": pessoas * consumo_pc, "reserva": vol_caixa, "sugerido": vol_comercial}
-            caminho_hid_pdf = gerar_memorial_hidraulico(df_hidro_edit, dados_res, "Memorial_Hidrossanitario_Executivo.pdf")
-            with open(caminho_hid_pdf, "rb") as fh:
-                st.download_button("📥 Baixar Memorial de Cálculo Hidrossanitário (PDF)", data=fh.read(), file_name="Memorial_Hidrossanitario_Executivo.pdf", mime="application/pdf", type="primary", use_container_width=True)
-    with ch_pdf2:
-        q_m = st.session_state.quantitativos_master
-        if not q_m['agua_fria'].empty or not q_m['esgoto'].empty:
-            caminho_mat_pdf = gerar_lista_materiais_pdf(q_m['agua_fria'], q_m['agua_quente'], q_m['esgoto'], "Quantitativo_Hidrossanitario.pdf")
-            with open(caminho_mat_pdf, "rb") as fm:
-                st.download_button("📥 Baixar Lista de Materiais Hidráulicos (PDF)", data=fm.read(), file_name="Quantitativo_Hidrossanitario.pdf", mime="application/pdf", use_container_width=True)
+    hp1, hp2 = st.columns(2)
+    if not df_hidro_edit.empty:
+        with hp1:
+            with open(gerar_memorial_hidraulico(df_hidro_edit, {"diario": pessoas*consumo_pc, "reserva": vol_caixa, "sugerido": vol_comercial}, "Hidro.pdf"), "rb") as f: st.download_button("📥 Baixar Memorial Hidráulico (PDF)", f.read(), "Memorial_Hidro.pdf", "application/pdf", use_container_width=True)
+        with hp2:
+            qm = st.session_state.quantitativos_master
+            if not qm['agua_fria'].empty:
+                with open(gerar_lista_materiais_pdf(qm['agua_fria'], qm['agua_quente'], qm['esgoto'], "Mat.pdf"), "rb") as f: st.download_button("📥 Baixar Lista de Materiais (PDF)", f.read(), "Lista_Materiais.pdf", "application/pdf", use_container_width=True)
 
-# --- ABA 5: DESENHOS TÉCNICOS DE PEÇAS, QUANTITATIVOS TOTAIS E IFC/DXF ---
+# --- ABA 5: PEÇAS CAD (EXPANDIDA COM +20 ITENS) & IFC ---
 with tab_pecas_ifc:
-    st.title("📐 Desenhos Técnicos de Peças/Conexões, Quantitativos Totais & Fluxograma IFC")
-
-    st.subheader("1. Gerador de Desenho Técnico CAD de Peças e Conexões (Padrão ABNT)")
+    st.title("📐 Desenhos Técnicos de Peças, Quantitativos Totais & Fluxograma IFC")
+    st.subheader("1. Gerador de Desenho Técnico CAD (Catálogo Completo ABNT)")
     cp1, cp2 = st.columns([2, 1])
     peca_sel = cp1.selectbox("Selecione a Peça ou Conexão para Detalhamento Técnico Cotado:", [
-        "Joelho 90° (Corte Técnico)",
-        "Joelho 45° (Corte Técnico)",
-        "Tê 90° de Passagem / Derivação",
-        "Junção Simples 45° (Y - Esgoto NBR 8160)",
-        "Caixa Sifonada 150x150x50mm (Corte c/ Fecho Hídrico)",
-        "Caixa de Passagem Elétrica 4x2\" (Vista e Corte)",
-        "Disjuntor Termomagnético DIN / IDR (Vista Frontal e Lateral)"
+        "Joelho 90° (Soldável / Roscável)", "Joelho 45° (Soldável / Roscável)", "Tê 90° de Passagem / Derivação",
+        "Junção Simples 45° (Y - Esgoto NBR 8160)", "Curva Longa 90° Esgoto / Água", "Luva Simples / Luva de Correr",
+        "Redução Excêntrica / Concêntrica", "Cap / Bujão Roscado e Soldável", "Registro de Gaveta 50mm / 25mm",
+        "Registro de Pressão 3/4\"", "Caixa Sifonada 150x150x50mm", "Caixa de Gordura / Inspeção",
+        "Caixa de Passagem Elétrica 4x2\"", "Caixa de Passagem Elétrica 4x4\"", "Caixa Octogonal de Laje 4x4\"",
+        "Eletroduto Corrugado / Rígido PVC", "Disjuntor Termomagnético DIN", "Interruptor Diferencial Residual (IDR)",
+        "Dispositivo de Proteção contra Surtos (DPS)", "Barramento Neutro / Terra (PE)"
     ])
-    dn_sel = cp2.selectbox("Diâmetro Nominal / Dimensão Base (mm):", [20, 22, 25, 32, 40, 50, 75, 100], index=2)
-    fig_peca = gerar_desenho_tecnico_peca_plotly(peca_sel, dn_sel)
-    st.plotly_chart(fig_peca, use_container_width=True)
+    dn_sel = cp2.selectbox("Diâmetro / Dimensão Base (mm):", [15, 20, 22, 25, 32, 40, 50, 75, 100], index=3)
+    st.plotly_chart(gerar_desenho_tecnico_peca_plotly(peca_sel, dn_sel), use_container_width=True)
 
     st.divider()
-    st.subheader("2. Quantitativos Totais Extraídos da Geometria 3D (Bill of Materials)")
-    q_m = st.session_state.quantitativos_master
-    cq1, cq2 = st.columns(2)
-    with cq1:
-        st.markdown("**⚡ Quantitativo Total - Instalações Elétricas**")
-        st.dataframe(q_m['eletrica'], use_container_width=True, hide_index=True)
-        st.markdown("**🔥 Quantitativo Total - Água Quente (CPVC/PPR)**")
-        st.dataframe(q_m['agua_quente'], use_container_width=True, hide_index=True)
-    with cq2:
-        st.markdown("**💧 Quantitativo Total - Água Fria (PVC Soldável)**")
-        st.dataframe(q_m['agua_fria'], use_container_width=True, hide_index=True)
-        st.markdown("**🤎 Quantitativo Total - Esgoto Sanitário e Ventilação**")
-        st.dataframe(q_m['esgoto'], use_container_width=True, hide_index=True)
+    st.subheader("2. Quantitativos Totais Extraídos da Geometria 3D (BOM)")
+    qm = st.session_state.quantitativos_master
+    q1, q2 = st.columns(2)
+    with q1:
+        st.markdown("**⚡ Quantitativo Total - Elétrica**")
+        st.dataframe(qm['eletrica'], use_container_width=True, hide_index=True)
+        st.markdown("**🔥 Quantitativo Total - Água Quente**")
+        st.dataframe(qm['agua_quente'], use_container_width=True, hide_index=True)
+    with q2:
+        st.markdown("**💧 Quantitativo Total - Água Fria**")
+        st.dataframe(qm['agua_fria'], use_container_width=True, hide_index=True)
+        st.markdown("**🤎 Quantitativo Total - Esgoto**")
+        st.dataframe(qm['esgoto'], use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("3. Fluxograma Topológico IFC & Exportação de Malhas 3D (.DXF c/ Simbologia ABNT e .IFC)")
-    st.markdown("O arquivo `.DXF` exportado já inclui a **Simbologia Unifilar ABNT (Fase, Neutro, Terra e Retorno)** desenhada automaticamente nos eletrodutos.")
-    fig_ifc = gerar_fluxograma_ifc_plotly(
-        st.session_state.linhas_3d_master['eletrica'],
-        st.session_state.linhas_3d_master['hidro'],
-        config_andares
-    )
-    st.plotly_chart(fig_ifc, use_container_width=True)
+    st.subheader("3. Fluxograma Topológico IFC & Exportadores (.DXF com Símbolos ABNT e .IFC)")
+    st.plotly_chart(gerar_fluxograma_ifc_plotly(st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro'], config_andares), use_container_width=True)
 
-    paredes_export = st.session_state.contexto_bim.get('paredes', [])
-    linhas_el_exp = st.session_state.linhas_3d_master['eletrica']
-    linhas_hd_exp = st.session_state.linhas_3d_master['hidro']
-
+    paredes_exp, linhas_el_exp, linhas_hd_exp = st.session_state.contexto_bim.get('paredes', []), st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro']
     ce1, ce2, ce3 = st.columns(3)
     with ce1:
-        st.markdown("**⚡ Projeto Individual de Elétrica**")
-        st.download_button("📐 Baixar Malha Elétrica 3D + Símbolos ABNT (.DXF)", data=exportar_malha_para_dxf(linhas_el_exp, [], paredes_export, "ELETRICA"), file_name="Malha_Eletrica_3D_ABNT.dxf", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Elétrica (.IFC)", data=exportar_malha_para_ifc_step(linhas_el_exp, [], "ELETRICA"), file_name="Projeto_Eletrico_BIM.ifc", use_container_width=True)
+        st.download_button("📐 Baixar Elétrica 3D + Símbolos ABNT (.DXF)", exportar_malha_para_dxf(linhas_el_exp, [], paredes_exp, "ELETRICA"), "Eletrica_ABNT.dxf", "application/octet-stream", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Elétrica (.IFC)", exportar_malha_para_ifc_step(linhas_el_exp, [], "ELETRICA"), "Eletrico.ifc", "application/octet-stream", use_container_width=True)
     with ce2:
-        st.markdown("**💧 Projeto Individual de Hidráulica**")
-        st.download_button("📐 Baixar Malha Hidráulica 3D (.DXF)", data=exportar_malha_para_dxf([], linhas_hd_exp, paredes_export, "HIDRO"), file_name="Malha_Hidraulica_3D.dxf", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Hidráulica (.IFC)", data=exportar_malha_para_ifc_step([], linhas_hd_exp, "HIDRO"), file_name="Projeto_Hidraulico_BIM.ifc", use_container_width=True)
+        st.download_button("📐 Baixar Hidráulica 3D (.DXF)", exportar_malha_para_dxf([], linhas_hd_exp, paredes_exp, "HIDRO"), "Hidraulica.dxf", "application/octet-stream", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Hidráulica (.IFC)", exportar_malha_para_ifc_step([], linhas_hd_exp, "HIDRO"), "Hidraulico.ifc", "application/octet-stream", use_container_width=True)
     with ce3:
-        st.markdown("**🏢 Projeto Unificado Completo (Elétrica + Hidro)**")
-        st.download_button("📐 Baixar Malha Unificada 3D (.DXF)", data=exportar_malha_para_dxf(linhas_el_exp, linhas_hd_exp, paredes_export, "UNIFICADO"), file_name="Malha_MEP_Unificada_3D.dxf", type="primary", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Unificado (.IFC)", data=exportar_malha_para_ifc_step(linhas_el_exp, linhas_hd_exp, "UNIFICADO"), file_name="Projeto_MEP_Unificado_BIM.ifc", type="primary", use_container_width=True)
+        st.download_button("📐 Baixar Unificado 3D (.DXF)", exportar_malha_para_dxf(linhas_el_exp, linhas_hd_exp, paredes_exp, "UNIFICADO"), "MEP_Unificado.dxf", "application/octet-stream", type="primary", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Unificado (.IFC)", exportar_malha_para_ifc_step(linhas_el_exp, linhas_hd_exp, "UNIFICADO"), "MEP_Unificado.ifc", "application/octet-stream", type="primary", use_container_width=True)
 
-# --- ABA 6: GERENCIADOR DE BIBLIOTECAS ---
+# --- ABA 6: BIBLIOTECAS ---
 with tab_export:
     st.title("📚 Gerenciamento de Bibliotecas BIM")
-    st.markdown("As tabelas abaixo alimentam as opções e cálculos normativos em todo o sistema.")
-    
-    aba_elet, aba_hidro, aba_gas = st.tabs(["⚡ Elétrica (NBR 5410)", "💧 Instalações Hidrossanitárias (Água + Esgoto)", "🔥 Gás & Climatização (NBR 15526 / 16401)"])
-    
-    with aba_elet:
-        st.session_state.bib_eletrica = st.data_editor(st.session_state.bib_eletrica, num_rows="dynamic", use_container_width=True)
-    
-    with aba_hidro:
-        st.markdown("**Pesos (NBR 5626), Água Quente (CPVC/PPR) e UHCs (NBR 8160) unificados por equipamento**")
-        st.session_state.bib_hidro = st.data_editor(st.session_state.bib_hidro, num_rows="dynamic", use_container_width=True)
-
-    with aba_gas:
-        st.markdown("**Parâmetros Normativos de Gás Combustível (GLP/GN - NBR 15526) e Climatização Split (NBR 16401)**")
-        st.session_state.bib_gas_avac = st.data_editor(st.session_state.bib_gas_avac, num_rows="dynamic", use_container_width=True)
+    aba_elet, aba_hidro, aba_gas = st.tabs(["⚡ Elétrica", "💧 Hidrossanitário", "🔥 Gás & AVAC"])
+    with aba_elet: st.session_state.bib_eletrica = st.data_editor(st.session_state.bib_eletrica, num_rows="dynamic", use_container_width=True)
+    with aba_hidro: st.session_state.bib_hidro = st.data_editor(st.session_state.bib_hidro, num_rows="dynamic", use_container_width=True)
+    with aba_gas: st.session_state.bib_gas_avac = st.data_editor(st.session_state.bib_gas_avac, num_rows="dynamic", use_container_width=True)
