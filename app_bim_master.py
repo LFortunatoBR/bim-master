@@ -1838,4 +1838,239 @@ with tab_bim:
                     'df_hidro': df_h_processar,
                     'min_x': min_x, 'min_y': min_y, 'offset': offset, 'grid_w': grid_w, 'grid_h': grid_h, 
                     'pe_direito': ultimo_pe_direito, 'max_z_cobertura': z_cobertura,
-                    'altura_caixa': altura_caixa, 'num_barriletes': num_barriletes,
+                    'altura_caixa': altura_caixa, 'h_agua_fria': h_agua_fria, 'h_agua_quente': h_agua_quente,
+                    'altura_viga': altura_viga, 'incluir_shaft': incluir_shaft
+                }
+
+                ctx = st.session_state.contexto_bim
+                linhas_hidro = rotear_hidro(ctx['df_hidro'], ctx) if modo_visualizacao != "Apenas Elétrica" else []
+                linhas_elet = rotear_eletrica(ctx['df_eletrica'], ctx) if modo_visualizacao != "Apenas Hidrossanitário" else []
+                st.session_state.linhas_3d_master = {'eletrica': linhas_elet, 'hidro': linhas_hidro, 'equipamentos_3d': pontos_gerais}
+
+                # Executa Circuitos e Validação NBR 5410 (Seção 9)
+                novos_circuitos, qtd_tues = [], 0
+                for b_el in ctx['df_eletrica']:
+                    if b_el['Tipo_BIM'] == 'Quadro Geral': continue
+                    eq_nome = b_el.get('Equipamento_Associado', 'Tomada Uso Geral (TUG)')
+                    filtro_el = st.session_state.bib_eletrica['Equipamento'] == eq_nome
+                    if filtro_el.any():
+                        row_bib = st.session_state.bib_eletrica.loc[filtro_el].iloc[0]
+                        pot_unit, tensao_eq, fp_eq, tipo_eq, curva_eq, uso_dr = float(row_bib['Potência (W)']), int(b_el.get('Tensao_V', row_bib['Tensão (V)'])), float(row_bib['Fator de Potência']), str(row_bib['Tipo']), str(row_bib['Curva Disjuntor']), str(row_bib['Uso de DR'])
+                    else:
+                        pot_unit, tensao_eq, fp_eq, tipo_eq, curva_eq, uso_dr = 100.0, 127, 1.0, "TUG", "B", "Opcional"
+
+                    if tipo_eq == "TUE": qtd_tues += 1
+                    if b_el.get('Amperagem_Tomadas') == '20A' and pot_unit == 100.0: pot_unit = 600.0
+                    qtd_pts = max(1, int(b_el.get('Qtd_Tomadas', 1))) if 'Caixa' in b_el['Tipo_BIM'] else 1
+                    pot_total = pot_unit * qtd_pts
+                    rota_assoc = next((r for r in linhas_elet if r.get('id_origem') == b_el['ID_CAD']), None)
+                    dist_circ = rota_assoc['comprimento_m'] if rota_assoc else 15.0
+
+                    dim_5410 = dimensionar_circuito_nbr5410(pot_total, tensao_eq, fp_eq, "B1", 0.80, 1.00, dist_circ, tipo_eq)
+                    novos_circuitos.append({
+                        "ID": f"C{len(novos_circuitos)+1}", "Ambiente": b_el.get('Andar', 'Pav 0'),
+                        "Equipamento": f"{eq_nome} ({b_el['ID_CAD']})", "Qtd": qtd_pts, "Potência Total (W)": pot_total,
+                        "Tensão (V)": tensao_eq, "Fator de Potência": fp_eq, "Método Inst.": "B1",
+                        "Eletroduto (Ref)": f"Eletroduto {b_el.get('Andar','')} - Teto/Parede", "FCA": 0.80, "FCT": 1.00,
+                        "Corrente (A)": dim_5410["Corrente_Ib"], "Corrente Corrigida (A)": dim_5410["Corrente_Corr"],
+                        "Bitola (mm²)": dim_5410["Bitola"], "Queda Tensão (%)": dim_5410["Queda_Tensao_Pct"],
+                        "Disjuntor (A)": dim_5410["Disjuntor"], "Curva": curva_eq, "Icc (A)": dim_5410["Icc_A"],
+                        "Distância (m)": dist_circ, "Fase": "R", "Grupo DR": "DR 1 (Áreas Molhadas)" if uso_dr == "Obrigatório" else "DR 2 (Geral)",
+                        "Eletroduto (mm)": dim_5410["Eletroduto_mm"], "Ocupação (%)": dim_5410["Ocupacao_Pct"]
+                    })
+                if novos_circuitos: st.session_state.circuitos = balancear_fases_automatico(pd.DataFrame(novos_circuitos))
+
+                # Executa Hidráulica e Validação NBR 5626 (Pressão Estática Máxima <= 40 mca)
+                novos_pontos_hidro, z_res_mca = [], z_cobertura + altura_caixa
+                for b_hd in ctx['df_hidro']:
+                    if b_hd['Tipo_BIM'] != 'Aparelho Hidráulico': continue
+                    eq_h = b_hd['Equipamento']
+                    filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
+                    if not filtro_h.any(): continue
+                    row_h = st.session_state.bib_hidro.loc[filtro_h].iloc[0]
+                    peso_h, uhc_h, af_mm, esg_mm, pressao_req_kpa = float(row_h['Peso']), float(row_h['UHC']), int(row_h['Agua_mm']), int(row_h['Esgoto_mm']), float(row_h['Pressao_kpa'])
+                    rota_af = next((r for r in linhas_hidro if r.get('id_ap') == b_hd['ID_CAD'] and r.get('tipo') == 'Água Fria'), None)
+                    comp_real_af = calcular_comprimento_rota(rota_af['pontos']) if rota_af else 8.0
+                    vazao_ls, _, comp_eq, perda_mca = calcular_perda_carga_nbr5626(peso_h, max(20, af_mm), comp_real_af)
+                    z_ponto = b_hd['z_base'] + b_hd.get('z_relativo', 0.5)
+                    desnivel_estatico_mca = max(1.5, z_res_mca - z_ponto)
+                    pressao_estatica_mca = desnivel_estatico_mca
+                    pressao_disp_mca = max(0.0, desnivel_estatico_mca - perda_mca)
+                    pressao_disp_kpa = round(pressao_disp_mca * 9.81, 1)
+
+                    # Validação Avançada 3: Pressão Estática Máxima <= 40 mca (NBR 5626)
+                    status_pressao = "OK (NBR 5626)"
+                    if pressao_disp_kpa < pressao_req_kpa: status_pressao = "⚠️ Pressurizar!"
+                    elif pressao_estatica_mca > 40.0: status_pressao = "⚠️ Instalar VRP (> 40 m.c.a.)"
+
+                    novos_pontos_hidro.append({
+                        "ID": b_hd['ID_CAD'], "Andar": b_hd.get('Andar', 'Pav 0'), "Ambiente": b_hd.get('Andar', 'Banheiro'),
+                        "Equipamento": eq_h, "z": round(z_ponto, 2), "Peso (NBR 5626)": peso_h, "Vazão (L/s)": vazao_ls,
+                        "Tubo AF (mm)": af_mm, "L Real + Eq (m)": round(comp_real_af + comp_eq, 2), "Perda Carga (m.c.a.)": perda_mca,
+                        "Pressão Estática (m.c.a.)": round(pressao_estatica_mca, 1), "Pressão Disp. (kPa)": pressao_disp_kpa,
+                        "Status Pressão": status_pressao, "UHC": uhc_h, "Tubo Esgoto (mm)": esg_mm, "Declividade Esg. (%)": 1.0 if esg_mm >= 100 else 2.0
+                    })
+                st.session_state.pontos_hidro = novos_pontos_hidro
+                st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, st.session_state.circuitos, ctx['df_eletrica'], ctx['df_hidro'])
+                st.success("✅ Roteamento concluído com auditoria normativa NBR 5410 e NBR 5626 (VRP) aplicada!")
+
+        if st.session_state.linhas_3d_master['eletrica'] or st.session_state.linhas_3d_master['hidro'] or paredes_raw:
+            fig = go.Figure()
+            for p1, p2 in paredes_raw: fig.add_trace(go.Scatter3d(x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]], mode='lines', line=dict(color='#cccccc', width=2), showlegend=False))
+            if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
+                for linha in st.session_state.linhas_3d_master['eletrica']:
+                    pts, fios_txt = linha['pontos'], linha.get('fios', 'F N T')
+                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines', line=dict(color=linha['cor'], width=4), name=f"Elétrica ({fios_txt})"))
+                    if mostrar_fios and len(pts) >= 2:
+                        p_mid = pts[len(pts) // 2]
+                        fig.add_trace(go.Scatter3d(x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2]+0.15], mode='text', text=[fios_txt], textposition="top center", textfont=dict(color="black", size=11, family="Arial Black"), showlegend=False))
+            if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Hidrossanitário"]:
+                for linha in st.session_state.linhas_3d_master['hidro']:
+                    pts = linha['pontos']
+                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines', line=dict(color=linha['cor'], width=6), name=f"{linha.get('tipo')} DN{linha.get('diametro')}"))
+            fig.update_layout(scene=dict(aspectmode='data', bgcolor='#ffffff'), height=750, margin=dict(l=0, r=0, b=0, t=0))
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Suba os arquivos DXF/IFC na barra lateral.")
+
+# --- ABA 2: CLASH DETECTION ---
+with tab_clash:
+    st.subheader("Verificação de Interferências (Hard & Soft Clash)")
+    if st.button("🔍 Rodar Verificação de Colisões", type="primary"):
+        if st.session_state.linhas_3d_master['eletrica'] and st.session_state.linhas_3d_master['hidro']:
+            st.session_state.colisoes_detectadas = checar_clash_detection(st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro'], 0.15)
+            if not st.session_state.colisoes_detectadas: st.success("✅ O Projeto está limpo! Nenhuma interferência.")
+        else: st.warning("Processe as rotas primeiro.")
+    if st.session_state.colisoes_detectadas:
+        st.error(f"⚠️ Foram detectados {len(st.session_state.colisoes_detectadas)} pontos de colisão!")
+        st.dataframe(pd.DataFrame(st.session_state.colisoes_detectadas), use_container_width=True)
+        if st.button("🛡️ Evitar Colisões (Re-rotear Elétrica)", type="primary"):
+            ctx = st.session_state.contexto_bim
+            st.session_state.linhas_3d_master['eletrica'] = rotear_eletrica(ctx['df_eletrica'], ctx, evitar_linhas=st.session_state.linhas_3d_master['hidro'])
+            st.session_state.colisoes_detectadas = []
+            st.success("✅ Evasão concluída!")
+            st.rerun()
+
+# --- ABA 3: ENGENHARIA ELÉTRICA, ALIMENTADOR E QDG ---
+with tab_eletrica:
+    st.title("⚡ Engenharia Elétrica, Fator de Demanda e QDG")
+    df_circ = st.session_state.circuitos
+    if not df_circ.empty:
+        pot_inst = pd.to_numeric(df_circ['Potência Total (W)'], errors='coerce').fillna(0).sum()
+        df_el_ctx = st.session_state.contexto_bim.get('df_eletrica', [])
+        tues_count = sum(1 for b in df_el_ctx if "Chuveiro" in str(b.get('Equipamento_Associado','')) or "Ar-Condicionado" in str(b.get('Equipamento_Associado','')))
+        fd_geral, fd_tue = calcular_fator_demanda_nbr5410(pot_inst, tues_count)
+        demanda_calc = pot_inst * fd_geral
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Potência Instalada", f"{pot_inst:.0f} W")
+        c2.metric("Fator de Demanda Aplicado", f"{fd_geral*100:.0f}%")
+        c3.metric("Demanda Calculada", f"{demanda_calc:.0f} W")
+        tensao_alim = 220 if "Trifásico" in sistema_fornecimento else tensao_fase
+        fator_f = 1.732 if "Trifásico" in sistema_fornecimento else 1.0
+        corr_alim = demanda_calc / (tensao_alim * fator_f)
+        c4.metric("Disjuntor Geral QDG", f"{calcular_disjuntor(corr_alim, 125)} A")
+
+        st.divider()
+        st.subheader("📋 Quadro Geral de Cargas Executivo (NBR 5410)")
+        df_circ_edit = st.data_editor(df_circ, num_rows="dynamic", use_container_width=True)
+        st.session_state.circuitos = df_circ_edit
+
+        st.divider()
+        st.subheader("🎛️ Montagem Física Visual do QDG (Trilho DIN)")
+        grupos_dr = df_circ['Grupo DR'].unique() if 'Grupo DR' in df_circ.columns else ['DR 1']
+        mod_tot = 2 + (len(grupos_dr) * 4) + 2 + len(df_circ)
+        res_tot = max(2, math.ceil(mod_tot * 0.25))
+        st.info(f"📦 **Caixa Recomendada:** Quadro para **{next((c for c in [12,18,24,36,48,72,100] if c >= (mod_tot+res_tot)), 100)} Módulos DIN** (Ocupados: {mod_tot} | Reserva NBR 5410: {res_tot})")
+
+        html_qdg = '<div style="background-color:#e0e0e0;padding:15px;border-radius:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:850px;margin:auto;">'
+        html_qdg += '<div style="background-color:#f44336;color:white;padding:12px 8px;border-radius:4px;font-weight:bold;text-align:center;font-size:11px;">GERAL<br>3P</div>'
+        for dr in grupos_dr: html_qdg += f'<div style="background-color:#2196f3;color:white;padding:12px 6px;border-radius:4px;font-weight:bold;text-align:center;font-size:10px;">{dr}<br>IDR 4P</div>'
+        html_qdg += '<div style="background-color:#ff9800;color:white;padding:12px 8px;border-radius:4px;font-weight:bold;text-align:center;font-size:11px;">DPS<br>275V</div>'
+        for _, r in df_circ.iterrows(): html_qdg += f'<div style="background-color:#4caf50;color:white;padding:10px 4px;border-radius:4px;font-weight:bold;text-align:center;font-size:10px;width:45px;">{r.get("ID","?")}<br>{r.get("Disjuntor (A)","-")}A</div>'
+        for _ in range(res_tot): html_qdg += '<div style="background-color:#9e9e9e;color:white;padding:10px 4px;border-radius:4px;font-weight:bold;text-align:center;font-size:9px;">RES</div>'
+        html_qdg += '</div>'
+        st.markdown(html_qdg, unsafe_allow_html=True)
+
+    st.divider()
+    ep1, ep2, ep3 = st.columns(3)
+    if not df_circ.empty:
+        with ep1:
+            with open(gerar_memorial_unifilar(df_circ, "Memorial.pdf"), "rb") as f: st.download_button("📥 Baixar Memorial Unifilar (PDF)", f.read(), "Memorial_NBR5410.pdf", "application/pdf", use_container_width=True)
+        with ep2:
+            with open(gerar_pdf_qdg(df_circ, "QDG.pdf"), "rb") as f: st.download_button("📥 Baixar Layout QDG (PDF)", f.read(), "Layout_QDG.pdf", "application/pdf", use_container_width=True)
+        with ep3:
+            eb, en, em = gerar_arquivo_excel_completo()
+            st.download_button("📊 Baixar Planilha Completa (.XLSX)", eb, en, em, use_container_width=True)
+
+# --- ABA 4: HIDROSSANITÁRIO ---
+with tab_hidro:
+    st.title("💧 Engenharia Hidrossanitária (NBR 5626 & NBR 8160)")
+    df_h_display = pd.DataFrame(st.session_state.pontos_hidro) if st.session_state.pontos_hidro else pd.DataFrame(columns=["ID", "Andar", "Ambiente", "Equipamento", "z", "Vazão (L/s)", "Tubo AF (mm)", "Pressão Estática (m.c.a.)", "Status Pressão", "UHC", "Tubo Esgoto (mm)"])
+    df_hidro_edit = st.data_editor(df_h_display, num_rows="dynamic", use_container_width=True)
+    st.session_state.pontos_hidro = df_hidro_edit.to_dict('records')
+    st.divider()
+    hp1, hp2 = st.columns(2)
+    if not df_hidro_edit.empty:
+        with hp1:
+            with open(gerar_memorial_hidraulico(df_hidro_edit, {"diario": pessoas*consumo_pc, "reserva": vol_caixa, "sugerido": vol_comercial}, "Hidro.pdf"), "rb") as f: st.download_button("📥 Baixar Memorial Hidráulico (PDF)", f.read(), "Memorial_Hidro.pdf", "application/pdf", use_container_width=True)
+        with hp2:
+            qm = st.session_state.quantitativos_master
+            if not qm['agua_fria'].empty:
+                with open(gerar_lista_materiais_pdf(qm['agua_fria'], qm['agua_quente'], qm['esgoto'], "Mat.pdf"), "rb") as f: st.download_button("📥 Baixar Lista de Materiais (PDF)", f.read(), "Lista_Materiais.pdf", "application/pdf", use_container_width=True)
+
+# --- ABA 5: PEÇAS CAD (EXPANDIDA COM +20 ITENS) & IFC ---
+with tab_pecas_ifc:
+    st.title("📐 Desenhos Técnicos de Peças, Quantitativos Totais & Fluxograma IFC")
+    st.subheader("1. Gerador de Desenho Técnico CAD (Catálogo Completo ABNT)")
+    cp1, cp2 = st.columns([2, 1])
+    peca_sel = cp1.selectbox("Selecione a Peça ou Conexão para Detalhamento Técnico Cotado:", [
+        "Joelho 90° (Soldável / Roscável)", "Joelho 45° (Soldável / Roscável)", "Tê 90° de Passagem / Derivação",
+        "Junção Simples 45° (Y - Esgoto NBR 8160)", "Curva Longa 90° Esgoto / Água", "Luva Simples / Luva de Correr",
+        "Redução Excêntrica / Concêntrica", "Cap / Bujão Roscado e Soldável", "Registro de Gaveta 50mm / 25mm",
+        "Registro de Pressão 3/4\"", "Caixa Sifonada 150x150x50mm", "Caixa de Gordura / Inspeção",
+        "Caixa de Passagem Elétrica 4x2\"", "Caixa de Passagem Elétrica 4x4\"", "Caixa Octogonal de Laje 4x4\"",
+        "Eletroduto Corrugado / Rígido PVC", "Disjuntor Termomagnético DIN", "Interruptor Diferencial Residual (IDR)",
+        "Dispositivo de Proteção contra Surtos (DPS)", "Barramento Neutro / Terra (PE)"
+    ])
+    dn_sel = cp2.selectbox("Diâmetro / Dimensão Base (mm):", [15, 20, 22, 25, 32, 40, 50, 75, 100], index=3)
+    st.plotly_chart(gerar_desenho_tecnico_peca_plotly(peca_sel, dn_sel), use_container_width=True)
+
+    st.divider()
+    st.subheader("2. Quantitativos Totais Extraídos da Geometria 3D (BOM)")
+    qm = st.session_state.quantitativos_master
+    q1, q2 = st.columns(2)
+    with q1:
+        st.markdown("**⚡ Quantitativo Total - Elétrica**")
+        st.dataframe(qm['eletrica'], use_container_width=True, hide_index=True)
+        st.markdown("**🔥 Quantitativo Total - Água Quente**")
+        st.dataframe(qm['agua_quente'], use_container_width=True, hide_index=True)
+    with q2:
+        st.markdown("**💧 Quantitativo Total - Água Fria**")
+        st.dataframe(qm['agua_fria'], use_container_width=True, hide_index=True)
+        st.markdown("**🤎 Quantitativo Total - Esgoto**")
+        st.dataframe(qm['esgoto'], use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("3. Fluxograma Topológico IFC & Exportadores (.DXF com Símbolos ABNT e .IFC)")
+    st.plotly_chart(gerar_fluxograma_ifc_plotly(st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro'], config_andares), use_container_width=True)
+
+    paredes_exp, linhas_el_exp, linhas_hd_exp = st.session_state.contexto_bim.get('paredes', []), st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro']
+    ce1, ce2, ce3 = st.columns(3)
+    with ce1:
+        st.download_button("📐 Baixar Elétrica 3D + Símbolos ABNT (.DXF)", exportar_malha_para_dxf(linhas_el_exp, [], paredes_exp, "ELETRICA"), "Eletrica_ABNT.dxf", "application/octet-stream", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Elétrica (.IFC)", exportar_malha_para_ifc_step(linhas_el_exp, [], "ELETRICA"), "Eletrico.ifc", "application/octet-stream", use_container_width=True)
+    with ce2:
+        st.download_button("📐 Baixar Hidráulica 3D (.DXF)", exportar_malha_para_dxf([], linhas_hd_exp, paredes_exp, "HIDRO"), "Hidraulica.dxf", "application/octet-stream", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Hidráulica (.IFC)", exportar_malha_para_ifc_step([], linhas_hd_exp, "HIDRO"), "Hidraulico.ifc", "application/octet-stream", use_container_width=True)
+    with ce3:
+        st.download_button("📐 Baixar Unificado 3D (.DXF)", exportar_malha_para_dxf(linhas_el_exp, linhas_hd_exp, paredes_exp, "UNIFICADO"), "MEP_Unificado.dxf", "application/octet-stream", type="primary", use_container_width=True)
+        st.download_button("🧱 Baixar IFC Unificado (.IFC)", exportar_malha_para_ifc_step(linhas_el_exp, linhas_hd_exp, "UNIFICADO"), "MEP_Unificado.ifc", "application/octet-stream", type="primary", use_container_width=True)
+
+# --- ABA 6: BIBLIOTECAS ---
+with tab_export:
+    st.title("📚 Gerenciamento de Bibliotecas BIM")
+    aba_elet, aba_hidro, aba_gas = st.tabs(["⚡ Elétrica", "💧 Hidrossanitário", "🔥 Gás & AVAC"])
+    with aba_elet: st.session_state.bib_eletrica = st.data_editor(st.session_state.bib_eletrica, num_rows="dynamic", use_container_width=True)
+    with aba_hidro: st.session_state.bib_hidro = st.data_editor(st.session_state.bib_hidro, num_rows="dynamic", use_container_width=True)
+    with aba_gas: st.session_state.bib_gas_avac = st.data_editor(st.session_state.bib_gas_avac, num_rows="dynamic", use_container_width=True)
