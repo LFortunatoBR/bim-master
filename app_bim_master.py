@@ -511,6 +511,29 @@ def inicializar_bibliotecas_internas():
 
 inicializar_bibliotecas_internas()
 
+def garantir_tubos_queda_subida_na_biblioteca():
+    """Injeta os Tubos de Queda (Descida) e Colunas de Subida de Água Fria e Quente na bib_hidro."""
+    novos_itens = [
+        {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 50mm)", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 40mm)", "Vazao_Ls": 1.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 32mm)", "Vazao_Ls": 0.60, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 25mm)", "Vazao_Ls": 0.40, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Coluna de Subida Água Fria (CS-AF 32mm)", "Vazao_Ls": 0.60, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Coluna de Subida Água Fria (CS-AF 25mm)", "Vazao_Ls": 0.40, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubo de Queda Água Quente (TQ-AQ 28mm)", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 28, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubo de Queda Água Quente (TQ-AQ 22mm)", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Coluna de Subida Água Quente (CS-AQ 28mm)", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 28, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Coluna de Subida Água Quente (CS-AQ 22mm)", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Condutor Vertical de Águas Pluviais (AP 100mm)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
+    ]
+    if 'bib_hidro' in st.session_state:
+        existentes = set(st.session_state.bib_hidro['Equipamento'].values)
+        faltantes = [item for item in novos_itens if item["Equipamento"] not in existentes]
+        if faltantes:
+            st.session_state.bib_hidro = pd.concat([st.session_state.bib_hidro, pd.DataFrame(faltantes)], ignore_index=True)
+
+garantir_tubos_queda_subida_na_biblioteca()
+
 def exportar_projeto():
     estado = {
         "circuitos": st.session_state.circuitos.to_dict('records') if not st.session_state.circuitos.empty else [],
@@ -873,8 +896,25 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
             nova_linha.append(p_fim)
     return nova_linha
 
+def contar_conexoes_na_rota(pontos):
+    """Conta exatamente quantos Joelhos de 90° e 45° existem ao longo de uma polilinha 3D."""
+    j90, j45 = 0, 0
+    for i in range(1, len(pontos) - 1):
+        ang = calcular_angulo_deflexao(pontos[i-1], pontos[i], pontos[i+1])
+        if 70 <= ang <= 115:
+            j90 += 1
+        elif 20 <= ang < 70:
+            j45 += 1
+    return j90, j45
+
 def rotear_hidro(df_bh, ctx):
-    """Roteamento Hidrossanitário com conexão automática à prumada mais próxima (Múltiplas Prumadas)."""
+    """
+    Motor Hidrossanitário de Ciclo Completo 3D:
+    1. Caixa d'Água -> Tubo de Queda AF -> Caminho Abaixo do Solo (z_subsolo) -> Coluna de Subida AF -> Prumada/Parede -> Aparelhos.
+    2. Alimentação -> Boiler/Aquecedor -> Tubo de Queda AQ -> Subsolo -> Coluna de Subida AQ -> Aparelhos AQ.
+    3. Aparelhos -> Ramal de Esgoto (c/ caimento 1% e 2%) -> Tubo de Queda (TQ) -> Subcoletor Enterrado -> Caixa de Inspeção Final.
+    Salva o comprimento acumulado real e as conexões de todo o trajeto para o cálculo perfeito da NBR 5626.
+    """
     linhas_processadas = []
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
     
@@ -894,142 +934,275 @@ def rotear_hidro(df_bh, ctx):
     h_af = ctx.get('h_agua_fria', 2.2)
     h_aq = ctx.get('h_agua_quente', 1.1)
     h_viga = ctx.get('altura_viga', 0.40)
+    z_subsolo_af = ctx.get('z_subsolo_af', -0.40) # Cota enterrada abaixo do nível do solo para travessia
 
-    prumadas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Água Fria']
-    prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
+    # Separação de todos os blocos por função topológica no ciclo das águas
     caixas_dagua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
+    quedas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Fria']
+    subidas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Fria']
+    prumadas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Água Fria']
+
+    boilers_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Boiler / Aquecedor']
+    quedas_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Quente']
+    subidas_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Quente']
+
+    prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
+    caixas_inspecao = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Inspeção / Destino Esgoto']
 
     equips_af_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro['Agua_mm'] > 0]['Equipamento'].values)
     equips_aq_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro.get('AQ_mm', pd.Series([0]*len(st.session_state.bib_hidro))) > 0]['Equipamento'].values)
 
-    # Barrilete alimentando TODAS as prumadas de Água Fria a partir da Caixa d'Água mais próxima
-    if caixas_dagua and prumadas_af:
-        for prum in prumadas_af:
-            cx_sup = min(caixas_dagua, key=lambda c: dist_2d((prum['x'], prum['y']), (c['x'], c['y'])))
+    def rota_a_star_2d(orig, dest, permitir_diagonal=False):
+        ox = escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])
+        oy = escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])
+        dx = escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])
+        dy = escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])
+        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'])
+        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'])
+        grid = Grid(matrix=matriz)
+        mov = DiagonalMovement.always if permitir_diagonal else DiagonalMovement.never
+        finder = AStarFinder(diagonal_movement=mov)
+        caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
+        return [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
+
+    # Peso total de água fria para dimensionar os troncos principais (Queda e Subida)
+    peso_total_projeto = 0.0
+    for ap in df_bh:
+        if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
+            f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
+            if f_eq.any():
+                peso_total_projeto += float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
+    dn_tronco_af = max(32, dimensionar_tubo_agua(peso_total_projeto))
+
+    # Dicionário que acumula (comprimento_m, qtd_joelhos90, qtd_tes) desde a Caixa d'Água até cada nó intermediário
+    historico_no_af = {}
+
+    # =========================================================================
+    # ETAPA 1: CAIXA D'ÁGUA -> TUBOS DE QUEDA AF (DESCIDA ATÉ O SOLO/SUBSOLO)
+    # =========================================================================
+    alvos_descida_inicial = quedas_af if quedas_af else prumadas_af
+    if caixas_dagua and alvos_descida_inicial:
+        for tq_af in alvos_descida_inicial:
+            cx_sup = min(caixas_dagua, key=lambda c: dist_2d((tq_af['x'], tq_af['y']), (c['x'], c['y'])))
+            z_saida_cx = cx_sup['z_base'] + ctx.get('altura_caixa', 1.5)
             z_barrilete = cx_sup['z_base'] + 0.20
-            pts_barrilete = [
-                (cx_sup['x'], cx_sup['y'], cx_sup['z_base'] + ctx.get('altura_caixa', 1.5)),
+            z_fundo_queda = z_subsolo_af if subidas_af else 0.0
+
+            pts_queda = [
+                (cx_sup['x'], cx_sup['y'], z_saida_cx),
                 (cx_sup['x'], cx_sup['y'], z_barrilete),
-                (prum['x'], cx_sup['y'], z_barrilete),
-                (prum['x'], prum['y'], z_barrilete),
-                (prum['x'], prum['y'], 0.0)
+                (tq_af['x'], cx_sup['y'], z_barrilete),
+                (tq_af['x'], tq_af['y'], z_barrilete),
+                (tq_af['x'], tq_af['y'], z_fundo_queda)
             ]
-            linhas_processadas.append({'pontos': pts_barrilete, 'cor': '#0044cc', 'tipo': f"Barrilete / Coluna {prum['ID_CAD']}", 'diametro': 50})
+            linhas_processadas.append({
+                'pontos': pts_queda, 'cor': '#003399',
+                'tipo': f"Água Fria - Tubo de Queda ({tq_af['ID_CAD']})", 'diametro': dn_tronco_af
+            })
+            j90_q, _ = contar_conexoes_na_rota(pts_queda)
+            historico_no_af[tq_af['ID_CAD']] = {
+                'comp_m': calcular_comprimento_rota(pts_queda),
+                'j90': j90_q, 'tes': 1
+            }
 
-    # 1. Roteamento Água Fria e Quente conectado à Prumada AF mais próxima do aparelho
-    if prumadas_af:
+    # =========================================================================
+    # ETAPA 2: TUBO DE QUEDA AF (ABAIXO DO SOLO) -> COLUNA DE SUBIDA AF (PAREDE)
+    # =========================================================================
+    if subidas_af:
+        origens_subsolo = quedas_af if quedas_af else (prumadas_af if prumadas_af else caixas_dagua)
+        for col_sub in subidas_af:
+            z_topo_subida = col_sub['z_base'] + h_af
+            if origens_subsolo:
+                orig_q = min(origens_subsolo, key=lambda q: dist_2d((col_sub['x'], col_sub['y']), (q['x'], q['y'])))
+                pts_2d_sub = rota_a_star_2d(orig_q, col_sub, permitir_diagonal=False)
+                pts_subsolo_e_subida = [(orig_q['x'], orig_q['y'], z_subsolo_af)]
+                for px, py in pts_2d_sub:
+                    pts_subsolo_e_subida.append((px, py, z_subsolo_af))
+                pts_subsolo_e_subida.append((col_sub['x'], col_sub['y'], z_subsolo_af))
+                pts_subsolo_e_subida.append((col_sub['x'], col_sub['y'], z_topo_subida))
+
+                linhas_processadas.append({
+                    'pontos': pts_subsolo_e_subida, 'cor': '#0066cc',
+                    'tipo': f"Água Fria - Subsolo + Subida ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
+                })
+                hist_ant = historico_no_af.get(orig_q['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
+                j90_s, _ = contar_conexoes_na_rota(pts_subsolo_e_subida)
+                historico_no_af[col_sub['ID_CAD']] = {
+                    'comp_m': hist_ant['comp_m'] + calcular_comprimento_rota(pts_subsolo_e_subida),
+                    'j90': hist_ant['j90'] + j90_s,
+                    'tes': hist_ant['tes'] + 1
+                }
+            else:
+                pts_sub_isolada = [(col_sub['x'], col_sub['y'], z_subsolo_af), (col_sub['x'], col_sub['y'], z_topo_subida)]
+                linhas_processadas.append({
+                    'pontos': pts_sub_isolada, 'cor': '#0066cc',
+                    'tipo': f"Água Fria - Coluna de Subida ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
+                })
+                historico_no_af[col_sub['ID_CAD']] = {'comp_m': calcular_comprimento_rota(pts_sub_isolada), 'j90': 2, 'tes': 1}
+
+    # Se houver tanto Coluna de Subida AF quanto Prumada/Descida de Parede AF, interliga Subida -> Prumada pelo alto da parede
+    if subidas_af and prumadas_af:
         for prum in prumadas_af:
-            px_af = escalar_coord(prum['x'] - ctx['min_x'] + ctx['offset'])
-            py_af = escalar_coord(prum['y'] - ctx['min_y'] + ctx['offset'])
-            liberar_caixa(matriz, px_af, py_af, ctx['grid_w'], ctx['grid_h'])
+            sub_prox = min(subidas_af, key=lambda s: dist_2d((prum['x'], prum['y']), (s['x'], s['y'])))
+            z_travessia = max(prum['z_base'], sub_prox['z_base']) + h_af
+            pts_2d_p = rota_a_star_2d(sub_prox, prum, permitir_diagonal=False)
+            pts_lig = [(sub_prox['x'], sub_prox['y'], z_travessia)]
+            for px, py in pts_2d_p:
+                pts_lig.append((px, py, z_travessia))
+            pts_lig.append((prum['x'], prum['y'], z_travessia))
+            pts_lig = aplicar_desvios_estruturais_e_vaos_3d(pts_lig, elementos_arq, prum['z_base'], prum.get('pe_direito', 3.0), h_viga)
+            linhas_processadas.append({
+                'pontos': pts_lig, 'cor': '#0055aa',
+                'tipo': f"Água Fria - Distribuição Parede ({prum['ID_CAD']})", 'diametro': 32
+            })
+            hist_s = historico_no_af.get(sub_prox['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
+            j90_p, _ = contar_conexoes_na_rota(pts_lig)
+            historico_no_af[prum['ID_CAD']] = {
+                'comp_m': hist_s['comp_m'] + calcular_comprimento_rota(pts_lig),
+                'j90': hist_s['j90'] + j90_p,
+                'tes': hist_s['tes'] + 1
+            }
 
-        pesos_por_prumada = {p['ID_CAD']: 0.0 for p in prumadas_af}
+    # =========================================================================
+    # ETAPA 3: DISTRIBUIÇÃO E DESCIDA NAS PAREDES ATÉ OS APARELHOS (ÁGUA FRIA)
+    # =========================================================================
+    fontes_distribuicao_af = prumadas_af if prumadas_af else (subidas_af if subidas_af else (quedas_af if quedas_af else caixas_dagua))
+    if fontes_distribuicao_af:
+        pesos_acum = {f['ID_CAD']: 0.0 for f in fontes_distribuicao_af}
         for ap in df_bh:
             if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
-                prum_af = min(prumadas_af, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-                paf_x = escalar_coord(prum_af['x'] - ctx['min_x'] + ctx['offset'])
-                paf_y = escalar_coord(prum_af['y'] - ctx['min_y'] + ctx['offset'])
+                fonte_af = min(fontes_distribuicao_af, key=lambda f: abs(f['z_base'] - ap['z_base']) * 5 + dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
+                f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
+                peso_ap = float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
+                dn_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0])
+                pesos_acum[fonte_af['ID_CAD']] += peso_ap
+                diametro_ramal = max(dn_ap, dimensionar_tubo_agua(pesos_acum[fonte_af['ID_CAD']]))
 
-                filtro_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-                peso_ap = float(st.session_state.bib_hidro.loc[filtro_eq, 'Peso'].values[0])
-                pesos_por_prumada[prum_af['ID_CAD']] += peso_ap
-                diametro_calculado = dimensionar_tubo_agua(pesos_por_prumada[prum_af['ID_CAD']])
-                
-                ap_x = escalar_coord(ap['x'] - ctx['min_x'] + ctx['offset'])
-                ap_y = escalar_coord(ap['y'] - ctx['min_y'] + ctx['offset'])
-                liberar_caixa(matriz, ap_x, ap_y, ctx['grid_w'], ctx['grid_h'])
-                
-                grid = Grid(matrix=matriz)
-                finder = AStarFinder(diagonal_movement=DiagonalMovement.never)
-                caminho_2d, _ = finder.find_path(grid.node(ap_x, ap_y), grid.node(paf_x, paf_y), grid)
-                
-                if caminho_2d:
-                    linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6)), (ap['x'], ap['y'], ap['z_base'] + h_af)]
-                    for p in caminho_2d:
-                        linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_af))
-                    linha_3d.append((prum_af['x'], prum_af['y'], ap['z_base'] + h_af))
+                pts_2d_ap = rota_a_star_2d(ap, fonte_af, permitir_diagonal=False)
+                if pts_2d_ap:
+                    z_ponto_consumo = ap['z_base'] + ap.get('z_relativo', 0.6)
+                    z_ramal_parede = ap['z_base'] + h_af
+                    # O ramal vem na altura h_af pela parede e DESCE (ou sobe) na prumada exata do aparelho até z_ponto_consumo!
+                    linha_3d = [(ap['x'], ap['y'], z_ponto_consumo), (ap['x'], ap['y'], z_ramal_parede)]
+                    for px, py in pts_2d_ap:
+                        linha_3d.append((px, py, z_ramal_parede))
+                    linha_3d.append((fonte_af['x'], fonte_af['y'], z_ramal_parede))
                     linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
+
+                    hist_f = historico_no_af.get(fonte_af['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
+                    comp_ramal = calcular_comprimento_rota(linha_3d)
+                    j90_r, j45_r = contar_conexoes_na_rota(linha_3d)
+
                     linhas_processadas.append({
                         'pontos': linha_3d, 'cor': 'blue', 'tipo': 'Água Fria',
-                        'diametro': diametro_calculado, 'equipamento': ap['Equipamento'],
-                        'id_ap': ap['ID_CAD'], 'prumada_ref': prum_af['ID_CAD']
+                        'diametro': diametro_ramal, 'equipamento': ap['Equipamento'],
+                        'id_ap': ap['ID_CAD'], 'prumada_ref': fonte_af['ID_CAD'],
+                        'comp_acumulado_total_m': round(hist_f['comp_m'] + comp_ramal, 2),
+                        'j90_acumulados': hist_f['j90'] + j90_r,
+                        'tes_acumulados': hist_f['tes'] + 1
                     })
 
-                    if ap['Equipamento'] in equips_aq_validos:
-                        linha_aq = [(ap['x'] + 0.10, ap['y'], ap['z_base'] + ap.get('z_relativo', 0.6)), (ap['x'] + 0.10, ap['y'], ap['z_base'] + h_aq)]
-                        for p in caminho_2d:
-                            linha_aq.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'] + 0.08, desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], ap['z_base'] + h_aq))
-                        linha_aq.append((prum_af['x'] + 0.08, prum_af['y'], ap['z_base'] + h_aq))
-                        linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
-                        linhas_processadas.append({
-                            'pontos': linha_aq, 'cor': 'red', 'tipo': 'Água Quente',
-                            'diametro': 22, 'equipamento': ap['Equipamento'],
-                            'id_ap': ap['ID_CAD'], 'prumada_ref': prum_af['ID_CAD']
-                        })
+    # =========================================================================
+    # ETAPA 4: CICLO COMPLETO DE ÁGUA QUENTE (BOILER -> QUEDA AQ -> SUBIDA AQ -> APARELHOS)
+    # =========================================================================
+    fontes_aq = subidas_aq if subidas_aq else (quedas_aq if quedas_aq else (boilers_aq if boilers_aq else fontes_distribuicao_af))
+    if quedas_aq and subidas_aq:
+        for sub_q in subidas_aq:
+            qd_q = min(quedas_aq, key=lambda q: dist_2d((sub_q['x'], sub_q['y']), (q['x'], q['y'])))
+            z_sub_aq = z_subsolo_af + 0.08
+            pts_2d_aq = rota_a_star_2d(qd_q, sub_q, permitir_diagonal=False)
+            linha_sub_aq = [(qd_q['x'], qd_q['y'], qd_q['z_base'] + h_aq), (qd_q['x'], qd_q['y'], z_sub_aq)]
+            for px, py in pts_2d_aq:
+                linha_sub_aq.append((px, py, z_sub_aq))
+            linha_sub_aq.extend([(sub_q['x'], sub_q['y'], z_sub_aq), (sub_q['x'], sub_q['y'], sub_q['z_base'] + h_aq)])
+            linhas_processadas.append({'pontos': linha_sub_aq, 'cor': '#cc0000', 'tipo': f"Água Quente - Queda + Subida ({sub_q['ID_CAD']})", 'diametro': 28})
 
-    # 2. Roteamento de Esgoto conectado ao Tubo de Queda (TQ) mais próximo do aparelho
-    if prumadas_esg:
+    if fontes_aq:
+        for ap in df_bh:
+            if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_aq_validos:
+                fonte_q = min(fontes_aq, key=lambda f: dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
+                pts_2d_q = rota_a_star_2d(ap, fonte_q, permitir_diagonal=False)
+                if pts_2d_q:
+                    z_pt_aq = ap['z_base'] + ap.get('z_relativo', 0.6)
+                    z_ram_aq = ap['z_base'] + h_aq
+                    linha_aq = [(ap['x'] + 0.10, ap['y'], z_pt_aq), (ap['x'] + 0.10, ap['y'], z_ram_aq)]
+                    for px, py in pts_2d_q:
+                        linha_aq.append((px + 0.08, py, z_ram_aq))
+                    linha_aq.append((fonte_q['x'] + 0.08, fonte_q['y'], z_ram_aq))
+                    linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
+                    linhas_processadas.append({
+                        'pontos': linha_aq, 'cor': 'red', 'tipo': 'Água Quente',
+                        'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
+                    })
+
+    # =========================================================================
+    # ETAPA 5: CICLO COMPLETO DE ESGOTO (APARELHOS -> TQ ESGOTO -> CAIXA DE INSPEÇÃO FINAL)
+    # =========================================================================
+    alvos_esg = prumadas_esg if prumadas_esg else caixas_inspecao
+    if alvos_esg:
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
         for prum_e in prumadas_esg:
-            pe_x = escalar_coord(prum_e['x'] - ctx['min_x'] + ctx['offset'])
-            pe_y = escalar_coord(prum_e['y'] - ctx['min_y'] + ctx['offset'])
-            liberar_caixa(matriz, pe_x, pe_y, ctx['grid_w'], ctx['grid_h'])
             linhas_processadas.append({
-                'pontos': [(prum_e['x'], prum_e['y'], z_topo_vent), (prum_e['x'], prum_e['y'], 0.0)],
-                'cor': '#5c3a21', 'tipo': f"Tubo de Queda ({prum_e['ID_CAD']})", 'diametro': 100
+                'pontos': [(prum_e['x'], prum_e['y'], z_topo_vent), (prum_e['x'], prum_e['y'], z_subsolo_af - 0.10)],
+                'cor': '#5c3a21', 'tipo': f"Tubo de Queda Esgoto ({prum_e['ID_CAD']})", 'diametro': 100
             })
             linhas_processadas.append({
                 'pontos': [(prum_e['x'] + 0.15, prum_e['y'], z_topo_vent), (prum_e['x'] + 0.15, prum_e['y'], 0.0)],
                 'cor': '#2ca02c', 'tipo': f"Coluna de Ventilação ({prum_e['ID_CAD']})", 'diametro': 50
             })
 
-        uhc_por_prumada = {p['ID_CAD']: 0.0 for p in prumadas_esg}
+            # Se houver Caixa de Inspeção Final no solo, leva o pé do Tubo de Queda até a Caixa de Inspeção com caimento de 1%
+            if caixas_inspecao:
+                ci_prox = min(caixas_inspecao, key=lambda ci: dist_2d((prum_e['x'], prum_e['y']), (ci['x'], ci['y'])))
+                pts_2d_ci = rota_a_star_2d(prum_e, ci_prox, permitir_diagonal=True)
+                if pts_2d_ci:
+                    z_pe_tq = z_subsolo_af - 0.10
+                    linha_subcoletor = [(prum_e['x'], prum_e['y'], z_pe_tq)]
+                    d_ac = 0.0
+                    pt_a = (prum_e['x'], prum_e['y'])
+                    for px, py in pts_2d_ci:
+                        d_ac += dist_2d(pt_a, (px, py))
+                        linha_subcoletor.append((px, py, z_pe_tq - d_ac * 0.01))
+                        pt_a = (px, py)
+                    linha_subcoletor.append((ci_prox['x'], ci_prox['y'], z_pe_tq - d_ac * 0.01))
+                    linhas_processadas.append({
+                        'pontos': linha_subcoletor, 'cor': '#3d2514',
+                        'tipo': f"Esgoto - Subcoletor Enterrado -> {ci_prox['ID_CAD']}", 'diametro': 100, 'declividade_pct': 1.0
+                    })
+
+        uhc_por_alvo = {p['ID_CAD']: 0.0 for p in alvos_esg}
         for ap in df_bh:
             if ap['Tipo_BIM'] == 'Aparelho Hidráulico':
-                filtro_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-                if not filtro_eq.any():
+                f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
+                if not f_eq.any():
                     continue
-                uhc_ap = float(st.session_state.bib_hidro.loc[filtro_eq, 'UHC'].values[0])
-                esg_mm_ap = int(st.session_state.bib_hidro.loc[filtro_eq, 'Esgoto_mm'].values[0])
+                uhc_ap = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0])
+                esg_mm_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0])
                 if esg_mm_ap <= 0:
                     continue
 
-                prum_esg = min(prumadas_esg, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-                pe_x = escalar_coord(prum_esg['x'] - ctx['min_x'] + ctx['offset'])
-                pe_y = escalar_coord(prum_esg['y'] - ctx['min_y'] + ctx['offset'])
-
-                uhc_por_prumada[prum_esg['ID_CAD']] += uhc_ap
-                diam_esg = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_por_prumada[prum_esg['ID_CAD']]))
+                alvo_e = min(alvos_esg, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
+                uhc_por_alvo[alvo_e['ID_CAD']] += uhc_ap
+                diam_esg = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_por_alvo[alvo_e['ID_CAD']]))
                 declividade = 0.01 if diam_esg >= 100 else 0.02
 
-                ap_x = escalar_coord(ap['x'] - ctx['min_x'] + ctx['offset'])
-                ap_y = escalar_coord(ap['y'] - ctx['min_y'] + ctx['offset'])
-                liberar_caixa(matriz, ap_x, ap_y, ctx['grid_w'], ctx['grid_h'])
-                
-                grid = Grid(matrix=matriz)
-                finder = AStarFinder(diagonal_movement=DiagonalMovement.always)
-                caminho_2d, _ = finder.find_path(grid.node(ap_x, ap_y), grid.node(pe_x, pe_y), grid)
-                
-                if caminho_2d:
+                pts_2d_esg = rota_a_star_2d(ap, alvo_e, permitir_diagonal=True)
+                if pts_2d_esg:
                     z_inicio_ramal = ap['z_base'] - 0.15
                     linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.1)), (ap['x'], ap['y'], z_inicio_ramal)]
                     dist_acum = 0.0
                     pt_ant = (ap['x'], ap['y'])
-                    for p in caminho_2d:
-                        px_real = desescalar_coord(p.x) + ctx['min_x'] - ctx['offset']
-                        py_real = desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']
+                    for px_real, py_real in pts_2d_esg:
                         dist_acum += dist_2d(pt_ant, (px_real, py_real))
-                        z_com_caimento = z_inicio_ramal - (dist_acum * declividade)
-                        linha_3d.append((px_real, py_real, z_com_caimento))
+                        linha_3d.append((px_real, py_real, z_inicio_ramal - (dist_acum * declividade)))
                         pt_ant = (px_real, py_real)
-                    z_chegada_tq = z_inicio_ramal - (dist_acum * declividade)
-                    linha_3d.append((prum_esg['x'], prum_esg['y'], z_chegada_tq))
+                    linha_3d.append((alvo_e['x'], alvo_e['y'], z_inicio_ramal - (dist_acum * declividade)))
                     linhas_processadas.append({
                         'pontos': linha_3d, 'cor': 'brown', 'tipo': 'Esgoto',
                         'diametro': diam_esg, 'declividade_pct': declividade * 100,
-                        'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': prum_esg['ID_CAD']
+                        'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_e['ID_CAD']
                     })
-                    
+
     return linhas_processadas
 
 def rotear_eletrica(df_be, ctx, evitar_linhas=None):
@@ -1690,6 +1863,12 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
     # 2. Regras Inteligentes por Palavras-Chave de Engenharia Hidrossanitária
     regras_hidro = [
         # (Palavras-chave, Função BIM, Termo na Biblioteca, Altura z_relativo)
+        (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.0),
+        (["SUBIDA AF", "CS AF", "COLUNA SUBIDA AF", "SUBIDA AGUA FRIA", "RECALQUE"], "Coluna de Subida Água Fria", "Coluna de Subida Água Fria (CS-AF 32mm)", 0.0),
+        (["QUEDA AQ", "TQ AQ", "DESCIDA AQ", "QUEDA AGUA QUENTE"], "Tubo de Queda Água Quente", "Tubo de Queda Água Quente (TQ-AQ 28mm)", 0.0),
+        (["SUBIDA AQ", "CS AQ", "COLUNA SUBIDA AQ", "SUBIDA AGUA QUENTE"], "Coluna de Subida Água Quente", "Coluna de Subida Água Quente (CS-AQ 28mm)", 0.0),
+        (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.5),
+        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI ", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
         (["CAIXA D", "RESERVATORIO SUP", "CX AGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", 0.0),
         (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.0),
         (["PRUMADA AF", "COLUNA AF", "DESCIDA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.2),
@@ -2066,7 +2245,7 @@ with tab_bim:
                 df_editado_hidro = st.data_editor(
                     df_bh,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=["Prumada Água Fria", "Prumada Esgoto", "Aparelho Hidráulico", "Caixa d'Água"]),
+                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=["Aparelho Hidráulico", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria", "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente", "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"]),
                         "Equipamento": st.column_config.SelectboxColumn("Eq. (Biblioteca)", options=opcoes_equip)
                     },
                     use_container_width=True, hide_index=True
@@ -2194,8 +2373,10 @@ with tab_bim:
                     row_h = st.session_state.bib_hidro.loc[filtro_h].iloc[0]
                     peso_h, uhc_h, af_mm, esg_mm, pressao_req_kpa = float(row_h['Peso']), float(row_h['UHC']), int(row_h['Agua_mm']), int(row_h['Esgoto_mm']), float(row_h['Pressao_kpa'])
                     rota_af = next((r for r in linhas_hidro if r.get('id_ap') == b_hd['ID_CAD'] and r.get('tipo') == 'Água Fria'), None)
-                    comp_real_af = calcular_comprimento_rota(rota_af['pontos']) if rota_af else 8.0
-                    vazao_ls, _, comp_eq, perda_mca = calcular_perda_carga_nbr5626(peso_h, max(20, af_mm), comp_real_af)
+                    comp_real_af = rota_af.get('comp_acumulado_total_m', calcular_comprimento_rota(rota_af['pontos'])) if rota_af else 8.0
+                    j90_reais = rota_af.get('j90_acumulados', 2) if rota_af else 2
+                    tes_reais = rota_af.get('tes_acumulados', 1) if rota_af else 1
+                    vazao_ls, _, comp_eq, perda_mca = calcular_perda_carga_nbr5626(peso_h, max(20, af_mm), comp_real_af, qtd_joelhos90=j90_reais, qtd_tes=tes_reais)
                     z_ponto = b_hd['z_base'] + b_hd.get('z_relativo', 0.5)
                     pressao_estatica_mca = max(1.5, z_res_mca - z_ponto)
                     pressao_disp_mca = max(0.0, pressao_estatica_mca - perda_mca)
