@@ -1600,6 +1600,200 @@ def gerar_fluxograma_ifc_plotly(linhas_elet, linhas_hidro, config_andares):
     )
     return fig
 
+# ==========================================
+# 3.E MOTOR DE RECONHECIMENTO INTELIGENTE DE BLOCOS (DXF / IFC -> BIBLIOTECA)
+# ==========================================
+import unicodedata
+import difflib
+
+def normalizar_texto_bim(txt):
+    """Remove acentos, caracteres especiais e padroniza para maiúsculas."""
+    if not txt:
+        return ""
+    s = "".join(c for c in unicodedata.normalize("NFD", str(txt)) if unicodedata.category(c) != "Mn")
+    return s.upper().replace("_", " ").replace("-", " ").strip()
+
+def extrair_nome_real_bloco_dxf(doc, entidade_insert):
+    """
+    Recupera o nome real de blocos dinâmicos anônimos do AutoCAD (*U63, *U65, etc.)
+    inspecionando atributos, descrição do bloco, textos internos e a Layer de origem.
+    """
+    nome_bruto = str(entidade_insert.dxf.name)
+    layer_nome = str(entidade_insert.dxf.layer)
+
+    if not nome_bruto.startswith("*U"):
+        return nome_bruto
+
+    textos_encontrados = []
+    # 1. Verifica atributos diretos da entidade INSERT
+    try:
+        for att in entidade_insert.attribs:
+            if att.dxf.text and len(str(att.dxf.text).strip()) > 1:
+                textos_encontrados.append(str(att.dxf.text).strip())
+    except Exception:
+        pass
+
+    # 2. Vasculha a definição interna do bloco no DXF
+    try:
+        if nome_bruto in doc.blocks:
+            bloco_def = doc.blocks.get(nome_bruto)
+            desc = getattr(bloco_def.block.dxf, "description", "")
+            if desc:
+                textos_encontrados.append(str(desc).strip())
+            for sub_e in bloco_def:
+                dxft = sub_e.dxftype()
+                if dxft in ["TEXT", "MTEXT"]:
+                    t_val = getattr(sub_e.dxf, "text", "")
+                    if t_val and len(str(t_val).strip()) > 1:
+                        textos_encontrados.append(str(t_val).strip())
+                elif dxft == "ATTDEF":
+                    t_tag = getattr(sub_e.dxf, "tag", "")
+                    if t_tag and len(str(t_tag).strip()) > 1:
+                        textos_encontrados.append(str(t_tag).strip())
+                elif dxft == "INSERT" and not str(sub_e.dxf.name).startswith("*U"):
+                    textos_encontrados.append(str(sub_e.dxf.name).strip())
+    except Exception:
+        pass
+
+    if textos_encontrados:
+        resumo_txt = " ".join(dict.fromkeys(textos_encontrados))[:35]
+        return f"{nome_bruto} [{resumo_txt}]"
+    return f"{nome_bruto} [{layer_nome}]"
+
+def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
+    """
+    Associa automaticamente Nome_Bloco + Layer ao Eq. (Biblioteca), Função BIM e altura z_relativo.
+    """
+    alvo = normalizar_texto_bim(f"{nome_bloco} {layer_bloco}")
+    nome_norm = normalizar_texto_bim(nome_bloco)
+    opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_equip}
+
+    def buscar_na_bib(termo_chave, fallback=None):
+        t_norm = normalizar_texto_bim(termo_chave)
+        for k_norm, op_real in opcoes_norm.items():
+            if t_norm in k_norm:
+                return op_real
+        return fallback if fallback else (opcoes_equip[0] if opcoes_equip else "")
+
+    # 1. Verifica correspondência direta ou quase exata entre Nome_Bloco e a Biblioteca
+    if nome_norm in opcoes_norm:
+        eq_direto = opcoes_norm[nome_norm]
+        func_bim = "Prumada Esgoto" if "TUBO DE QUEDA" in nome_norm or "COLUNA DE VENT" in nome_norm else "Aparelho Hidráulico"
+        z_rel = 0.0 if ("RALO" in nome_norm or "CAIXA" in nome_norm) else 0.5
+        return func_bim, eq_direto, z_rel
+
+    for k_norm, op_real in opcoes_norm.items():
+        if len(nome_norm) >= 4 and (nome_norm in k_norm or k_norm in nome_norm):
+            z_rel = 0.0 if ("RALO" in k_norm or "CAIXA" in k_norm) else 0.5
+            return "Aparelho Hidráulico", op_real, z_rel
+
+    # 2. Regras Inteligentes por Palavras-Chave de Engenharia Hidrossanitária
+    regras_hidro = [
+        # (Palavras-chave, Função BIM, Termo na Biblioteca, Altura z_relativo)
+        (["CAIXA D", "RESERVATORIO SUP", "CX AGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", 0.0),
+        (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.0),
+        (["PRUMADA AF", "COLUNA AF", "DESCIDA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.2),
+        (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.0),
+        (["VENTILACAO", "COLUNA VENT"], "Prumada Esgoto", "Coluna de Ventilação", 0.0),
+        (["RALO SIFONADO", "RS ", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.0),
+        (["CAIXA SIFONADA", "CX SIF", "CS "], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.0),
+        (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.0),
+        (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.0),
+        (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.0),
+        (["CAIXA DE GORDURA", "CX GORDURA", "CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
+        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI "], "Aparelho Hidráulico", "Caixa de Inspeção", 0.0),
+        (["CAIXA DE PASSAGEM", "CX PASSAGEM"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
+        (["BACIA", "VASO", "SANITARIO", "VS "], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
+        (["DUCHA HIG", "DH ", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.4),
+        (["CHUVEIRO MIST", "DUCHA MIST"], "Aparelho Hidráulico", "Chuveiro Misturador (Água Fria + Quente)", 2.1),
+        (["CHUVEIRO", "DUCHA", "CH "], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.1),
+        (["BANHEIRA", "HIDROMASSAGEM", "SPA"], "Aparelho Hidráulico", "Banheira Hidromassagem", 0.4),
+        (["LAVATORIO", "LV ", "CUBA BANH", "BANCADA BANH"], "Aparelho Hidráulico", "Lavatório/Pia (Residencial)", 0.6),
+        (["PIA GOURMET", "CUBA DUPLA", "TORNEIRA GOURMET"], "Aparelho Hidráulico", "Pia de Cozinha - Cuba Dupla Gourmet", 0.9),
+        (["PIA", "COZINHA", "CUBA"], "Aparelho Hidráulico", "Pia de Cozinha (Residencial)", 0.9),
+        (["LAVA LOUCA", "MLL"], "Aparelho Hidráulico", "Máquina de Lavar Louça", 0.6),
+        (["LAVAR ROUPA", "MLR", "MAQUINA DE LAVAR", "LAVADORA"], "Aparelho Hidráulico", "Máquina de Lavar Roupa", 0.9),
+        (["TANQUE", "TQ ROUPA", "TQ LAV"], "Aparelho Hidráulico", "Tanque de Lavar Roupa", 0.9),
+        (["FILTRO", "PURIFICADOR"], "Aparelho Hidráulico", "Filtro/Purificador de Parede", 1.1),
+        (["BEBEDOURO"], "Aparelho Hidráulico", "Bebedouro", 0.9),
+        (["GELADEIRA", "SIDE BY SIDE"], "Aparelho Hidráulico", "Geladeira Side-by-Side (Filtro/Gelo)", 0.6),
+        (["MICTORIO"], "Aparelho Hidráulico", "Mictório Cerâmico (c/ válvula)", 0.6),
+        (["TORNEIRA QUINTAL", "JARDIM", "EXTERNA"], "Aparelho Hidráulico", "Torneira quintal", 0.6),
+        (["REGISTRO DE PRESSAO", "REG PRESSAO", "RP "], "Aparelho Hidráulico", "Registro de Pressão 25mm (3/4)", 1.1),
+        (["REGISTRO DE GAVETA", "REG GAVETA", "RG "], "Aparelho Hidráulico", "Registro de Gaveta 25mm (3/4)", 1.8),
+        (["VRP", "REDUTORA DE PRESSAO"], "Aparelho Hidráulico", "Válvula Redutora de Pressão (VRP) 32mm", 1.5),
+        (["RETENCAO"], "Aparelho Hidráulico", "Válvula de Retenção 25mm", 0.5),
+        (["BOMBA", "PRESSURIZADORA", "RECALQUE"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.3),
+        (["BOILER"], "Aparelho Hidráulico", "Boiler (Aquecimento de Água Central)", 1.8),
+        (["AQUECEDOR"], "Aparelho Hidráulico", "Aquecedor de Passagem a Gás", 1.5),
+        (["GAS", "GLP", "FOGAO"], "Aparelho Hidráulico", "Ponto de Gás (Fogão/Aquecedor)", 0.6),
+        (["JOELHO 90", "J90", "COTOVELO"], "Aparelho Hidráulico", "Joelho 90° 25mm", 0.6),
+        (["JOELHO 45", "J45"], "Aparelho Hidráulico", "Joelho 45° 25mm", 0.6),
+        (["CURVA 90", "C90"], "Aparelho Hidráulico", "Curva 90° 25mm", 0.6),
+        (["TE 90", "TE PASSAGEM", "TE "], "Aparelho Hidráulico", "Tê 90° (Passagem Direta) 25mm", 0.6),
+        (["JUNCAO", "Y "], "Aparelho Hidráulico", "Junção Y Esgoto 50mm", 0.0),
+        # Regras de Fallback pelo nome da Layer quando o bloco é anônimo (*U63, *U65...)
+        (["AGUA QUENTE", "AQ"], "Aparelho Hidráulico", "Saída de Água Quente 22mm", 1.0),
+        (["AGUA FRIA", "AF"], "Aparelho Hidráulico", "Saída de Água Fria 32mm", 0.6),
+        (["ESGOTO", "ESG"], "Aparelho Hidráulico", "Ponto de Esgoto 50mm", 0.0),
+    ]
+
+    for palavras, func_bim, eq_padrao, z_rel in regras_hidro:
+        if any(p in alvo for p in palavras):
+            return func_bim, buscar_na_bib(eq_padrao), z_rel
+
+    # 3. Busca aproximada por similaridade (Fuzzy Matching)
+    similares = difflib.get_close_matches(nome_norm, list(opcoes_norm.keys()), n=1, cutoff=0.45)
+    if similares:
+        return "Aparelho Hidráulico", opcoes_norm[similares[0]], 0.5
+
+    return "Aparelho Hidráulico", (opcoes_equip[0] if opcoes_equip else ""), 0.5
+
+def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, tensao_padrao, opcoes_elet):
+    """
+    Associa automaticamente Nome_Bloco + Layer ao Tipo_BIM, Carga (Biblioteca), Tensão, Amperagem e Altura Z.
+    """
+    alvo = normalizar_texto_bim(f"{nome_bloco} {layer_bloco}")
+    opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_elet}
+
+    def buscar_el(termo_chave):
+        t_norm = normalizar_texto_bim(termo_chave)
+        for k_norm, op_real in opcoes_norm.items():
+            if t_norm in k_norm:
+                return op_real
+        return opcoes_elet[0] if opcoes_elet else "Tomada Uso Geral (TUG)"
+
+    if any(k in alvo for k in ["QUADRO", "QDG", "QDL", "QD "]):
+        return "Quadro Geral", buscar_el("Tomada Uso Geral (TUG)"), 0, 0, "10A", tensao_padrao, 1.5
+
+    if any(k in alvo for k in ["CHUVEIRO", "DUCHA ELETRICA", "TORNEIRA ELETRICA"]):
+        return "Caixa 4x2", buscar_el("Chuveiro Elétrico 7500W"), 1, 0, "20A", 220, 2.1
+
+    if any(k in alvo for k in ["COOKTOP", "INDUCAO", "FOGAO"]):
+        return "Caixa 4x2", buscar_el("Cooktop Indução 7000W"), 1, 0, "20A", 220, 0.6
+
+    if any(k in alvo for k in ["AR CONDICIONADO", "SPLIT", "EVAPORADORA", "AC "]):
+        return "Caixa 4x2", buscar_el("Ar-Condicionado 12000 BTU"), 1, 0, "20A", 220, 2.2
+
+    if any(k in alvo for k in ["FORNO", "MICROONDAS", "AIR FRYER", "COZINHA", "BANCADA", "SERVICO", "LAVANDERIA"]):
+        return "Caixa 4x2", buscar_el("Tomada Cozinha/Serviço (TUG)"), 1, 0, "20A", tensao_padrao, 1.1
+
+    if any(k in alvo for k in ["INTERRUPTOR", "INT ", "TECLA", "PARALELO", "3W", "4W"]):
+        qtd_int = 2 if ("DUPLO" in alvo or "2S" in alvo) else (3 if ("TRIPLO" in alvo or "3S" in alvo) else 1)
+        qtd_tom = 1 if ("CONJ" in alvo or "TOM" in alvo) else 0
+        return "Caixa 4x2", buscar_el("Lâmpada LED 15W"), qtd_tom, qtd_int, "10A", tensao_padrao, 1.1
+
+    if any(k in alvo for k in ["TOMADA", "TUG", "TUE", "CX ", "4X2", "4X4", "PONTO FORCA"]):
+        tb = "Caixa 4x4" if "4X4" in alvo else "Caixa 4x2"
+        z_r = 0.3 if "BAIXA" in alvo else (2.1 if "ALTA" in alvo else 0.6)
+        qtd_t = 2 if ("DUPLA" in alvo or "2T" in alvo) else 1
+        return tb, buscar_el("Tomada Uso Geral (TUG)"), qtd_t, 0, "10A", tensao_padrao, z_r
+
+    if any(k in alvo for k in ["LUMINARIA", "LAMPADA", "LUZ", "SPOT", "PLAFON", "PENDENTE", "LED", "LUSTRE", "TETO", "ILUM"]):
+        return "Luminária", buscar_el("Lâmpada LED 15W"), 0, 0, "10A", tensao_padrao, pe_direito
+
+    return "Caixa 4x2", buscar_el("Tomada Uso Geral (TUG)"), 1, 0, "10A", tensao_padrao, 0.6
+
 with st.sidebar:
     st.header("💾 Arquivo do Projeto")
     arquivo_projeto = st.file_uploader("Abrir Projeto Salvo (.bim)", type=["bim", "json"])
@@ -1710,7 +1904,6 @@ with tab_bim:
             if z_base > max_z_projeto:
                 max_z_projeto = z_base
 
-            # --- LEITURA DE ARQUIVOS .DXF ---
             if dxf_file.name.lower().endswith(".dxf"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
                     tmp_file.write(dxf_file.getvalue())
@@ -1720,7 +1913,7 @@ with tab_bim:
                 
                 for le in layer_esquadrias:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
-                        nome_bloco_u = e.dxf.name.upper()
+                        nome_bloco_u = extrair_nome_real_bloco_dxf(doc, e).upper()
                         eh_porta = "PORTA" in nome_bloco_u or "PT" in nome_bloco_u or "P1" in nome_bloco_u
                         elementos_arquitetonicos.append({
                             "ID_CAD": f"{e.dxf.name}_ESQ", "Tipo": "Esquadria",
@@ -1737,12 +1930,33 @@ with tab_bim:
                             "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base,
                             "Largura": 0.40, "Altura_Viga": altura_viga
                         })
+
                 for le in layer_elet:
                     for i, e in enumerate(msp.query(f'INSERT[layer=="{le}"]')):
-                        blocos_elet.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
+                        nome_inteligente = extrair_nome_real_bloco_dxf(doc, e)
+                        blocos_elet.append({
+                            "ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}",
+                            "Nome_Bloco": nome_inteligente,
+                            "Layer_CAD": le,
+                            "x": round(e.dxf.insert.x, 4),
+                            "y": round(e.dxf.insert.y, 4),
+                            "z_base": z_base,
+                            "Andar": f"Pav {config['ordem']}",
+                            "pe_direito": pe_direito_atual
+                        })
                 for lh in layer_hidro:
                     for i, e in enumerate(msp.query(f'INSERT[layer=="{lh}"]')):
-                        blocos_hidro.append({"ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}", "Nome_Bloco": e.dxf.name, "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
+                        nome_inteligente = extrair_nome_real_bloco_dxf(doc, e)
+                        blocos_hidro.append({
+                            "ID_CAD": f"{e.dxf.name}_P{andar_idx}_{i}",
+                            "Nome_Bloco": nome_inteligente,
+                            "Layer_CAD": lh,
+                            "x": round(e.dxf.insert.x, 4),
+                            "y": round(e.dxf.insert.y, 4),
+                            "z_base": z_base,
+                            "Andar": f"Pav {config['ordem']}",
+                            "pe_direito": pe_direito_atual
+                        })
                 for e in msp.query('LINE LWPOLYLINE'):
                     if e.dxf.layer in layer_arq:
                         pts = []
@@ -1754,42 +1968,7 @@ with tab_bim:
                                 pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base)))
                         paredes_raw.extend(pts)
                 os.unlink(temp_path)
-
-            # --- LEITURA NATIVA DE MAQUETES 3D .IFC (BLENDER / BONSAI / INGETRAZO / REVIT) ---
-            elif dxf_file.name.lower().endswith(".ifc"):
-                conteudo_ifc = dxf_file.getvalue().decode("utf-8", errors="ignore")
-                import re
-                # Extrai pontos cartesianos 3D do STEP IFC para mapear paredes, estrutura e terminais
-                pts_step = {}
-                for m_pt in re.finditer(r"#(\d+)\s*=\s*IFCCARTESIANPOINT\(\(\s*([-\d\.E\+]+)\s*,\s*([-\d\.E\+]+)(?:\s*,\s*([-\d\.E\+]+))?\s*\)\)", conteudo_ifc):
-                    id_p, xv, yv, zv = m_pt.group(1), float(m_pt.group(2)), float(m_pt.group(3)), float(m_pt.group(4) or 0.0)
-                    # Converte automaticamente de mm para metros caso o IFC esteja em milímetros
-                    fator_ifc = 0.001 if (abs(xv) > 500 or abs(yv) > 500) else 1.0
-                    pts_step[id_p] = (xv * fator_ifc, yv * fator_ifc, zv * fator_ifc)
-
-                coords_validas = [pt for pt in pts_step.values() if abs(pt[0]) > 0.01 or abs(pt[1]) > 0.01]
-                # Reconstrói segmentos de paredes a partir dos pontos de eixo do IFC
-                for k in range(0, min(len(coords_validas) - 1, 160), 2):
-                    p1, p2 = coords_validas[k], coords_validas[k+1]
-                    if 0.3 <= dist_2d(p1, p2) <= 25.0:
-                        paredes_raw.append(((p1[0], p1[1], z_base), (p2[0], p2[1], z_base)))
-
-                # Identifica entidades de Vigas, Pilares, Portas, Janelas e Equipamentos no IFC
-                for idx_m, m_ent in enumerate(re.finditer(r"#(\d+)\s*=\s*(IFCWALL|IFCCOLUMN|IFCBEAM|IFCDOOR|IFCWINDOW|IFCFLOWTERMINAL|IFCSANITARYTERMINAL|IFCELECTRICDISTRIBUTIONBOARD|IFCLIGHTFIXTURE|IFCOUTLET)\b[^\n]*'([^']*)'", conteudo_ifc)):
-                    classe_ifc = m_ent.group(2)
-                    nome_ifc = m_ent.group(3) or f"{classe_ifc}_{idx_m}"
-                    pt_ref = coords_validas[idx_m % len(coords_validas)] if coords_validas else (idx_m * 1.5, idx_m * 1.0, z_base)
-
-                    if classe_ifc in ["IFCCOLUMN", "IFCBEAM"]:
-                        elementos_arquitetonicos.append({"ID_CAD": f"{nome_ifc}_EST", "Tipo": "Pilar/Viga", "x": pt_ref[0], "y": pt_ref[1], "z_base": z_base, "Largura": 0.40, "Altura_Viga": altura_viga})
-                    elif classe_ifc in ["IFCDOOR", "IFCWINDOW"]:
-                        eh_p = (classe_ifc == "IFCDOOR")
-                        elementos_arquitetonicos.append({"ID_CAD": f"{nome_ifc}_ESQ", "Tipo": "Esquadria", "Subtipo": "Porta" if eh_p else "Janela", "x": pt_ref[0], "y": pt_ref[1], "z_base": z_base, "Largura": 0.90 if eh_p else 1.20, "Peitoril": 0.0 if eh_p else 1.00, "Altura": 2.10 if eh_p else 1.10})
-                    elif classe_ifc in ["IFCELECTRICDISTRIBUTIONBOARD", "IFCLIGHTFIXTURE", "IFCOUTLET"]:
-                        blocos_elet.append({"ID_CAD": f"{nome_ifc}_P{andar_idx}_{idx_m}", "Nome_Bloco": "QDG" if "BOARD" in classe_ifc else ("TOMADA" if "OUTLET" in classe_ifc else "LUMINARIA"), "x": pt_ref[0], "y": pt_ref[1], "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
-                    elif classe_ifc in ["IFCSANITARYTERMINAL", "IFCFLOWTERMINAL"]:
-                        blocos_hidro.append({"ID_CAD": f"{nome_ifc}_P{andar_idx}_{idx_m}", "Nome_Bloco": nome_ifc, "x": pt_ref[0], "y": pt_ref[1], "z_base": z_base, "Andar": f"Pav {config['ordem']}", "pe_direito": pe_direito_atual})
-
+            
             z_acumulado += pe_direito_atual + espessura_laje
         
         col_t1, col_t2 = st.columns(2)
@@ -1798,26 +1977,30 @@ with tab_bim:
             df_be = pd.DataFrame(blocos_elet) if blocos_elet else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "z_relativo"])
             
             if not df_be.empty:
-                df_be['Tipo_BIM'] = 'Luminária'
-                df_be.loc[df_be['Nome_Bloco'].str.contains("QUADRO|QDG|BOARD", case=False, na=False), 'Tipo_BIM'] = 'Quadro Geral'
-                df_be.loc[df_be['Nome_Bloco'].str.contains("TOMADA|CX|OUTLET|SWITCH", case=False, na=False), 'Tipo_BIM'] = 'Caixa 4x2'
-                df_be.loc[df_be['Nome_Bloco'].str.contains("4X4", case=False, na=False), 'Tipo_BIM'] = 'Caixa 4x4'
-                
-                df_be['Qtd_Tomadas'] = 1
-                df_be['Amperagem_Tomadas'] = '10A'
-                df_be['Tensao_V'] = tensao_fase
-                df_be['Qtd_Interruptores'] = 0
-                df_be['Luminarias_Controladas'] = ""
-                df_be['Equipamento_Associado'] = "Tomada Uso Geral (TUG)"
-                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', 'Qtd_Tomadas'] = 0
-                df_be.loc[df_be['Tipo_BIM'] == 'Luminária', 'Equipamento_Associado'] = "Lâmpada LED 15W"
-                df_be.loc[df_be['Nome_Bloco'].str.contains("CHUV", case=False, na=False), 'Equipamento_Associado'] = "Chuveiro Elétrico 7500W"
-                
-                df_be['z_relativo'] = 1.3
-                mask_lum = df_be['Tipo_BIM'] == 'Luminária'
-                df_be.loc[mask_lum, 'z_relativo'] = df_be.loc[mask_lum, 'pe_direito']
-                
                 opcoes_eq_elet = list(st.session_state.bib_eletrica['Equipamento'])
+                tipos_bim_el, equips_el, qtd_tom_el, qtd_int_el, amp_el, tens_el, z_rel_el = [], [], [], [], [], [], []
+
+                for _, r_el in df_be.iterrows():
+                    tb_e, eq_e, qt_e, qi_e, am_e, tn_e, zr_e = classificar_bloco_eletrico_inteligente(
+                        r_el['Nome_Bloco'], r_el.get('Layer_CAD', ''), r_el['pe_direito'], tensao_fase, opcoes_eq_elet
+                    )
+                    tipos_bim_el.append(tb_e)
+                    equips_el.append(eq_e)
+                    qtd_tom_el.append(qt_e)
+                    qtd_int_el.append(qi_e)
+                    amp_el.append(am_e)
+                    tens_el.append(tn_e)
+                    z_rel_el.append(zr_e)
+
+                df_be['Tipo_BIM'] = tipos_bim_el
+                df_be['Equipamento_Associado'] = equips_el
+                df_be['Qtd_Tomadas'] = qtd_tom_el
+                df_be['Amperagem_Tomadas'] = amp_el
+                df_be['Tensao_V'] = tens_el
+                df_be['Qtd_Interruptores'] = qtd_int_el
+                df_be['Luminarias_Controladas'] = ""
+                df_be['z_relativo'] = z_rel_el
+                
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
@@ -1838,7 +2021,7 @@ with tab_bim:
                         selecionadas = st.multiselect(f"🔌 Caixa {row['ID_CAD']} controla:", options=opcoes_luminarias, key=f"ms_{row['ID_CAD']}")
                         df_editado_elet.at[idx, 'Luminarias_Controladas'] = ",".join(selecionadas)
             else:
-                st.warning("Nenhum bloco elétrico detectado.")
+                st.warning("Nenhum bloco elétrico detectado nas layers selecionadas.")
                 df_editado_elet = pd.DataFrame()
 
         with col_t2:
@@ -1847,12 +2030,38 @@ with tab_bim:
             
             if not df_bh.empty:
                 opcoes_equip = list(st.session_state.bib_hidro['Equipamento'])
-                df_bh['Tipo_BIM'] = 'Aparelho Hidráulico'
-                df_bh.loc[df_bh['Nome_Bloco'].str.contains("PRUMADA|AGUA|AF", case=False, na=False), 'Tipo_BIM'] = 'Prumada Água Fria'
-                df_bh.loc[df_bh['Nome_Bloco'].str.contains("ESGOTO|TUBO_QUEDA|TQ|AP", case=False, na=False), 'Tipo_BIM'] = 'Prumada Esgoto'
-                df_bh.loc[df_bh['Nome_Bloco'].str.contains("CAIXA|RES|TANQUE", case=False, na=False), 'Tipo_BIM'] = 'Caixa d\'Água'
-                df_bh['Equipamento'] = opcoes_equip[0] if opcoes_equip else ""
-                df_bh['z_relativo'] = 0.5
+                tipos_bim_h, equips_h, z_rel_h = [], [], []
+
+                # Classificação automática linha a linha pelo Nome_Bloco + Layer
+                for _, r_h in df_bh.iterrows():
+                    tb_h, eq_h, zr_h = classificar_bloco_hidro_inteligente(
+                        r_h['Nome_Bloco'], r_h.get('Layer_CAD', ''), opcoes_equip
+                    )
+                    tipos_bim_h.append(tb_h)
+                    equips_h.append(eq_h)
+                    z_rel_h.append(zr_h)
+
+                df_bh['Tipo_BIM'] = tipos_bim_h
+                df_bh['Equipamento'] = equips_h
+                df_bh['z_relativo'] = z_rel_h
+
+                # Ferramenta rápida para mapear em lote blocos anônimos repetidos (*U63, *U65, etc.)
+                nomes_unicos_blocos = sorted(df_bh['Nome_Bloco'].unique().tolist())
+                with st.expander("🪄 Mapeamento em Lote por Nome_Bloco (Ideal para blocos *U63, *U65...)", expanded=False):
+                    st.caption("Se um bloco anônimo do CAD repetir várias vezes, vincule-o abaixo para atualizar todas as linhas dele de uma só vez:")
+                     dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
+                    cm1, cm2, cm3 = st.columns([1.5, 2, 1])
+                    bloco_alvo = cm1.selectbox("Bloco do CAD:", nomes_unicos_blocos, key="sel_blk_lote")
+                    eq_alvo = cm2.selectbox("Associar ao Equipamento:", opcoes_equip, key="sel_eq_lote")
+                    func_alvo = cm3.selectbox("Função BIM:", ["Aparelho Hidráulico", "Prumada Água Fria", "Prumada Esgoto", "Caixa d'Água"], key="sel_fn_lote")
+                    if st.button("✅ Aplicar a todos os blocos deste tipo", use_container_width=True):
+                        dict_map_lote[bloco_alvo] = (func_alvo, eq_alvo)
+                        st.session_state["mapa_blocos_hidro"] = dict_map_lote
+
+                    for blk_k, (fn_v, eq_v) in dict_map_lote.items():
+                        mask_b = df_bh['Nome_Bloco'] == blk_k
+                        df_bh.loc[mask_b, 'Tipo_BIM'] = fn_v
+                        df_bh.loc[mask_b, 'Equipamento'] = eq_v
                 
                 df_editado_hidro = st.data_editor(
                     df_bh,
@@ -1865,14 +2074,18 @@ with tab_bim:
                 
                 tem_caixa = not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty
                 if tem_caixa:
+                    st.markdown("**🚰 Parâmetros da Caixa d'Água 3D**")
                     c_cx1, c_cx2 = st.columns(2)
                     altura_caixa = c_cx1.number_input("Altura acima da última laje (m)", min_value=0.5, value=1.5, step=0.1)
                     num_barriletes = c_cx2.number_input("Nº de Barriletes", min_value=1, value=1, step=1)
                 else:
-                    altura_caixa, num_barriletes = 1.5, 1
+                    altura_caixa = 1.5
+                    num_barriletes = 1
             else:
-                st.warning("Nenhum bloco hidrossanitário detectado.")
-                df_editado_hidro, altura_caixa, num_barriletes = pd.DataFrame(), 1.5, 1
+                st.warning("Nenhum bloco hidrossanitário detectado nas layers selecionadas.")
+                df_editado_hidro = pd.DataFrame()
+                altura_caixa = 1.5
+                num_barriletes = 1
 
         st.divider()
         col_btn_proc, col_tog1, col_tog2 = st.columns([2, 1, 1])
