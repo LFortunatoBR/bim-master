@@ -1973,6 +1973,104 @@ def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, 
 
     return "Caixa 4x2", buscar_el("Tomada Uso Geral (TUG)"), 1, 0, "10A", tensao_padrao, 0.6
 
+# ==========================================
+# 3.F MOTOR DE ATUALIZAÇÃO DIFERENCIAL (SMART SYNC DXF / IFC)
+# ==========================================
+if "sync_version" not in st.session_state:
+    st.session_state["sync_version"] = 0
+if "memoria_edicoes_elet" not in st.session_state:
+    st.session_state["memoria_edicoes_elet"] = []
+if "memoria_edicoes_hidro" not in st.session_state:
+    st.session_state["memoria_edicoes_hidro"] = []
+if "resumo_ultimo_sync" not in st.session_state:
+    st.session_state["resumo_ultimo_sync"] = ""
+
+def salvar_edicoes_na_memoria(df_elet, df_hidro):
+    """Salva continuamente na sessão todas as edições feitas pelo usuário nas tabelas."""
+    if df_elet is not None and not df_elet.empty:
+        st.session_state["memoria_edicoes_elet"] = df_elet.to_dict("records")
+    if df_hidro is not None and not df_hidro.empty:
+        st.session_state["memoria_edicoes_hidro"] = df_hidro.to_dict("records")
+
+def mesclar_blocos_com_memoria(df_novo, disciplina="hidro"):
+    """
+    Compara os blocos recém-lidos do DXF/IFC com a memória de edições anteriores:
+    - Preserva todas as escolhas manuais nos blocos inalterados ou levemente movidos;
+    - Atualiza apenas coordenadas alteradas, adiciona blocos novos e remove os excluídos.
+    """
+    if df_novo is None or df_novo.empty:
+        return df_novo, {"mantidos": 0, "movidos": 0, "novos": 0, "removidos": 0}
+
+    chave_mem = "memoria_edicoes_hidro" if disciplina == "hidro" else "memoria_edicoes_elet"
+    memoria = st.session_state.get(chave_mem, [])
+    if not memoria:
+        return df_novo, {"mantidos": 0, "movidos": 0, "novos": len(df_novo), "removidos": 0}
+
+    campos_preservar = (
+        ["Tipo_BIM", "Equipamento", "z_relativo"]
+        if disciplina == "hidro"
+        else ["Tipo_BIM", "Equipamento_Associado", "Qtd_Tomadas", "Amperagem_Tomadas", "Tensao_V", "Qtd_Interruptores", "Luminarias_Controladas", "z_relativo"]
+    )
+
+    usados_mem = set()
+    df_mesclado = df_novo.copy()
+    cont_mantidos, cont_movidos, cont_novos = 0, 0, 0
+
+    # Passagem 1: Mesma posição exata (distância < 5cm) e mesmo Andar -> Inalterado (mesmo que o ID_CAD tenha mudado a ordem)
+    indices_pareados = set()
+    for idx, row_n in df_mesclado.iterrows():
+        andar_n = str(row_n.get("Andar", ""))
+        nome_n = str(row_n.get("Nome_Bloco", ""))
+        xn, yn = float(row_n.get("x", 0.0)), float(row_n.get("y", 0.0))
+
+        for m_idx, row_m in enumerate(memoria):
+            if m_idx in usados_mem:
+                continue
+            if str(row_m.get("Andar", "")) == andar_n and str(row_m.get("Nome_Bloco", "")) == nome_n:
+                xm, ym = float(row_m.get("x", 0.0)), float(row_m.get("y", 0.0))
+                if math.hypot(xn - xm, yn - ym) <= 0.05:
+                    for col_p in campos_preservar:
+                        if col_p in row_m and col_p in df_mesclado.columns:
+                            df_mesclado.at[idx, col_p] = row_m[col_p]
+                    usados_mem.add(m_idx)
+                    indices_pareados.add(idx)
+                    cont_mantidos += 1
+                    break
+
+    # Passagem 2: Blocos que foram movidos no CAD (mesmo Nome_Bloco e Andar em um raio de até 2.0m)
+    for idx, row_n in df_mesclado.iterrows():
+        if idx in indices_pareados:
+            continue
+        andar_n = str(row_n.get("Andar", ""))
+        nome_n = str(row_n.get("Nome_Bloco", ""))
+        xn, yn = float(row_n.get("x", 0.0)), float(row_n.get("y", 0.0))
+
+        candidatos = []
+        for m_idx, row_m in enumerate(memoria):
+            if m_idx in usados_mem:
+                continue
+            if str(row_m.get("Andar", "")) == andar_n and str(row_m.get("Nome_Bloco", "")) == nome_n:
+                xm, ym = float(row_m.get("x", 0.0)), float(row_m.get("y", 0.0))
+                d_mov = math.hypot(xn - xm, yn - ym)
+                if d_mov <= 2.0:
+                    candidatos.append((d_mov, m_idx, row_m))
+
+        if candidatos:
+            candidatos.sort(key=lambda x: x[0])
+            _, m_idx_escolhido, row_m_esc = candidatos[0]
+            for col_p in campos_preservar:
+                if col_p in row_m_esc and col_p in df_mesclado.columns:
+                    df_mesclado.at[idx, col_p] = row_m_esc[col_p]
+            usados_mem.add(m_idx_escolhido)
+            indices_pareados.add(idx)
+            cont_movidos += 1
+        else:
+            cont_novos += 1
+
+    cont_removidos = max(0, len(memoria) - len(usados_mem))
+    stats = {"mantidos": cont_mantidos, "movidos": cont_movidos, "novos": cont_novos, "removidos": cont_removidos}
+    return df_mesclado, stats
+
 with st.sidebar:
     st.header("💾 Arquivo do Projeto")
     arquivo_projeto = st.file_uploader("Abrir Projeto Salvo (.bim)", type=["bim", "json"])
@@ -1990,7 +2088,15 @@ with st.sidebar:
     st.divider()
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
     arquivos_dxf = st.file_uploader("Upload Plantas ou Maquetes (.dxf ou .ifc)", type=["dxf", "ifc"], accept_multiple_files=True)
-
+    
+    if arquivos_dxf:
+        if st.button("🔄 Atualizar Projeto Atual (DXF/IFC)", use_container_width=True, help="Recarrega a geometria e os blocos modificados no arquivo DXF/IFC sem perder as edições já feitas nas tabelas."):
+            st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+            st.session_state["disparou_sync"] = True
+            st.rerun()
+        if st.session_state.get("resumo_ultimo_sync"):
+            st.caption(st.session_state["resumo_ultimo_sync"])
+            
     st.divider()
     st.subheader("Configurações Globais & Roteamento")
     espessura_laje = st.number_input("Espessura da Laje (m)", min_value=0.1, max_value=1.5, value=0.15, step=0.05)
@@ -2179,7 +2285,10 @@ with tab_bim:
                 df_be['Qtd_Interruptores'] = qtd_int_el
                 df_be['Luminarias_Controladas'] = ""
                 df_be['z_relativo'] = z_rel_el
-                
+                                
+                    # Mescla com as edições anteriores preservando o que não mudou
+                df_be, stats_el = mesclar_blocos_com_memoria(df_be, disciplina="elet")
+
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
@@ -2190,7 +2299,9 @@ with tab_bim:
                         "Qtd_Tomadas": st.column_config.NumberColumn("Qtd Tomadas", min_value=0, max_value=4),
                         "Qtd_Interruptores": st.column_config.NumberColumn("Qtd Interruptores", min_value=0, max_value=6)
                     },
-                    use_container_width=True, hide_index=True
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"editor_elet_v{st.session_state.get('sync_version', 0)}"
                 )
 
                 st.markdown("**🔗 Painel de Comandos (Interruptores Simples, Paralelos Three-Way e Four-Way)**")
@@ -2242,14 +2353,38 @@ with tab_bim:
                         df_bh.loc[mask_b, 'Tipo_BIM'] = fn_v
                         df_bh.loc[mask_b, 'Equipamento'] = eq_v
                 
+                # Mescla com as edições anteriores preservando o que não mudou
+                df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
+
                 df_editado_hidro = st.data_editor(
                     df_bh,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=["Aparelho Hidráulico", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria", "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente", "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"]),
+                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=[
+                            "Aparelho Hidráulico", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria",
+                            "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente",
+                            "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"
+                        ]),
                         "Equipamento": st.column_config.SelectboxColumn("Eq. (Biblioteca)", options=opcoes_equip)
                     },
-                    use_container_width=True, hide_index=True
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
                 )
+
+                # Salva instantaneamente todas as escolhas feitas pelo usuário na memória
+                salvar_edicoes_na_memoria(
+                    df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(),
+                    df_editado_hidro
+                )
+                if st.session_state.get("disparou_sync"):
+                    st.session_state["resumo_ultimo_sync"] = (
+                        f"✅ Sync: {stats_hd['mantidos']} mantidos | "
+                        f"{stats_hd['movidos']} reposicionados | "
+                        f"{stats_hd['novos']} novos | "
+                        f"{stats_hd['removidos']} removidos"
+                    )
+                    st.toast(st.session_state["resumo_ultimo_sync"], icon="🔄")
+                    st.session_state["disparou_sync"] = False
                 
                 tem_caixa = not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty
                 if tem_caixa:
