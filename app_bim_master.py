@@ -1879,8 +1879,8 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.0),
         (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.0),
         (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.0),
-        (["CAIXA DE GORDURA", "CX GORDURA", "CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
-        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI "], "Aparelho Hidráulico", "Caixa de Inspeção", 0.0),
+        ((["CAIXA DE GORDURA", "CX GORDURA", "[CG]", " CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
+        (["CAIXA DE INSPECAO", "CX INSPECAO", "[CI]", " CI ", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
         (["CAIXA DE PASSAGEM", "CX PASSAGEM"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
         (["BACIA", "VASO", "SANITARIO", "VS "], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
         (["DUCHA HIG", "DH ", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.4),
@@ -2087,15 +2087,34 @@ with st.sidebar:
 
     st.divider()
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
-    arquivos_dxf = st.file_uploader("Upload Plantas ou Maquetes (.dxf ou .ifc)", type=["dxf", "ifc"], accept_multiple_files=True)
-    
+    import hashlib
+    arquivos_dxf = st.file_uploader(
+        "Upload Plantas ou Maquetes (.dxf ou .ifc)",
+        type=["dxf", "ifc"],
+        accept_multiple_files=True,
+        help="Após salvar alterações no AutoCAD/Blender, clique no 'X' do arquivo antigo acima e solte o arquivo recém-salvo aqui. Suas edições na tabela serão preservadas!"
+    )
+
     if arquivos_dxf:
-        if st.button("🔄 Atualizar Projeto Atual (DXF/IFC)", use_container_width=True, help="Recarrega a geometria e os blocos modificados no arquivo DXF/IFC sem perder as edições já feitas nas tabelas."):
+        # Calcula a assinatura digital (Hash) dos bytes dos arquivos para detectar automaticamente qualquer modificação salva no CAD
+        hash_atual = hashlib.md5(b"".join([f.getvalue() for f in arquivos_dxf])).hexdigest()[:8]
+        hash_anterior = st.session_state.get("hash_arquivo_cad", "")
+
+        if hash_anterior and hash_atual != hash_anterior:
+            st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+            st.session_state["disparou_sync"] = True
+            st.toast("✨ Novo arquivo modificado detectado! Sincronizando alterações...", icon="🔄")
+        st.session_state["hash_arquivo_cad"] = hash_atual
+
+        st.caption(f"📄 Versão carregada na memória: `{hash_atual}` ({sum(len(f.getvalue()) for f in arquivos_dxf)/1024:.1f} KB)")
+
+        if st.button("🔄 Atualizar Projeto Atual (DXF/IFC)", use_container_width=True, help="Reprocessa o arquivo atual preservando todas as edições feitas na tabela."):
             st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
             st.session_state["disparou_sync"] = True
             st.rerun()
+
         if st.session_state.get("resumo_ultimo_sync"):
-            st.caption(st.session_state["resumo_ultimo_sync"])
+            st.success(st.session_state["resumo_ultimo_sync"])
             
     st.divider()
     st.subheader("Configurações Globais & Roteamento")
@@ -2152,30 +2171,71 @@ with tab_bim:
     st.title("Modelagem e Roteamento Multidisciplinar Consciente de Estrutura (DXF & IFC)")
     
     if arquivos_dxf:
-        todas_layers = []
+        todas_layers_set = set()
+        layers_com_blocos = set()
         dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
+
         if dxf_files_only:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
-                tmp_file.write(dxf_files_only[0].getvalue())
-                temp_path = tmp_file.name
-            doc_base = ezdxf.readfile(temp_path)
-            todas_layers = sorted([layer.dxf.name for layer in doc_base.layers])
-            os.unlink(temp_path)
+            for dxf_f in dxf_files_only:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
+                    tmp_file.write(dxf_f.getvalue())
+                    temp_path = tmp_file.name
+                doc_base = ezdxf.readfile(temp_path)
+                msp_base = doc_base.modelspace()
+                # Captura layers da tabela oficial E também layers aplicadas diretamente nos objetos e blocos
+                for layer in doc_base.layers:
+                    todas_layers_set.add(layer.dxf.name)
+                for ent in msp_base:
+                    if hasattr(ent.dxf, "layer"):
+                        todas_layers_set.add(ent.dxf.layer)
+                        if ent.dxftype() == "INSERT":
+                            layers_com_blocos.add(ent.dxf.layer)
+                os.unlink(temp_path)
+            todas_layers = sorted(list(todas_layers_set))
         else:
             todas_layers = ["IFC_WALLS", "IFC_DOORS_WINDOWS", "IFC_STRUCTURE", "IFC_ELECTRICAL", "IFC_PLUMBING"]
-        
+
+        # Detecta se surgiram layers novas no arquivo atualizado
+        layers_conhecidas = st.session_state.get("layers_conhecidas_dxf", set())
+        layers_novas_detectadas = set(todas_layers) - layers_conhecidas if layers_conhecidas else set()
+        st.session_state["layers_conhecidas_dxf"] = set(todas_layers)
+
+        if layers_novas_detectadas:
+            st.info(f"✨ **Novas layers detectadas no arquivo atualizado:** `{', '.join(sorted(layers_novas_detectadas))}`")
+
+        # Pré-seleção inteligente de layers por palavras-chave + inclusão automática de novas layers com blocos
+        def sugerir_layers(palavras, padrao_vazio=False):
+            sug = [ly for ly in todas_layers if any(p in normalizar_texto_bim(ly) for p in palavras)]
+            if not sug and not padrao_vazio and todas_layers:
+                return [todas_layers[0]]
+            return sug
+
+        default_arq = sugerir_layers(["ALVENARIA", "PAREDE", "ARQ", "MURO"], padrao_vazio=False)
+        default_esq = sugerir_layers(["ESQUADRIA", "PORTA", "JANELA"], padrao_vazio=True)
+        default_est = sugerir_layers(["VIGA", "PILAR", "ESTRUTURA", "CONCRETO"], padrao_vazio=True)
+        default_elet = sugerir_layers(["ELETRICA", "ELET", "LUZ", "TOMADA", "ILUM"], padrao_vazio=True)
+        default_hidro = sugerir_layers(["HIDR", "AGUA", "ESGOTO", "SANIT", "TUBULACAO", "PLUVIAL", "GAS"], padrao_vazio=True)
+
+        # Inclui automaticamente qualquer nova layer que contenha blocos (INSERT) e não seja esquadria/estrutura
+        for ly_b in layers_com_blocos:
+            if ly_b not in default_esq and ly_b not in default_est and ly_b not in default_elet and ly_b not in default_hidro:
+                if any(k in normalizar_texto_bim(ly_b) for k in ["ELET", "LUZ", "TOM"]):
+                    default_elet.append(ly_b)
+                elif ly_b in layers_novas_detectadas:
+                    default_hidro.append(ly_b)
+
         c1, c2, c3, c4, c5 = st.columns(5)
-        layer_arq = c1.multiselect("Paredes:", todas_layers, default=[todas_layers[0]] if todas_layers else [])
-        layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=["IFC_DOORS_WINDOWS"] if "IFC_DOORS_WINDOWS" in todas_layers else [])
-        layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=["IFC_STRUCTURE"] if "IFC_STRUCTURE" in todas_layers else [])
-        layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=["IFC_ELECTRICAL"] if "IFC_ELECTRICAL" in todas_layers else [])
-        layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=["IFC_PLUMBING"] if "IFC_PLUMBING" in todas_layers else [])
+        layer_arq = c1.multiselect("Paredes:", todas_layers, default=default_arq)
+        layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=default_esq)
+        layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=default_est)
+        layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=default_elet)
+        layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=sorted(list(set(default_hidro))))
 
         st.divider()
         st.subheader("Configuração de Altura de Tubulações e Modo de Projeto")
         col_h1, col_h2, col_h3 = st.columns(3)
-        h_agua_fria = col_h1.number_input("Altura Tubulação Água Fria na Parede (m)", value=2.20, step=0.1)
-        h_agua_quente = col_h2.number_input("Altura Tubulação Água Quente na Parede (m)", value=1.10, step=0.1)
+        h_agua_fria = col_h1.number_input("Altura Tubulação Água Fria na Parede (m)", value=0.20, step=0.1)
+        h_agua_quente = col_h2.number_input("Altura Tubulação Água Quente na Parede (m)", value=1.00, step=0.1)
         modo_visualizacao = col_h3.selectbox("Visualização e Escopo do Projeto:", ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica", "Apenas Hidrossanitário"])
 
         blocos_elet, blocos_hidro, paredes_raw, elementos_arquitetonicos = [], [], [], []
