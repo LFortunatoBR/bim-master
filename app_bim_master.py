@@ -2049,7 +2049,7 @@ with tab_bim:
                 nomes_unicos_blocos = sorted(df_bh['Nome_Bloco'].unique().tolist())
                 with st.expander("🪄 Mapeamento em Lote por Nome_Bloco (Ideal para blocos *U63, *U65...)", expanded=False):
                     st.caption("Se um bloco anônimo do CAD repetir várias vezes, vincule-o abaixo para atualizar todas as linhas dele de uma só vez:")
-                     dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
+                    dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
                     cm1, cm2, cm3 = st.columns([1.5, 2, 1])
                     bloco_alvo = cm1.selectbox("Bloco do CAD:", nomes_unicos_blocos, key="sel_blk_lote")
                     eq_alvo = cm2.selectbox("Associar ao Equipamento:", opcoes_equip, key="sel_eq_lote")
