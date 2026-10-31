@@ -2468,49 +2468,6 @@ with tab_bim:
                         f"{stats_hd['removidos']} removidos"
                     )
                     st.toast(st.session_state["resumo_ultimo_sync"], icon="🔄")
-                    st.session_state["disparou_sync"] = False# --- TABELA HIDRÁULICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
-                df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
-
-                df_editado_hidro = st.data_editor(
-                    df_bh,
-                    column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn(
-                            "Função BIM",
-                            options=[
-                                "Aparelho Hidráulico",
-                                "Tubo de Queda Água Fria",
-                                "Coluna de Subida Água Fria",
-                                "Prumada Água Fria",
-                                "Boiler / Aquecedor",
-                                "Tubo de Queda Água Quente",
-                                "Coluna de Subida Água Quente",
-                                "Prumada Esgoto",
-                                "Caixa de Inspeção / Destino Esgoto",
-                                "Caixa d'Água"
-                            ]
-                        ),
-                        "Equipamento": st.column_config.SelectboxColumn(
-                            "Eq. (Biblioteca)",
-                            options=opcoes_equip
-                        )
-                    },
-                    use_container_width=True,
-                    hide_index=True,
-                    key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
-                )
-
-                salvar_edicoes_na_memoria(
-                    df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(),
-                    df_editado_hidro
-                )
-                if st.session_state.get("disparou_sync"):
-                    st.session_state["resumo_ultimo_sync"] = (
-                        f"✅ Sync: {stats_hd['mantidos']} mantidos | "
-                        f"{stats_hd['movidos']} reposicionados | "
-                        f"{stats_hd['novos']} novos | "
-                        f"{stats_hd['removidos']} removidos"
-                    )
-                    st.toast(st.session_state["resumo_ultimo_sync"], icon="🔄")
                     st.session_state["disparou_sync"] = False
                 
                 tem_caixa = not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty
