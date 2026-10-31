@@ -1879,7 +1879,7 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.0),
         (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.0),
         (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.0),
-        ((["CAIXA DE GORDURA", "CX GORDURA", "[CG]", " CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
+        (["CAIXA DE GORDURA", "CX GORDURA", "[CG]", " CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
         (["CAIXA DE INSPECAO", "CX INSPECAO", "[CI]", " CI ", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
         (["CAIXA DE PASSAGEM", "CX PASSAGEM"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
         (["BACIA", "VASO", "SANITARIO", "VS "], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
@@ -2346,16 +2346,28 @@ with tab_bim:
                 df_be['Luminarias_Controladas'] = ""
                 df_be['z_relativo'] = z_rel_el
                                 
-                    # Mescla com as edições anteriores preservando o que não mudou
+                # --- TABELA ELÉTRICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
                 df_be, stats_el = mesclar_blocos_com_memoria(df_be, disciplina="elet")
 
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]),
-                        "Equipamento_Associado": st.column_config.SelectboxColumn("Carga (Biblioteca)", options=opcoes_eq_elet),
-                        "Amperagem_Tomadas": st.column_config.SelectboxColumn("Amperagem", options=["10A", "20A"]),
-                        "Tensao_V": st.column_config.SelectboxColumn("Tensão (V)", options=[127, 220]),
+                        "Tipo_BIM": st.column_config.SelectboxColumn(
+                            "Tipo Físico",
+                            options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]
+                        ),
+                        "Equipamento_Associado": st.column_config.SelectboxColumn(
+                            "Carga (Biblioteca)",
+                            options=opcoes_eq_elet
+                        ),
+                        "Amperagem_Tomadas": st.column_config.SelectboxColumn(
+                            "Amperagem",
+                            options=["10A", "20A"]
+                        ),
+                        "Tensao_V": st.column_config.SelectboxColumn(
+                            "Tensão (V)",
+                            options=[127, 220]
+                        ),
                         "Qtd_Tomadas": st.column_config.NumberColumn("Qtd Tomadas", min_value=0, max_value=4),
                         "Qtd_Interruptores": st.column_config.NumberColumn("Qtd Interruptores", min_value=0, max_value=6)
                     },
@@ -2413,25 +2425,80 @@ with tab_bim:
                         df_bh.loc[mask_b, 'Tipo_BIM'] = fn_v
                         df_bh.loc[mask_b, 'Equipamento'] = eq_v
                 
-                # Mescla com as edições anteriores preservando o que não mudou
+                # --- TABELA HIDRÁULICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
                 df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
 
                 df_editado_hidro = st.data_editor(
                     df_bh,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=[
-                            "Aparelho Hidráulico", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria",
-                            "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente",
-                            "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"
-                        ]),
-                        "Equipamento": st.column_config.SelectboxColumn("Eq. (Biblioteca)", options=opcoes_equip)
+                        "Tipo_BIM": st.column_config.SelectboxColumn(
+                            "Função BIM",
+                            options=[
+                                "Aparelho Hidráulico",
+                                "Tubo de Queda Água Fria",
+                                "Coluna de Subida Água Fria",
+                                "Prumada Água Fria",
+                                "Boiler / Aquecedor",
+                                "Tubo de Queda Água Quente",
+                                "Coluna de Subida Água Quente",
+                                "Prumada Esgoto",
+                                "Caixa de Inspeção / Destino Esgoto",
+                                "Caixa d'Água"
+                            ]
+                        ),
+                        "Equipamento": st.column_config.SelectboxColumn(
+                            "Eq. (Biblioteca)",
+                            options=opcoes_equip
+                        )
                     },
                     use_container_width=True,
                     hide_index=True,
                     key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
                 )
 
-                # Salva instantaneamente todas as escolhas feitas pelo usuário na memória
+                salvar_edicoes_na_memoria(
+                    df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(),
+                    df_editado_hidro
+                )
+                if st.session_state.get("disparou_sync"):
+                    st.session_state["resumo_ultimo_sync"] = (
+                        f"✅ Sync: {stats_hd['mantidos']} mantidos | "
+                        f"{stats_hd['movidos']} reposicionados | "
+                        f"{stats_hd['novos']} novos | "
+                        f"{stats_hd['removidos']} removidos"
+                    )
+                    st.toast(st.session_state["resumo_ultimo_sync"], icon="🔄")
+                    st.session_state["disparou_sync"] = False# --- TABELA HIDRÁULICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
+                df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
+
+                df_editado_hidro = st.data_editor(
+                    df_bh,
+                    column_config={
+                        "Tipo_BIM": st.column_config.SelectboxColumn(
+                            "Função BIM",
+                            options=[
+                                "Aparelho Hidráulico",
+                                "Tubo de Queda Água Fria",
+                                "Coluna de Subida Água Fria",
+                                "Prumada Água Fria",
+                                "Boiler / Aquecedor",
+                                "Tubo de Queda Água Quente",
+                                "Coluna de Subida Água Quente",
+                                "Prumada Esgoto",
+                                "Caixa de Inspeção / Destino Esgoto",
+                                "Caixa d'Água"
+                            ]
+                        ),
+                        "Equipamento": st.column_config.SelectboxColumn(
+                            "Eq. (Biblioteca)",
+                            options=opcoes_equip
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
+                )
+
                 salvar_edicoes_na_memoria(
                     df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(),
                     df_editado_hidro
