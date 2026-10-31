@@ -915,13 +915,16 @@ def contar_conexoes_na_rota(pontos):
 
 def rotear_hidro(df_bh, ctx):
     """
-    Motor Hidrossanitário de Ciclo Completo 3D:
-    1. Caixa d'Água -> Tubo de Queda AF -> Caminho Abaixo do Solo (z_subsolo) -> Coluna de Subida AF -> Prumada/Parede -> Aparelhos.
-    2. Alimentação -> Boiler/Aquecedor -> Tubo de Queda AQ -> Subsolo -> Coluna de Subida AQ -> Aparelhos AQ.
-    3. Aparelhos -> Ramal de Esgoto (c/ caimento 1% e 2%) -> Tubo de Queda (TQ) -> Subcoletor Enterrado -> Caixa de Inspeção Final.
-    Salva o comprimento acumulado real e as conexões de todo o trajeto para o cálculo perfeito da NBR 5626.
+    Motor Hidrossanitário 3D com Hierarquia Real NBR 5626 & NBR 8160:
+    - Água Fria/Quente: Caixa d'Água -> Tubo de Queda -> Subsolo -> Coluna de Subida -> Prumada -> Aparelhos.
+    - Esgoto Secundário: Ralo Seco / Lavatório / Chuveiro -> Ralo Sifonado / Caixa Sifonada.
+    - Esgoto Gorduroso: Pia de Cozinha / Lava-Louça -> Caixa de Gordura [CG].
+    - Esgoto Primário: Bacia Sanitária / Cx Sifonada / Cx Gordura -> Ramal de Esgoto -> TQ -> Caixa de Inspeção [CI].
     """
     linhas_processadas = []
+    if not df_bh:
+        return linhas_processadas
+
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
     
     for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
@@ -940,9 +943,9 @@ def rotear_hidro(df_bh, ctx):
     h_af = ctx.get('h_agua_fria', 2.2)
     h_aq = ctx.get('h_agua_quente', 1.1)
     h_viga = ctx.get('altura_viga', 0.40)
-    z_subsolo_af = ctx.get('z_subsolo_af', -0.40) # Cota enterrada abaixo do nível do solo para travessia
+    z_subsolo_af = ctx.get('z_subsolo_af', -0.40)
 
-    # Separação de todos os blocos por função topológica no ciclo das águas
+    # Separação dos blocos por Função BIM
     caixas_dagua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
     quedas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Fria']
     subidas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Fria']
@@ -954,6 +957,8 @@ def rotear_hidro(df_bh, ctx):
 
     prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
     caixas_inspecao = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Inspeção / Destino Esgoto']
+    ramais_descarga = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Descarga']
+    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
 
     equips_af_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro['Agua_mm'] > 0]['Equipamento'].values)
     equips_aq_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro.get('AQ_mm', pd.Series([0]*len(st.session_state.bib_hidro))) > 0]['Equipamento'].values)
@@ -971,20 +976,20 @@ def rotear_hidro(df_bh, ctx):
         caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
         return [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
 
-    # Peso total de água fria para dimensionar os troncos principais (Queda e Subida)
     peso_total_projeto = 0.0
+    aparelhos_com_af = []
     for ap in df_bh:
         if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
+            aparelhos_com_af.append(ap)
             f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
             if f_eq.any():
                 peso_total_projeto += float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
     dn_tronco_af = max(32, dimensionar_tubo_agua(peso_total_projeto))
 
-    # Dicionário que acumula (comprimento_m, qtd_joelhos90, qtd_tes) desde a Caixa d'Água até cada nó intermediário
     historico_no_af = {}
 
     # =========================================================================
-    # ETAPA 1: CAIXA D'ÁGUA -> TUBOS DE QUEDA AF (DESCIDA ATÉ O SOLO/SUBSOLO)
+    # ETAPA 1 E 2: CAIXA D'ÁGUA -> TUBO DE QUEDA AF -> SUBSOLO -> COLUNA DE SUBIDA AF
     # =========================================================================
     alvos_descida_inicial = quedas_af if quedas_af else prumadas_af
     if caixas_dagua and alvos_descida_inicial:
@@ -1003,17 +1008,11 @@ def rotear_hidro(df_bh, ctx):
             ]
             linhas_processadas.append({
                 'pontos': pts_queda, 'cor': '#003399',
-                'tipo': f"Água Fria - Tubo de Queda ({tq_af['ID_CAD']})", 'diametro': dn_tronco_af
+                'tipo': f"Tubo de Queda AF ({tq_af['ID_CAD']})", 'diametro': dn_tronco_af
             })
             j90_q, _ = contar_conexoes_na_rota(pts_queda)
-            historico_no_af[tq_af['ID_CAD']] = {
-                'comp_m': calcular_comprimento_rota(pts_queda),
-                'j90': j90_q, 'tes': 1
-            }
+            historico_no_af[tq_af['ID_CAD']] = {'comp_m': calcular_comprimento_rota(pts_queda), 'j90': j90_q, 'tes': 1}
 
-    # =========================================================================
-    # ETAPA 2: TUBO DE QUEDA AF (ABAIXO DO SOLO) -> COLUNA DE SUBIDA AF (PAREDE)
-    # =========================================================================
     if subidas_af:
         origens_subsolo = quedas_af if quedas_af else (prumadas_af if prumadas_af else caixas_dagua)
         for col_sub in subidas_af:
@@ -1029,24 +1028,22 @@ def rotear_hidro(df_bh, ctx):
 
                 linhas_processadas.append({
                     'pontos': pts_subsolo_e_subida, 'cor': '#0066cc',
-                    'tipo': f"Água Fria - Subsolo + Subida ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
+                    'tipo': f"Subsolo + Subida AF ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
                 })
                 hist_ant = historico_no_af.get(orig_q['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
                 j90_s, _ = contar_conexoes_na_rota(pts_subsolo_e_subida)
                 historico_no_af[col_sub['ID_CAD']] = {
                     'comp_m': hist_ant['comp_m'] + calcular_comprimento_rota(pts_subsolo_e_subida),
-                    'j90': hist_ant['j90'] + j90_s,
-                    'tes': hist_ant['tes'] + 1
+                    'j90': hist_ant['j90'] + j90_s, 'tes': hist_ant['tes'] + 1
                 }
             else:
                 pts_sub_isolada = [(col_sub['x'], col_sub['y'], z_subsolo_af), (col_sub['x'], col_sub['y'], z_topo_subida)]
                 linhas_processadas.append({
                     'pontos': pts_sub_isolada, 'cor': '#0066cc',
-                    'tipo': f"Água Fria - Coluna de Subida ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
+                    'tipo': f"Coluna de Subida AF ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
                 })
                 historico_no_af[col_sub['ID_CAD']] = {'comp_m': calcular_comprimento_rota(pts_sub_isolada), 'j90': 2, 'tes': 1}
 
-    # Se houver tanto Coluna de Subida AF quanto Prumada/Descida de Parede AF, interliga Subida -> Prumada pelo alto da parede
     if subidas_af and prumadas_af:
         for prum in prumadas_af:
             sub_prox = min(subidas_af, key=lambda s: dist_2d((prum['x'], prum['y']), (s['x'], s['y'])))
@@ -1059,57 +1056,62 @@ def rotear_hidro(df_bh, ctx):
             pts_lig = aplicar_desvios_estruturais_e_vaos_3d(pts_lig, elementos_arq, prum['z_base'], prum.get('pe_direito', 3.0), h_viga)
             linhas_processadas.append({
                 'pontos': pts_lig, 'cor': '#0055aa',
-                'tipo': f"Água Fria - Distribuição Parede ({prum['ID_CAD']})", 'diametro': 32
+                'tipo': f"Distribuição AF ({prum['ID_CAD']})", 'diametro': 32
             })
             hist_s = historico_no_af.get(sub_prox['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
             j90_p, _ = contar_conexoes_na_rota(pts_lig)
             historico_no_af[prum['ID_CAD']] = {
                 'comp_m': hist_s['comp_m'] + calcular_comprimento_rota(pts_lig),
-                'j90': hist_s['j90'] + j90_p,
-                'tes': hist_s['tes'] + 1
+                'j90': hist_s['j90'] + j90_p, 'tes': hist_s['tes'] + 1
             }
 
     # =========================================================================
-    # ETAPA 3: DISTRIBUIÇÃO E DESCIDA NAS PAREDES ATÉ OS APARELHOS (ÁGUA FRIA)
+    # ETAPA 3: RAMAIS DE ÁGUA FRIA ATÉ OS APARELHOS (COM FALLBACK AUTOMÁTICO)
     # =========================================================================
     fontes_distribuicao_af = prumadas_af if prumadas_af else (subidas_af if subidas_af else (quedas_af if quedas_af else caixas_dagua))
+    # Se o usuário ainda não definiu nenhuma Prumada/Caixa d'Água na tabela, usa o 1º ponto de água como alimentação principal
+    if not fontes_distribuicao_af and aparelhos_com_af:
+        fontes_distribuicao_af = [aparelhos_com_af[0]]
+
     if fontes_distribuicao_af:
         pesos_acum = {f['ID_CAD']: 0.0 for f in fontes_distribuicao_af}
-        for ap in df_bh:
-            if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
-                fonte_af = min(fontes_distribuicao_af, key=lambda f: abs(f['z_base'] - ap['z_base']) * 5 + dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
-                f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-                peso_ap = float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
-                dn_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0])
-                pesos_acum[fonte_af['ID_CAD']] += peso_ap
-                diametro_ramal = max(dn_ap, dimensionar_tubo_agua(pesos_acum[fonte_af['ID_CAD']]))
+        for ap in aparelhos_com_af:
+            fonte_af = min(fontes_distribuicao_af, key=lambda f: abs(f['z_base'] - ap['z_base']) * 5 + dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
+            if fonte_af['ID_CAD'] == ap['ID_CAD'] and len(aparelhos_com_af) > 1:
+                continue
+            f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
+            peso_ap = float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
+            dn_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0])
+            pesos_acum[fonte_af['ID_CAD']] += peso_ap
+            diametro_ramal = max(dn_ap, dimensionar_tubo_agua(pesos_acum[fonte_af['ID_CAD']]))
 
-                pts_2d_ap = rota_a_star_2d(ap, fonte_af, permitir_diagonal=False)
-                if pts_2d_ap:
-                    z_ponto_consumo = ap['z_base'] + ap.get('z_relativo', 0.6)
-                    z_ramal_parede = ap['z_base'] + h_af
-                    # O ramal vem na altura h_af pela parede e DESCE (ou sobe) na prumada exata do aparelho até z_ponto_consumo!
-                    linha_3d = [(ap['x'], ap['y'], z_ponto_consumo), (ap['x'], ap['y'], z_ramal_parede)]
-                    for px, py in pts_2d_ap:
-                        linha_3d.append((px, py, z_ramal_parede))
-                    linha_3d.append((fonte_af['x'], fonte_af['y'], z_ramal_parede))
-                    linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
+            pts_2d_ap = rota_a_star_2d(ap, fonte_af, permitir_diagonal=False)
+            if pts_2d_ap:
+                z_ponto_consumo = ap['z_base'] + ap.get('z_relativo', 0.6)
+                z_ramal_parede = ap['z_base'] + h_af
+                linha_3d = [(ap['x'], ap['y'], z_ponto_consumo), (ap['x'], ap['y'], z_ramal_parede)]
+                for px, py in pts_2d_ap:
+                    linha_3d.append((px, py, z_ramal_parede))
+                linha_3d.append((fonte_af['x'], fonte_af['y'], z_ramal_parede))
+                linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
 
-                    hist_f = historico_no_af.get(fonte_af['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
-                    comp_ramal = calcular_comprimento_rota(linha_3d)
-                    j90_r, j45_r = contar_conexoes_na_rota(linha_3d)
+                hist_f = historico_no_af.get(fonte_af['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
+                comp_ramal = calcular_comprimento_rota(linha_3d)
+                j90_r, _ = contar_conexoes_na_rota(linha_3d)
 
-                    linhas_processadas.append({
-                        'pontos': linha_3d, 'cor': 'blue', 'tipo': 'Água Fria',
-                        'diametro': diametro_ramal, 'equipamento': ap['Equipamento'],
-                        'id_ap': ap['ID_CAD'], 'prumada_ref': fonte_af['ID_CAD'],
-                        'comp_acumulado_total_m': round(hist_f['comp_m'] + comp_ramal, 2),
-                        'j90_acumulados': hist_f['j90'] + j90_r,
-                        'tes_acumulados': hist_f['tes'] + 1
-                    })
+                linhas_processadas.append({
+                    'pontos': linha_3d, 'cor': 'blue',
+                    'tipo': 'Água Fria',
+                    'legenda_3d': f"Água Fria ({ap['Equipamento'][:18]})",
+                    'diametro': diametro_ramal, 'equipamento': ap['Equipamento'],
+                    'id_ap': ap['ID_CAD'], 'prumada_ref': fonte_af['ID_CAD'],
+                    'comp_acumulado_total_m': round(hist_f['comp_m'] + comp_ramal, 2),
+                    'j90_acumulados': hist_f['j90'] + j90_r,
+                    'tes_acumulados': hist_f['tes'] + 1
+                })
 
     # =========================================================================
-    # ETAPA 4: CICLO COMPLETO DE ÁGUA QUENTE (BOILER -> QUEDA AQ -> SUBIDA AQ -> APARELHOS)
+    # ETAPA 4: ÁGUA QUENTE (BOILER -> QUEDA AQ -> SUBIDA AQ -> APARELHOS)
     # =========================================================================
     fontes_aq = subidas_aq if subidas_aq else (quedas_aq if quedas_aq else (boilers_aq if boilers_aq else fontes_distribuicao_af))
     if quedas_aq and subidas_aq:
@@ -1121,12 +1123,14 @@ def rotear_hidro(df_bh, ctx):
             for px, py in pts_2d_aq:
                 linha_sub_aq.append((px, py, z_sub_aq))
             linha_sub_aq.extend([(sub_q['x'], sub_q['y'], z_sub_aq), (sub_q['x'], sub_q['y'], sub_q['z_base'] + h_aq)])
-            linhas_processadas.append({'pontos': linha_sub_aq, 'cor': '#cc0000', 'tipo': f"Água Quente - Queda + Subida ({sub_q['ID_CAD']})", 'diametro': 28})
+            linhas_processadas.append({'pontos': linha_sub_aq, 'cor': '#cc0000', 'tipo': f"Queda + Subida AQ ({sub_q['ID_CAD']})", 'diametro': 28})
 
     if fontes_aq:
         for ap in df_bh:
             if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_aq_validos:
                 fonte_q = min(fontes_aq, key=lambda f: dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
+                if fonte_q['ID_CAD'] == ap['ID_CAD']:
+                    continue
                 pts_2d_q = rota_a_star_2d(ap, fonte_q, permitir_diagonal=False)
                 if pts_2d_q:
                     z_pt_aq = ap['z_base'] + ap.get('z_relativo', 0.6)
@@ -1142,13 +1146,24 @@ def rotear_hidro(df_bh, ctx):
                     })
 
     # =========================================================================
-    # ETAPA 5: CICLO COMPLETO DE ESGOTO (APARELHOS / RAMAL DE DESCARGA -> RAMAL DE ESGOTO -> TQ -> CAIXA DE INSPEÇÃO)
+    # ETAPA 5: HIERARQUIA REAL DE ESGOTO (NBR 8160)
+    # - Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro) -> Ralo Sifonado / Caixa Sifonada
+    # - Cozinha (Pia / Lava-Louça) -> Caixa de Gordura
+    # - Esgoto Primário (Bacia Sanitária, Ralo Sifonado, Cx Gordura) -> Ramal de Esgoto -> TQ -> Caixa de Inspeção
     # =========================================================================
-    ramais_descarga = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Descarga']
-    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
     alvos_finais_esg = prumadas_esg if prumadas_esg else caixas_inspecao
 
-    # 5.1. Prumadas (Tubos de Queda TQ) + Colunas de Ventilação + Subcoletor até Caixa de Inspeção
+    # Identifica Caixas Sifonadas/Ralos Sifonados e Caixas de Gordura presentes na planta
+    caixas_sifonadas = [
+        b for b in df_bh
+        if "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', '')) or "SIFONAD" in normalizar_texto_bim(b.get('Nome_Bloco', ''))
+    ]
+    caixas_gordura = [
+        b for b in df_bh
+        if "GORDURA" in normalizar_texto_bim(b.get('Equipamento', '')) or "[CG]" in str(b.get('Nome_Bloco', '')).upper()
+    ]
+
+    # 5.1. Tubos de Queda (TQ), Ventilação e Subcoletores até Caixa de Inspeção
     if prumadas_esg:
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
         for prum_e in prumadas_esg:
@@ -1176,16 +1191,12 @@ def rotear_hidro(df_bh, ctx):
                     linha_subcoletor.append((ci_prox['x'], ci_prox['y'], z_pe_tq - d_ac * 0.01))
                     linhas_processadas.append({
                         'pontos': linha_subcoletor, 'cor': '#3d2514',
-                        'tipo': f"Esgoto - Subcoletor Enterrado -> {ci_prox['ID_CAD']}", 'diametro': 100, 'declividade_pct': 1.0
+                        'tipo': f"Subcoletor Esgoto -> {ci_prox['Nome_Bloco']}", 'diametro': 100, 'declividade_pct': 1.0
                     })
 
-    # 5.2. Aparelhos Sanitários e Ramais de Descarga -> convergem para o Ramal de Esgoto mais próximo (ou direto p/ TQ/CI)
-    origens_descarga = [
-        b for b in df_bh
-        if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']
-    ]
+    # 5.2. Roteamento de Aparelhos e Ramais de Descarga respeitando a hierarquia NBR 8160
+    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']]
     uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
-    uhc_acumulado_tq = {tq_b['ID_CAD']: 0.0 for tq_b in alvos_finais_esg}
 
     for ap in origens_descarga:
         f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
@@ -1199,40 +1210,72 @@ def rotear_hidro(df_bh, ctx):
             esg_mm_ap = 40
             uhc_ap = max(2.0, uhc_ap)
 
-        # Prioriza conectar o Ramal de Descarga a um Ramal de Esgoto do mesmo pavimento; se não houver, vai ao TQ/CI
-        ramais_esg_mesmo_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - ap['z_base']) < 0.5]
-        opcoes_destino_rd = ramais_esg_mesmo_andar if ramais_esg_mesmo_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
-        if not opcoes_destino_rd:
-            continue
+        eq_norm = normalizar_texto_bim(ap['Equipamento'])
+        eh_cx_sifonada = ap in caixas_sifonadas
+        eh_cx_gordura = ap in caixas_gordura
+        eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA"]) and not eh_cx_gordura
+        eh_secundario_banheiro = (esg_mm_ap <= 40 or "RALO SECO" in eq_norm or "LAVATORIO" in eq_norm or "CHUVEIRO" in eq_norm) and not eh_cx_sifonada
 
-        alvo_rd = min(opcoes_destino_rd, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-        if alvo_rd['ID_CAD'] in uhc_acumulado_ramal_esg:
-            uhc_acumulado_ramal_esg[alvo_rd['ID_CAD']] += uhc_ap
-        elif alvo_rd['ID_CAD'] in uhc_acumulado_tq:
-            uhc_acumulado_tq[alvo_rd['ID_CAD']] += uhc_ap
+        alvo_escolhido = None
+        cor_ramal = 'brown'
+
+        # Regra 1: Ralo Seco, Lavatório e Chuveiro vão para a Caixa Sifonada / Ralo Sifonado mais próximo (até 5m)
+        if eh_secundario_banheiro and caixas_sifonadas:
+            cs_cand = [cs for cs in caixas_sifonadas if cs['ID_CAD'] != ap['ID_CAD'] and abs(cs['z_base'] - ap['z_base']) < 0.5 and dist_2d((ap['x'], ap['y']), (cs['x'], cs['y'])) <= 5.0]
+            if cs_cand:
+                alvo_escolhido = min(cs_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
+                cor_ramal = '#cd853f' # Marrom claro (Ramal de Descarga Secundário -> Caixa Sifonada)
+
+        # Regra 2: Pia de Cozinha vai para a Caixa de Gordura mais próxima
+        elif eh_cozinha and caixas_gordura:
+            cg_cand = [cg for cg in caixas_gordura if cg['ID_CAD'] != ap['ID_CAD'] and abs(cg['z_base'] - ap['z_base']) < 0.5]
+            if cg_cand:
+                alvo_escolhido = min(cg_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
+                cor_ramal = '#b8860b' # Ocre (Ramal de Descarga Cozinha -> Caixa de Gordura)
+
+        # Regra 3: Bacia Sanitária, Caixa Sifonada e Caixa de Gordura vão para o Ramal de Esgoto -> TQ -> Caixa de Inspeção
+        if alvo_escolhido is None:
+            ramais_esg_andar = [re_b for re_b in ramais_esgoto if re_b['ID_CAD'] != ap['ID_CAD'] and abs(re_b['z_base'] - ap['z_base']) < 0.5]
+            opcoes_primario = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
+            opcoes_primario = [op for op in opcoes_primario if op['ID_CAD'] != ap['ID_CAD']]
+            if not opcoes_primario:
+                continue
+            alvo_escolhido = min(opcoes_primario, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
+
+        if alvo_escolhido['ID_CAD'] in uhc_acumulado_ramal_esg:
+            uhc_acumulado_ramal_esg[alvo_escolhido['ID_CAD']] += uhc_ap
 
         diam_rd = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_ap))
         declividade_rd = 0.01 if diam_rd >= 100 else 0.02
 
-        pts_2d_rd = rota_a_star_2d(ap, alvo_rd, permitir_diagonal=True)
+        pts_2d_rd = rota_a_star_2d(ap, alvo_escolhido, permitir_diagonal=True)
         if pts_2d_rd:
             z_inicio_rd = ap['z_base'] - 0.12
-            linha_rd = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.1)), (ap['x'], ap['y'], z_inicio_rd)]
+            linha_rd = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.0)), (ap['x'], ap['y'], z_inicio_rd)]
             dist_ac = 0.0
             pt_ant = (ap['x'], ap['y'])
             for px_r, py_r in pts_2d_rd:
                 dist_ac += dist_2d(pt_ant, (px_r, py_r))
                 linha_rd.append((px_r, py_r, z_inicio_rd - (dist_ac * declividade_rd)))
                 pt_ant = (px_r, py_r)
-            linha_rd.append((alvo_rd['x'], alvo_rd['y'], z_inicio_rd - (dist_ac * declividade_rd)))
+            linha_rd.append((alvo_escolhido['x'], alvo_escolhido['y'], z_inicio_rd - (dist_ac * declividade_rd)))
+
+            # Define o rótulo claro na legenda 3D conforme a função real do bloco!
+            if ap['Tipo_BIM'] == 'Ramal de Descarga':
+                rotulo_tipo = f"Ramal de Descarga ({ap['ID_CAD']}) -> {alvo_escolhido['Nome_Bloco']}"
+            elif eh_secundario_banheiro and alvo_escolhido in caixas_sifonadas:
+                rotulo_tipo = f"Descarga Sec. ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}"
+            else:
+                rotulo_tipo = f"Esgoto ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}"
+
             linhas_processadas.append({
-                'pontos': linha_rd, 'cor': '#a0522d',
-                'tipo': f"Ramal de Descarga -> {alvo_rd['ID_CAD']}",
+                'pontos': linha_rd, 'cor': cor_ramal,
+                'tipo': rotulo_tipo,
                 'diametro': diam_rd, 'declividade_pct': declividade_rd * 100,
-                'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_rd['ID_CAD']
+                'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_escolhido['ID_CAD']
             })
 
-    # 5.3. Ramais de Esgoto (Coletor Horizontal) -> recebem os Ramais de Descarga e levam ao Tubo de Queda (TQ) ou Caixa de Inspeção
+    # 5.3. Ramais de Esgoto (Coletor Horizontal) -> Tubo de Queda (TQ) ou Caixa de Inspeção
     if ramais_esgoto and alvos_finais_esg:
         for re_b in ramais_esgoto:
             f_eq_re = st.session_state.bib_hidro['Equipamento'] == re_b['Equipamento']
@@ -1244,8 +1287,6 @@ def rotear_hidro(df_bh, ctx):
             declividade_re = 0.01 if diam_re >= 100 else 0.02
 
             alvo_final = min(alvos_finais_esg, key=lambda tq: dist_2d((re_b['x'], re_b['y']), (tq['x'], tq['y'])))
-            uhc_acumulado_tq[alvo_final['ID_CAD']] = uhc_acumulado_tq.get(alvo_final['ID_CAD'], 0.0) + uhc_total_ramal
-
             pts_2d_re = rota_a_star_2d(re_b, alvo_final, permitir_diagonal=True)
             if pts_2d_re:
                 z_ini_re = re_b['z_base'] - 0.18
@@ -1258,8 +1299,8 @@ def rotear_hidro(df_bh, ctx):
                     pt_ant = (px_e, py_e)
                 linha_re.append((alvo_final['x'], alvo_final['y'], z_ini_re - (dist_ac * declividade_re)))
                 linhas_processadas.append({
-                    'pontos': linha_re, 'cor': 'brown',
-                    'tipo': f"Ramal de Esgoto Coletor ({re_b['ID_CAD']}) -> {alvo_final['ID_CAD']}",
+                    'pontos': linha_re, 'cor': '#5c3a21',
+                    'tipo': f"Ramal de Esgoto ({re_b['Nome_Bloco']}) -> {alvo_final['Nome_Bloco']}",
                     'diametro': diam_re, 'declividade_pct': declividade_re * 100,
                     'equipamento': re_b['Equipamento'], 'id_ap': re_b['ID_CAD'], 'prumada_ref': alvo_final['ID_CAD']
                 })
