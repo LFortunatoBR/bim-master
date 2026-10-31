@@ -512,7 +512,7 @@ def inicializar_bibliotecas_internas():
 inicializar_bibliotecas_internas()
 
 def garantir_tubos_queda_subida_na_biblioteca():
-    """Injeta os Tubos de Queda (Descida) e Colunas de Subida de Água Fria e Quente na bib_hidro."""
+    """Injeta Tubos de Queda, Colunas de Subida, Ramais de Descarga e Ramais de Esgoto na bib_hidro."""
     novos_itens = [
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 50mm)", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 40mm)", "Vazao_Ls": 1.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
@@ -524,6 +524,12 @@ def garantir_tubos_queda_subida_na_biblioteca():
         {"Equipamento": "Tubo de Queda Água Quente (TQ-AQ 22mm)", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Coluna de Subida Água Quente (CS-AQ 28mm)", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 28, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Coluna de Subida Água Quente (CS-AQ 22mm)", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 40},
+        {"Equipamento": "Ramal de Descarga Esgoto 50mm (Pia/Tanque/Máquina)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 3, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Ramal de Descarga Esgoto 100mm (Bacia Sanitária)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
+        {"Equipamento": "Ramal de Esgoto Coletor 50mm (NBR 8160)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Ramal de Esgoto Coletor 75mm (NBR 8160)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Ramal de Esgoto Coletor 100mm (NBR 8160)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 160, "Esgoto_mm": 100, "Vent_mm": 75},
         {"Equipamento": "Condutor Vertical de Águas Pluviais (AP 100mm)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
     ]
     if 'bib_hidro' in st.session_state:
@@ -1136,10 +1142,14 @@ def rotear_hidro(df_bh, ctx):
                     })
 
     # =========================================================================
-    # ETAPA 5: CICLO COMPLETO DE ESGOTO (APARELHOS -> TQ ESGOTO -> CAIXA DE INSPEÇÃO FINAL)
+    # ETAPA 5: CICLO COMPLETO DE ESGOTO (APARELHOS / RAMAL DE DESCARGA -> RAMAL DE ESGOTO -> TQ -> CAIXA DE INSPEÇÃO)
     # =========================================================================
-    alvos_esg = prumadas_esg if prumadas_esg else caixas_inspecao
-    if alvos_esg:
+    ramais_descarga = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Descarga']
+    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
+    alvos_finais_esg = prumadas_esg if prumadas_esg else caixas_inspecao
+
+    # 5.1. Prumadas (Tubos de Queda TQ) + Colunas de Ventilação + Subcoletor até Caixa de Inspeção
+    if prumadas_esg:
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
         for prum_e in prumadas_esg:
             linhas_processadas.append({
@@ -1151,7 +1161,6 @@ def rotear_hidro(df_bh, ctx):
                 'cor': '#2ca02c', 'tipo': f"Coluna de Ventilação ({prum_e['ID_CAD']})", 'diametro': 50
             })
 
-            # Se houver Caixa de Inspeção Final no solo, leva o pé do Tubo de Queda até a Caixa de Inspeção com caimento de 1%
             if caixas_inspecao:
                 ci_prox = min(caixas_inspecao, key=lambda ci: dist_2d((prum_e['x'], prum_e['y']), (ci['x'], ci['y'])))
                 pts_2d_ci = rota_a_star_2d(prum_e, ci_prox, permitir_diagonal=True)
@@ -1170,38 +1179,90 @@ def rotear_hidro(df_bh, ctx):
                         'tipo': f"Esgoto - Subcoletor Enterrado -> {ci_prox['ID_CAD']}", 'diametro': 100, 'declividade_pct': 1.0
                     })
 
-        uhc_por_alvo = {p['ID_CAD']: 0.0 for p in alvos_esg}
-        for ap in df_bh:
-            if ap['Tipo_BIM'] == 'Aparelho Hidráulico':
-                f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-                if not f_eq.any():
-                    continue
-                uhc_ap = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0])
-                esg_mm_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0])
-                if esg_mm_ap <= 0:
-                    continue
+    # 5.2. Aparelhos Sanitários e Ramais de Descarga -> convergem para o Ramal de Esgoto mais próximo (ou direto p/ TQ/CI)
+    origens_descarga = [
+        b for b in df_bh
+        if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']
+    ]
+    uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
+    uhc_acumulado_tq = {tq_b['ID_CAD']: 0.0 for tq_b in alvos_finais_esg}
 
-                alvo_e = min(alvos_esg, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-                uhc_por_alvo[alvo_e['ID_CAD']] += uhc_ap
-                diam_esg = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_por_alvo[alvo_e['ID_CAD']]))
-                declividade = 0.01 if diam_esg >= 100 else 0.02
+    for ap in origens_descarga:
+        f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
+        if not f_eq.any():
+            continue
+        uhc_ap = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0])
+        esg_mm_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0])
+        if esg_mm_ap <= 0 and ap['Tipo_BIM'] != 'Ramal de Descarga':
+            continue
+        if esg_mm_ap <= 0:
+            esg_mm_ap = 40
+            uhc_ap = max(2.0, uhc_ap)
 
-                pts_2d_esg = rota_a_star_2d(ap, alvo_e, permitir_diagonal=True)
-                if pts_2d_esg:
-                    z_inicio_ramal = ap['z_base'] - 0.15
-                    linha_3d = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.1)), (ap['x'], ap['y'], z_inicio_ramal)]
-                    dist_acum = 0.0
-                    pt_ant = (ap['x'], ap['y'])
-                    for px_real, py_real in pts_2d_esg:
-                        dist_acum += dist_2d(pt_ant, (px_real, py_real))
-                        linha_3d.append((px_real, py_real, z_inicio_ramal - (dist_acum * declividade)))
-                        pt_ant = (px_real, py_real)
-                    linha_3d.append((alvo_e['x'], alvo_e['y'], z_inicio_ramal - (dist_acum * declividade)))
-                    linhas_processadas.append({
-                        'pontos': linha_3d, 'cor': 'brown', 'tipo': 'Esgoto',
-                        'diametro': diam_esg, 'declividade_pct': declividade * 100,
-                        'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_e['ID_CAD']
-                    })
+        # Prioriza conectar o Ramal de Descarga a um Ramal de Esgoto do mesmo pavimento; se não houver, vai ao TQ/CI
+        ramais_esg_mesmo_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - ap['z_base']) < 0.5]
+        opcoes_destino_rd = ramais_esg_mesmo_andar if ramais_esg_mesmo_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
+        if not opcoes_destino_rd:
+            continue
+
+        alvo_rd = min(opcoes_destino_rd, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
+        if alvo_rd['ID_CAD'] in uhc_acumulado_ramal_esg:
+            uhc_acumulado_ramal_esg[alvo_rd['ID_CAD']] += uhc_ap
+        elif alvo_rd['ID_CAD'] in uhc_acumulado_tq:
+            uhc_acumulado_tq[alvo_rd['ID_CAD']] += uhc_ap
+
+        diam_rd = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_ap))
+        declividade_rd = 0.01 if diam_rd >= 100 else 0.02
+
+        pts_2d_rd = rota_a_star_2d(ap, alvo_rd, permitir_diagonal=True)
+        if pts_2d_rd:
+            z_inicio_rd = ap['z_base'] - 0.12
+            linha_rd = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.1)), (ap['x'], ap['y'], z_inicio_rd)]
+            dist_ac = 0.0
+            pt_ant = (ap['x'], ap['y'])
+            for px_r, py_r in pts_2d_rd:
+                dist_ac += dist_2d(pt_ant, (px_r, py_r))
+                linha_rd.append((px_r, py_r, z_inicio_rd - (dist_ac * declividade_rd)))
+                pt_ant = (px_r, py_r)
+            linha_rd.append((alvo_rd['x'], alvo_rd['y'], z_inicio_rd - (dist_ac * declividade_rd)))
+            linhas_processadas.append({
+                'pontos': linha_rd, 'cor': '#a0522d',
+                'tipo': f"Ramal de Descarga -> {alvo_rd['ID_CAD']}",
+                'diametro': diam_rd, 'declividade_pct': declividade_rd * 100,
+                'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_rd['ID_CAD']
+            })
+
+    # 5.3. Ramais de Esgoto (Coletor Horizontal) -> recebem os Ramais de Descarga e levam ao Tubo de Queda (TQ) ou Caixa de Inspeção
+    if ramais_esgoto and alvos_finais_esg:
+        for re_b in ramais_esgoto:
+            f_eq_re = st.session_state.bib_hidro['Equipamento'] == re_b['Equipamento']
+            esg_mm_base = int(st.session_state.bib_hidro.loc[f_eq_re, 'Esgoto_mm'].values[0]) if f_eq_re.any() else 50
+            uhc_proprio = float(st.session_state.bib_hidro.loc[f_eq_re, 'UHC'].values[0]) if f_eq_re.any() else 6.0
+
+            uhc_total_ramal = max(uhc_proprio, uhc_acumulado_ramal_esg.get(re_b['ID_CAD'], 0.0))
+            diam_re = max(50, esg_mm_base, dimensionar_tubo_esgoto(uhc_total_ramal))
+            declividade_re = 0.01 if diam_re >= 100 else 0.02
+
+            alvo_final = min(alvos_finais_esg, key=lambda tq: dist_2d((re_b['x'], re_b['y']), (tq['x'], tq['y'])))
+            uhc_acumulado_tq[alvo_final['ID_CAD']] = uhc_acumulado_tq.get(alvo_final['ID_CAD'], 0.0) + uhc_total_ramal
+
+            pts_2d_re = rota_a_star_2d(re_b, alvo_final, permitir_diagonal=True)
+            if pts_2d_re:
+                z_ini_re = re_b['z_base'] - 0.18
+                linha_re = [(re_b['x'], re_b['y'], z_ini_re)]
+                dist_ac = 0.0
+                pt_ant = (re_b['x'], re_b['y'])
+                for px_e, py_e in pts_2d_re:
+                    dist_ac += dist_2d(pt_ant, (px_e, py_e))
+                    linha_re.append((px_e, py_e, z_ini_re - (dist_ac * declividade_re)))
+                    pt_ant = (px_e, py_e)
+                linha_re.append((alvo_final['x'], alvo_final['y'], z_ini_re - (dist_ac * declividade_re)))
+                linhas_processadas.append({
+                    'pontos': linha_re, 'cor': 'brown',
+                    'tipo': f"Ramal de Esgoto Coletor ({re_b['ID_CAD']}) -> {alvo_final['ID_CAD']}",
+                    'diametro': diam_re, 'declividade_pct': declividade_re * 100,
+                    'equipamento': re_b['Equipamento'], 'id_ap': re_b['ID_CAD'], 'prumada_ref': alvo_final['ID_CAD']
+                })
 
     return linhas_processadas
 
@@ -1863,6 +1924,8 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
     # 2. Regras Inteligentes por Palavras-Chave de Engenharia Hidrossanitária
     regras_hidro = [
         # (Palavras-chave, Função BIM, Termo na Biblioteca, Altura z_relativo)
+        (["RAMAL DE DESCARGA", "RAMAL DESCARGA", "RD "], "Ramal de Descarga", "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", -0.10),
+        (["RAMAL DE ESGOTO", "RAMAL ESGOTO", "RE ", "COLETOR ESGOTO"], "Ramal de Esgoto", "Ramal de Esgoto Coletor 100mm (NBR 8160)", -0.18),
         (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.0),
         (["SUBIDA AF", "CS AF", "COLUNA SUBIDA AF", "SUBIDA AGUA FRIA", "RECALQUE"], "Coluna de Subida Água Fria", "Coluna de Subida Água Fria (CS-AF 32mm)", 0.0),
         (["QUEDA AQ", "TQ AQ", "DESCIDA AQ", "QUEDA AGUA QUENTE"], "Tubo de Queda Água Quente", "Tubo de Queda Água Quente (TQ-AQ 28mm)", 0.0),
@@ -2435,6 +2498,8 @@ with tab_bim:
                             "Função BIM",
                             options=[
                                 "Aparelho Hidráulico",
+                                "Ramal de Descarga",
+                                "Ramal de Esgoto",
                                 "Tubo de Queda Água Fria",
                                 "Coluna de Subida Água Fria",
                                 "Prumada Água Fria",
@@ -2585,7 +2650,7 @@ with tab_bim:
                 novos_pontos_hidro = []
                 z_res_mca = z_cobertura + altura_caixa
                 for b_hd in ctx['df_hidro']:
-                    if b_hd['Tipo_BIM'] != 'Aparelho Hidráulico': continue
+                    if b_hd['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Ramal de Esgoto']: continue
                     eq_h = b_hd['Equipamento']
                     filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
                     if not filtro_h.any(): continue
