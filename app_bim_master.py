@@ -2361,27 +2361,29 @@ with tab_bim:
                 msp = doc.modelspace()
                 
                 for le in layer_esquadrias:
-                    # 1. Lê blocos INSERT de Portas e Janelas extraindo a geometria interna real e arcos de giro
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
                         nome_bloco_u = extrair_nome_real_bloco_dxf(doc, e).upper()
                         layer_u = le.upper()
                         tem_arco = False
                         xs_b, ys_b = [], []
+                        cx_ins, cy_ins = float(e.dxf.insert.x), float(e.dxf.insert.y)
                         try:
                             for ve in e.virtual_entities():
                                 if ve.dxftype() == 'ARC':
                                     tem_arco = True
                                 elif ve.dxftype() == 'LINE':
-                                    xs_b.extend([ve.dxf.start.x, ve.dxf.end.x])
-                                    ys_b.extend([ve.dxf.start.y, ve.dxf.end.y])
+                                    # Ignora linhas internas que estejam a mais de 2.5m do ponto de inserção do bloco
+                                    if math.hypot(ve.dxf.start.x - cx_ins, ve.dxf.start.y - cy_ins) <= 2.5 and math.hypot(ve.dxf.end.x - cx_ins, ve.dxf.end.y - cy_ins) <= 2.5:
+                                        xs_b.extend([ve.dxf.start.x, ve.dxf.end.x])
+                                        ys_b.extend([ve.dxf.start.y, ve.dxf.end.y])
                                 elif ve.dxftype() == 'LWPOLYLINE':
                                     for pt_v in ve.get_points(format='xy'):
-                                        xs_b.append(pt_v[0])
-                                        ys_b.append(pt_v[1])
+                                        if math.hypot(pt_v[0] - cx_ins, pt_v[1] - cy_ins) <= 2.5:
+                                            xs_b.append(pt_v[0])
+                                            ys_b.append(pt_v[1])
                         except Exception:
                             pass
 
-                        # É porta se tiver arco de abertura (ARC), ou nome/layer indicar porta ou madeira
                         eh_porta = (
                             tem_arco
                             or any(k in nome_bloco_u for k in ["PORTA", "PT", "P1", "P2", "P3", "MADEIRA", "GIRO"])
@@ -2394,19 +2396,18 @@ with tab_bim:
                             x_min_e, x_max_e = min(xs_b), max(xs_b)
                             y_min_e, y_max_e = min(ys_b), max(ys_b)
                             dx_e, dy_e = x_max_e - x_min_e, y_max_e - y_min_e
-                            larg_real = max(0.60, min(3.0, max(dx_e, dy_e)))
-                            # Define os 2 pontos de extremidade do vão alinhados com a parede
-                            if dx_e >= dy_e:
-                                p1_vao = (x_min_e, (y_min_e + y_max_e) / 2.0)
-                                p2_vao = (x_max_e, (y_min_e + y_max_e) / 2.0)
-                            else:
-                                p1_vao = ((x_min_e + x_max_e) / 2.0, y_min_e)
-                                p2_vao = ((x_min_e + x_max_e) / 2.0, y_max_e)
+                            larg_real = max(0.60, min(2.20, max(dx_e, dy_e)))
                             cx_e, cy_e = (x_min_e + x_max_e) / 2.0, (y_min_e + y_max_e) / 2.0
+                            if dx_e >= dy_e:
+                                p1_vao = (cx_e - larg_real / 2.0, cy_e)
+                                p2_vao = (cx_e + larg_real / 2.0, cy_e)
+                            else:
+                                p1_vao = (cx_e, cy_e - larg_real / 2.0)
+                                p2_vao = (cx_e, cy_e + larg_real / 2.0)
                         else:
-                            larg_real = 0.90 if eh_porta else 1.20
+                            larg_real = 0.85 if eh_porta else 1.20
                             rot_rad = math.radians(getattr(e.dxf, 'rotation', 0.0))
-                            cx_e, cy_e = e.dxf.insert.x, e.dxf.insert.y
+                            cx_e, cy_e = cx_ins, cy_ins
                             p1_vao = (cx_e - (larg_real / 2.0) * math.cos(rot_rad), cy_e - (larg_real / 2.0) * math.sin(rot_rad))
                             p2_vao = (cx_e + (larg_real / 2.0) * math.cos(rot_rad), cy_e + (larg_real / 2.0) * math.sin(rot_rad))
 
@@ -2419,30 +2420,6 @@ with tab_bim:
                             "Peitoril": 0.0 if eh_porta else 1.00,
                             "Altura": 2.10 if eh_porta else 1.10
                         })
-
-                    # 2. Captura também linhas/polilinhas soltas desenhadas na layer de Esquadrias (peitoril/soleira)
-                    for e_lin in msp.query(f'LINE LWPOLYLINE[layer=="{le}"]'):
-                        eh_p_lin = any(k in le.upper() for k in ["PORTA", "MADEIRA"])
-                        z_esq_lin = z_base if eh_p_lin else (z_base + 1.00)
-                        h_esq_lin = 2.10 if eh_p_lin else 1.10
-                        pts_e = []
-                        if e_lin.dxftype() == 'LINE':
-                            pts_e = [((e_lin.dxf.start.x, e_lin.dxf.start.y), (e_lin.dxf.end.x, e_lin.dxf.end.y))]
-                        elif e_lin.dxftype() == 'LWPOLYLINE':
-                            p_list = list(e_lin.get_points(format='xy'))
-                            for k_p in range(len(p_list) - 1):
-                                pts_e.append(((p_list[k_p][0], p_list[k_p][1]), (p_list[k_p+1][0], p_list[k_p+1][1])))
-                        for p1_v, p2_v in pts_e:
-                            if 0.40 <= dist_2d(p1_v, p2_v) <= 4.0:
-                                elementos_arquitetonicos.append({
-                                    "ID_CAD": f"VAO_{le}", "Tipo": "Esquadria",
-                                    "Subtipo": "Porta" if eh_p_lin else "Janela",
-                                    "x": (p1_v[0]+p2_v[0])/2.0, "y": (p1_v[1]+p2_v[1])/2.0, "z_base": z_base,
-                                    "p1_vao": p1_v, "p2_vao": p2_v,
-                                    "Largura": dist_2d(p1_v, p2_v),
-                                    "Peitoril": 0.0 if eh_p_lin else 1.00,
-                                    "Altura": h_esq_lin
-                                })
 
                 for le in layer_estrutural:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
@@ -2808,35 +2785,85 @@ with tab_bim:
 
             fig = go.Figure()
 
-            # 1. PAREDES EM WIREFRAME 3D (Linhas suaves na base, no topo do pé-direito e nas quinas verticais)
-            wx, wy, wz = [], [], []
-            for idx_w, (p1, p2) in enumerate(paredes_raw):
-                z_piso = p1[2]
-                # Se p2[2] tiver o topo salvo, usa ele; caso contrário soma o pé-direito padrão (3.0m)
-                z_topo = p2[2] if p2[2] > z_piso else (z_piso + 3.0)
-                # Linha no piso + Linha no teto
-                wx.extend([p1[0], p2[0], None, p1[0], p2[0], None])
-                wy.extend([p1[1], p2[1], None, p1[1], p2[1], None])
-                wz.extend([z_piso, z_piso, None, z_topo, z_topo, None])
-                # Linhas verticais nos encontros de parede (quinas)
-                if idx_w % 2 == 0 or dist_2d(p1, p2) >= 0.8:
-                    wx.extend([p1[0], p1[0], None, p2[0], p2[0], None])
-                    wy.extend([p1[1], p1[1], None, p2[1], p2[1], None])
-                    wz.extend([z_piso, z_topo, None, z_piso, z_topo, None])
+            # Filtra linhas espúrias (como margens de folha CAD distantes dos blocos) para focar 100% na edificação
+            pts_ref_x = [b['x'] for b in (blocos_elet + blocos_hidro)]
+            pts_ref_y = [b['y'] for b in (blocos_elet + blocos_hidro)]
+            if pts_ref_x and pts_ref_y:
+                lim_x_min, lim_x_max = min(pts_ref_x) - 12.0, max(pts_ref_x) + 12.0
+                lim_y_min, lim_y_max = min(pts_ref_y) - 12.0, max(pts_ref_y) + 12.0
+                paredes_filtradas = [
+                    (p1, p2) for (p1, p2) in paredes_raw
+                    if (lim_x_min <= p1[0] <= lim_x_max and lim_y_min <= p1[1] <= lim_y_max)
+                    and (lim_x_min <= p2[0] <= lim_x_max and lim_y_min <= p2[1] <= lim_y_max)
+                    and dist_2d(p1, p2) <= 25.0
+                ]
+                if not paredes_filtradas:
+                    paredes_filtradas = paredes_raw
+            else:
+                paredes_filtradas = paredes_raw
 
-            if wx:
+            # 1. PAREDES 3D EM MODO RAIO-X (Faces 3D translúcidas + Arestas escuras nítidas no piso e topo)
+            wx_base, wy_base, wz_base = [], [], []
+            wx_topo, wy_topo, wz_topo = [], [], []
+            mesh_x, mesh_y, mesh_z = [], [], []
+            mesh_i, mesh_j, mesh_k = [], [], []
+
+            for p1, p2 in paredes_filtradas:
+                if dist_2d(p1, p2) < 0.05:
+                    continue
+                z_piso = p1[2]
+                z_topo = p2[2] if p2[2] > z_piso else (z_piso + 3.0)
+
+                # Planta baixa nítida no piso (chumbo escuro) para leitura imediata dos cômodos
+                wx_base.extend([p1[0], p2[0], None])
+                wy_base.extend([p1[1], p2[1], None])
+                wz_base.extend([z_piso, z_piso, None])
+
+                # Arestas superiores e verticais suaves (Wireframe 3D)
+                wx_topo.extend([p1[0], p2[0], None, p1[0], p1[0], None, p2[0], p2[0], None])
+                wy_topo.extend([p1[1], p2[1], None, p1[1], p1[1], None, p2[1], p2[1], None])
+                wz_topo.extend([z_topo, z_topo, None, z_piso, z_topo, None, z_piso, z_topo, None])
+
+                # Face 3D translúcida da parede (efeito vidro/raio-X)
+                idx_v = len(mesh_x)
+                mesh_x.extend([p1[0], p2[0], p2[0], p1[0]])
+                mesh_y.extend([p1[1], p2[1], p2[1], p1[1]])
+                mesh_z.extend([z_piso, z_piso, z_topo, z_topo])
+                mesh_i.extend([idx_v, idx_v])
+                mesh_j.extend([idx_v + 1, idx_v + 2])
+                mesh_k.extend([idx_v + 2, idx_v + 3])
+
+            if mesh_x:
+                fig.add_trace(go.Mesh3d(
+                    x=mesh_x, y=mesh_y, z=mesh_z,
+                    i=mesh_i, j=mesh_j, k=mesh_k,
+                    color='#94a3b8', opacity=0.18,
+                    name='🏢 Paredes 3D (Faces Raio-X)',
+                    legendgroup='paredes_3d', showlegend=True, hoverinfo='skip'
+                ))
+            if wx_base:
                 fig.add_trace(go.Scatter3d(
-                    x=wx, y=wy, z=wz, mode='lines',
-                    line=dict(color='rgba(160, 160, 160, 0.38)', width=1.5),
-                    name='Paredes (Wireframe 3D)', hoverinfo='skip'
+                    x=wx_base, y=wy_base, z=wz_base, mode='lines',
+                    line=dict(color='#1e293b', width=3.5),
+                    name='📐 Contorno das Paredes (Base)',
+                    legendgroup='paredes_base', showlegend=True, hoverinfo='skip'
+                ))
+            if wx_topo:
+                fig.add_trace(go.Scatter3d(
+                    x=wx_topo, y=wy_topo, z=wz_topo, mode='lines',
+                    line=dict(color='rgba(71, 85, 105, 0.45)', width=1.5),
+                    name='🏢 Paredes 3D (Wireframe Superior)',
+                    legendgroup='paredes_wire', showlegend=True, hoverinfo='skip'
                 ))
 
-            # 2. VÃOS DE PORTAS, JANELAS E PILARES EM WIREFRAME 3D (Quadros 3D vazados sem losangos!)
+            # 2. VÃOS DE PORTAS, JANELAS E PILARES (Filtrados dentro do perímetro da edificação)
             px_porta, py_porta, pz_porta = [], [], []
             jx_jan, jy_jan, jz_jan = [], [], []
             ex_est, ey_est, ez_est = [], [], []
 
             for elem in elementos_arquitetonicos:
+                if pts_ref_x and not (lim_x_min <= elem['x'] <= lim_x_max and lim_y_min <= elem['y'] <= lim_y_max):
+                    continue
                 if elem['Tipo'] == 'Pilar/Viga':
                     h_pilar = elem.get('pe_direito', 3.0)
                     ex_est.extend([elem['x'], elem['x'], None])
@@ -2845,11 +2872,10 @@ with tab_bim:
                 elif elem['Tipo'] == 'Esquadria':
                     z_inf = elem['z_base'] + elem.get('Peitoril', 0.0)
                     z_sup = z_inf + elem.get('Altura', 2.10)
-                    larg_v = elem.get('Largura', 1.0)
+                    larg_v = min(2.20, elem.get('Largura', 0.90))
                     p1_v = elem.get('p1_vao', (elem['x'] - larg_v/2.0, elem['y']))
                     p2_v = elem.get('p2_vao', (elem['x'] + larg_v/2.0, elem['y']))
 
-                    # Desenha o retângulo 3D do vão (peitoril/soleira -> batente esq -> verga superior -> batente dir -> fecha)
                     quadro_x = [p1_v[0], p2_v[0], p2_v[0], p1_v[0], p1_v[0], None]
                     quadro_y = [p1_v[1], p2_v[1], p2_v[1], p1_v[1], p1_v[1], None]
                     quadro_z = [z_inf,   z_inf,   z_sup,   z_sup,   z_inf,   None]
@@ -2866,33 +2892,117 @@ with tab_bim:
             if px_porta:
                 fig.add_trace(go.Scatter3d(
                     x=px_porta, y=py_porta, z=pz_porta, mode='lines',
-                    line=dict(color='rgba(190, 120, 50, 0.55)', width=2.5),
-                    name='Vãos de Porta (3D)'
+                    line=dict(color='#d97706', width=3),
+                    name='🚪 Vãos de Porta (3D)', legendgroup='portas'
                 ))
             if jx_jan:
                 fig.add_trace(go.Scatter3d(
                     x=jx_jan, y=jy_jan, z=jz_jan, mode='lines',
-                    line=dict(color='rgba(70, 150, 210, 0.55)', width=2.5),
-                    name='Vãos de Janela (3D)'
+                    line=dict(color='#0284c7', width=3),
+                    name='🪟 Vãos de Janela (3D)', legendgroup='janelas'
                 ))
             if ex_est:
                 fig.add_trace(go.Scatter3d(
                     x=ex_est, y=ey_est, z=ez_est, mode='lines',
-                    line=dict(color='rgba(90, 90, 90, 0.50)', width=6),
-                    name='Pilares / Vigas (3D)'
+                    line=dict(color='#334155', width=6),
+                    name='🧱 Pilares / Vigas (3D)', legendgroup='pilares'
                 ))
+
+            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM LEGENDA AGRUPADA (SEM REPETIÇÕES!)
+            grupos_legenda_usados = set()
+
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
                 for linha in st.session_state.linhas_3d_master['eletrica']:
-                    pts, fios_txt = linha['pontos'], linha.get('fios', 'F N T')
-                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines+markers', marker=dict(size=3), line=dict(color=linha['cor'], width=4), name=f"Elétrica ({fios_txt})"))
+                    pts = linha['pontos']
+                    fios_txt = linha.get('fios', 'F N T')
+                    nome_grp = "⚡ Eletrodutos e Circuitos"
+                    mostrar_leg = nome_grp not in grupos_legenda_usados
+                    grupos_legenda_usados.add(nome_grp)
+                    if mostrar_tubos:
+                        fig.add_trace(go.Scatter3d(
+                            x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts],
+                            mode='lines+markers', marker=dict(size=3),
+                            line=dict(color=linha['cor'], width=5),
+                            name=nome_grp, legendgroup='rede_eletrica', showlegend=mostrar_leg,
+                            hovertext=f"Elétrica ({fios_txt}) - L={linha.get('comprimento_m',0)}m", hoverinfo="text"
+                        ))
                     if mostrar_fios and len(pts) >= 2:
                         p_mid = pts[len(pts) // 2]
-                        fig.add_trace(go.Scatter3d(x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2] + 0.15], mode='text', text=[fios_txt], textposition="top center", textfont=dict(color="black", size=11, family="Arial Black"), showlegend=False))
+                        fig.add_trace(go.Scatter3d(
+                            x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2] + 0.15],
+                            mode='text', text=[fios_txt], textposition="top center",
+                            textfont=dict(color="black", size=11, family="Arial Black"),
+                            legendgroup='rede_eletrica', showlegend=False
+                        ))
+
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Hidrossanitário"]:
                 for linha in st.session_state.linhas_3d_master['hidro']:
                     pts = linha['pontos']
-                    if mostrar_tubos: fig.add_trace(go.Scatter3d(x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts], mode='lines+markers', marker=dict(size=3), line=dict(color=linha['cor'], width=6), name=f"{linha.get('tipo', 'Hidro')} DN{linha.get('diametro',25)}"))
-            fig.update_layout(scene=dict(aspectmode='data', bgcolor='#f5f5f5'), height=750, margin=dict(l=0, r=0, b=0, t=0))
+                    tipo_raw = str(linha.get('tipo', 'Hidro'))
+                    dn_val = linha.get('diametro', 25)
+                    if 'Água Fria' in tipo_raw or 'AF' in tipo_raw or 'Barrilete' in tipo_raw:
+                        grp_id, nome_grp = 'hidro_af', '💧 Água Fria (Tubulação)'
+                    elif 'Água Quente' in tipo_raw or 'AQ' in tipo_raw:
+                        grp_id, nome_grp = 'hidro_aq', '🔥 Água Quente (Tubulação)'
+                    elif 'Ventilação' in tipo_raw:
+                        grp_id, nome_grp = 'hidro_vent', '🟢 Ventilação Sanitária'
+                    else:
+                        grp_id, nome_grp = 'hidro_esg', '🤎 Esgoto Sanitário e Descarga'
+
+                    mostrar_leg = grp_id not in grupos_legenda_usados
+                    grupos_legenda_usados.add(grp_id)
+                    if mostrar_tubos:
+                        fig.add_trace(go.Scatter3d(
+                            x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts],
+                            mode='lines+markers', marker=dict(size=3),
+                            line=dict(color=linha['cor'], width=6),
+                            name=nome_grp, legendgroup=grp_id, showlegend=mostrar_leg,
+                            hovertext=f"{tipo_raw} (DN {dn_val}mm)", hoverinfo="text"
+                        ))
+
+            if df_el_ctx:
+                fig.add_trace(go.Scatter3d(
+                    x=[b['x'] for b in df_el_ctx], y=[b['y'] for b in df_el_ctx], z=[b['z_base'] + b.get('z_relativo', 1.3) for b in df_el_ctx],
+                    mode='markers',
+                    hovertext=[f"{b['ID_CAD']} ({b.get('Nome_Bloco','')} | z: {b['z_base']+b.get('z_relativo',1.3):.2f}m)" for b in df_el_ctx],
+                    hoverinfo="text",
+                    marker=dict(size=6, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
+                    name="🔌 Pontos Elétricos"
+                ))
+
+            df_h_proc = st.session_state.contexto_bim.get('df_hidro', [])
+            if df_h_proc:
+                fig.add_trace(go.Scatter3d(
+                    x=[b['x'] for b in df_h_proc], y=[b['y'] for b in df_h_proc], z=[b['z_base'] + b.get('z_relativo', 0.5) for b in df_h_proc],
+                    mode='markers',
+                    hovertext=[f"{b['Nome_Bloco']} -> {b['Equipamento']} ({b['Tipo_BIM']})" for b in df_h_proc],
+                    hoverinfo="text",
+                    marker=dict(size=5, color='#0ea5e9', symbol='circle'),
+                    name="🚰 Pontos Hidrossanitários"
+                ))
+            cx_box = next((b for b in df_h_proc if b['Tipo_BIM'] == 'Caixa d\'Água'), None)
+            if cx_box:
+                fig.add_trace(go.Scatter3d(
+                    x=[cx_box['x']], y=[cx_box['y']], z=[cx_box['z_base'] + st.session_state.contexto_bim.get('altura_caixa', 1.5)],
+                    mode='markers', marker=dict(size=18, color='#1d4ed8', symbol='square'), name='🟦 Caixa d\'Água Superior'
+                ))
+
+            fig.update_layout(
+                scene=dict(
+                    aspectmode='data',
+                    bgcolor='#f8fafc',
+                    xaxis=dict(title='X (m)', backgroundcolor='#f1f5f9', gridcolor='#cbd5e1'),
+                    yaxis=dict(title='Y (m)', backgroundcolor='#f1f5f9', gridcolor='#cbd5e1'),
+                    zaxis=dict(title='Z (m)', backgroundcolor='#e2e8f0', gridcolor='#cbd5e1')
+                ),
+                legend=dict(
+                    title="Camadas 3D (Clique p/ Ocultar):",
+                    bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="#cbd5e1",
+                    borderwidth=1
+                ),
+                height=780, margin=dict(l=0, r=0, b=0, t=0)
+            )
             st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Suba os arquivos DXF ou IFC das plantas/maquetes na barra lateral para iniciar a coordenação.")
