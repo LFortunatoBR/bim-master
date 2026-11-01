@@ -2361,22 +2361,95 @@ with tab_bim:
                 msp = doc.modelspace()
                 
                 for le in layer_esquadrias:
+                    # 1. Lê blocos INSERT de Portas e Janelas extraindo a geometria interna real e arcos de giro
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
                         nome_bloco_u = extrair_nome_real_bloco_dxf(doc, e).upper()
-                        eh_porta = "PORTA" in nome_bloco_u or "PT" in nome_bloco_u or "P1" in nome_bloco_u
+                        layer_u = le.upper()
+                        tem_arco = False
+                        xs_b, ys_b = [], []
+                        try:
+                            for ve in e.virtual_entities():
+                                if ve.dxftype() == 'ARC':
+                                    tem_arco = True
+                                elif ve.dxftype() == 'LINE':
+                                    xs_b.extend([ve.dxf.start.x, ve.dxf.end.x])
+                                    ys_b.extend([ve.dxf.start.y, ve.dxf.end.y])
+                                elif ve.dxftype() == 'LWPOLYLINE':
+                                    for pt_v in ve.get_points(format='xy'):
+                                        xs_b.append(pt_v[0])
+                                        ys_b.append(pt_v[1])
+                        except Exception:
+                            pass
+
+                        # É porta se tiver arco de abertura (ARC), ou nome/layer indicar porta ou madeira
+                        eh_porta = (
+                            tem_arco
+                            or any(k in nome_bloco_u for k in ["PORTA", "PT", "P1", "P2", "P3", "MADEIRA", "GIRO"])
+                            or any(k in layer_u for k in ["PORTA", "MADEIRA"])
+                        )
+                        if "JANELA" in nome_bloco_u or "JAN" in layer_u:
+                            eh_porta = False
+
+                        if xs_b and ys_b:
+                            x_min_e, x_max_e = min(xs_b), max(xs_b)
+                            y_min_e, y_max_e = min(ys_b), max(ys_b)
+                            dx_e, dy_e = x_max_e - x_min_e, y_max_e - y_min_e
+                            larg_real = max(0.60, min(3.0, max(dx_e, dy_e)))
+                            # Define os 2 pontos de extremidade do vão alinhados com a parede
+                            if dx_e >= dy_e:
+                                p1_vao = (x_min_e, (y_min_e + y_max_e) / 2.0)
+                                p2_vao = (x_max_e, (y_min_e + y_max_e) / 2.0)
+                            else:
+                                p1_vao = ((x_min_e + x_max_e) / 2.0, y_min_e)
+                                p2_vao = ((x_min_e + x_max_e) / 2.0, y_max_e)
+                            cx_e, cy_e = (x_min_e + x_max_e) / 2.0, (y_min_e + y_max_e) / 2.0
+                        else:
+                            larg_real = 0.90 if eh_porta else 1.20
+                            rot_rad = math.radians(getattr(e.dxf, 'rotation', 0.0))
+                            cx_e, cy_e = e.dxf.insert.x, e.dxf.insert.y
+                            p1_vao = (cx_e - (larg_real / 2.0) * math.cos(rot_rad), cy_e - (larg_real / 2.0) * math.sin(rot_rad))
+                            p2_vao = (cx_e + (larg_real / 2.0) * math.cos(rot_rad), cy_e + (larg_real / 2.0) * math.sin(rot_rad))
+
                         elementos_arquitetonicos.append({
                             "ID_CAD": f"{e.dxf.name}_ESQ", "Tipo": "Esquadria",
                             "Subtipo": "Porta" if eh_porta else "Janela",
-                            "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base,
-                            "Largura": 0.90 if eh_porta else 1.20,
+                            "x": cx_e, "y": cy_e, "z_base": z_base,
+                            "p1_vao": p1_vao, "p2_vao": p2_vao,
+                            "Largura": larg_real,
                             "Peitoril": 0.0 if eh_porta else 1.00,
                             "Altura": 2.10 if eh_porta else 1.10
                         })
+
+                    # 2. Captura também linhas/polilinhas soltas desenhadas na layer de Esquadrias (peitoril/soleira)
+                    for e_lin in msp.query(f'LINE LWPOLYLINE[layer=="{le}"]'):
+                        eh_p_lin = any(k in le.upper() for k in ["PORTA", "MADEIRA"])
+                        z_esq_lin = z_base if eh_p_lin else (z_base + 1.00)
+                        h_esq_lin = 2.10 if eh_p_lin else 1.10
+                        pts_e = []
+                        if e_lin.dxftype() == 'LINE':
+                            pts_e = [((e_lin.dxf.start.x, e_lin.dxf.start.y), (e_lin.dxf.end.x, e_lin.dxf.end.y))]
+                        elif e_lin.dxftype() == 'LWPOLYLINE':
+                            p_list = list(e_lin.get_points(format='xy'))
+                            for k_p in range(len(p_list) - 1):
+                                pts_e.append(((p_list[k_p][0], p_list[k_p][1]), (p_list[k_p+1][0], p_list[k_p+1][1])))
+                        for p1_v, p2_v in pts_e:
+                            if 0.40 <= dist_2d(p1_v, p2_v) <= 4.0:
+                                elementos_arquitetonicos.append({
+                                    "ID_CAD": f"VAO_{le}", "Tipo": "Esquadria",
+                                    "Subtipo": "Porta" if eh_p_lin else "Janela",
+                                    "x": (p1_v[0]+p2_v[0])/2.0, "y": (p1_v[1]+p2_v[1])/2.0, "z_base": z_base,
+                                    "p1_vao": p1_v, "p2_vao": p2_v,
+                                    "Largura": dist_2d(p1_v, p2_v),
+                                    "Peitoril": 0.0 if eh_p_lin else 1.00,
+                                    "Altura": h_esq_lin
+                                })
+
                 for le in layer_estrutural:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
                         elementos_arquitetonicos.append({
                             "ID_CAD": f"{e.dxf.name}_EST", "Tipo": "Pilar/Viga",
                             "x": e.dxf.insert.x, "y": e.dxf.insert.y, "z_base": z_base,
+                            "pe_direito": pe_direito_atual,
                             "Largura": 0.40, "Altura_Viga": altura_viga
                         })
 
@@ -2410,11 +2483,11 @@ with tab_bim:
                     if e.dxf.layer in layer_arq:
                         pts = []
                         if e.dxftype() == 'LINE':
-                            pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base))]
+                            pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base + pe_direito_atual))]
                         elif e.dxftype() == 'LWPOLYLINE':
                             pontos = list(e.get_points(format='xy'))
                             for i in range(len(pontos)-1):
-                                pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base)))
+                                pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base + pe_direito_atual)))
                         paredes_raw.extend(pts)
                 os.unlink(temp_path)
             
@@ -2734,15 +2807,80 @@ with tab_bim:
             cb4.metric("Pontos de Iluminação", sum(1 for b in df_el_ctx if b.get('Tipo_BIM') == 'Luminária'))
 
             fig = go.Figure()
-            for p1, p2 in paredes_raw:
-                fig.add_trace(go.Scatter3d(x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]], mode='lines', line=dict(color='#cccccc', width=2), showlegend=False))
+
+            # 1. PAREDES EM WIREFRAME 3D (Linhas suaves na base, no topo do pé-direito e nas quinas verticais)
+            wx, wy, wz = [], [], []
+            for idx_w, (p1, p2) in enumerate(paredes_raw):
+                z_piso = p1[2]
+                # Se p2[2] tiver o topo salvo, usa ele; caso contrário soma o pé-direito padrão (3.0m)
+                z_topo = p2[2] if p2[2] > z_piso else (z_piso + 3.0)
+                # Linha no piso + Linha no teto
+                wx.extend([p1[0], p2[0], None, p1[0], p2[0], None])
+                wy.extend([p1[1], p2[1], None, p1[1], p2[1], None])
+                wz.extend([z_piso, z_piso, None, z_topo, z_topo, None])
+                # Linhas verticais nos encontros de parede (quinas)
+                if idx_w % 2 == 0 or dist_2d(p1, p2) >= 0.8:
+                    wx.extend([p1[0], p1[0], None, p2[0], p2[0], None])
+                    wy.extend([p1[1], p1[1], None, p2[1], p2[1], None])
+                    wz.extend([z_piso, z_topo, None, z_piso, z_topo, None])
+
+            if wx:
+                fig.add_trace(go.Scatter3d(
+                    x=wx, y=wy, z=wz, mode='lines',
+                    line=dict(color='rgba(160, 160, 160, 0.38)', width=1.5),
+                    name='Paredes (Wireframe 3D)', hoverinfo='skip'
+                ))
+
+            # 2. VÃOS DE PORTAS, JANELAS E PILARES EM WIREFRAME 3D (Quadros 3D vazados sem losangos!)
+            px_porta, py_porta, pz_porta = [], [], []
+            jx_jan, jy_jan, jz_jan = [], [], []
+            ex_est, ey_est, ez_est = [], [], []
+
             for elem in elementos_arquitetonicos:
                 if elem['Tipo'] == 'Pilar/Viga':
-                    fig.add_trace(go.Scatter3d(x=[elem['x'], elem['x']], y=[elem['y'], elem['y']], z=[elem['z_base'], elem['z_base'] + 3.0], mode='lines', line=dict(color='#444444', width=8), name='Pilar/Viga Estrutural'))
+                    h_pilar = elem.get('pe_direito', 3.0)
+                    ex_est.extend([elem['x'], elem['x'], None])
+                    ey_est.extend([elem['y'], elem['y'], None])
+                    ez_est.extend([elem['z_base'], elem['z_base'] + h_pilar, None])
                 elif elem['Tipo'] == 'Esquadria':
                     z_inf = elem['z_base'] + elem.get('Peitoril', 0.0)
                     z_sup = z_inf + elem.get('Altura', 2.10)
-                    fig.add_trace(go.Scatter3d(x=[elem['x']], y=[elem['y']], z=[(z_inf + z_sup)/2.0], mode='markers', marker=dict(size=7, color='#ff9900', symbol='diamond'), name=f"Vão ({elem.get('Subtipo','Esquadria')})"))
+                    larg_v = elem.get('Largura', 1.0)
+                    p1_v = elem.get('p1_vao', (elem['x'] - larg_v/2.0, elem['y']))
+                    p2_v = elem.get('p2_vao', (elem['x'] + larg_v/2.0, elem['y']))
+
+                    # Desenha o retângulo 3D do vão (peitoril/soleira -> batente esq -> verga superior -> batente dir -> fecha)
+                    quadro_x = [p1_v[0], p2_v[0], p2_v[0], p1_v[0], p1_v[0], None]
+                    quadro_y = [p1_v[1], p2_v[1], p2_v[1], p1_v[1], p1_v[1], None]
+                    quadro_z = [z_inf,   z_inf,   z_sup,   z_sup,   z_inf,   None]
+
+                    if elem.get('Subtipo') == 'Porta':
+                        px_porta.extend(quadro_x)
+                        py_porta.extend(quadro_y)
+                        pz_porta.extend(quadro_z)
+                    else:
+                        jx_jan.extend(quadro_x)
+                        jy_jan.extend(quadro_y)
+                        jz_jan.extend(quadro_z)
+
+            if px_porta:
+                fig.add_trace(go.Scatter3d(
+                    x=px_porta, y=py_porta, z=pz_porta, mode='lines',
+                    line=dict(color='rgba(190, 120, 50, 0.55)', width=2.5),
+                    name='Vãos de Porta (3D)'
+                ))
+            if jx_jan:
+                fig.add_trace(go.Scatter3d(
+                    x=jx_jan, y=jy_jan, z=jz_jan, mode='lines',
+                    line=dict(color='rgba(70, 150, 210, 0.55)', width=2.5),
+                    name='Vãos de Janela (3D)'
+                ))
+            if ex_est:
+                fig.add_trace(go.Scatter3d(
+                    x=ex_est, y=ey_est, z=ez_est, mode='lines',
+                    line=dict(color='rgba(90, 90, 90, 0.50)', width=6),
+                    name='Pilares / Vigas (3D)'
+                ))
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
                 for linha in st.session_state.linhas_3d_master['eletrica']:
                     pts, fios_txt = linha['pontos'], linha.get('fios', 'F N T')
