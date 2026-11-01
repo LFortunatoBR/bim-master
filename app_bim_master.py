@@ -2996,10 +2996,13 @@ with tab_bim:
                     zaxis=dict(title='Z (m)', backgroundcolor='#e2e8f0', gridcolor='#cbd5e1')
                 ),
                 legend=dict(
-                    title="Camadas 3D (Clique p/ Ocultar):",
-                    bgcolor="rgba(255,255,255,0.9)",
-                    bordercolor="#cbd5e1",
-                    borderwidth=1
+                    title=dict(text="Camadas 3D (Clique p/ Ocultar):", font=dict(color="#ffffff", size=13)),
+                    bgcolor="rgba(0, 0, 0, 0.90)",
+                    bordercolor="#475569",
+                    borderwidth=1,
+                    font=dict(color="#ffffff", size=12),
+                    y=0.92,
+                    yanchor="top"
                 ),
                 height=780, margin=dict(l=0, r=0, b=0, t=0)
             )
