@@ -512,8 +512,21 @@ def inicializar_bibliotecas_internas():
 inicializar_bibliotecas_internas()
 
 def garantir_tubos_queda_subida_na_biblioteca():
-    """Injeta Tubos de Queda, Colunas de Subida, Ramais de Descarga e Ramais de Esgoto na bib_hidro."""
+    """Injeta Tubulações de Passagem (AF, AQ e Esgoto), Tubos de Queda, Subida e Ramais na bib_hidro."""
     novos_itens = [
+        # ---- TUBULAÇÕES DE PASSAGEM (PARA INDICAR CAMINHO E ALTURA ESPECÍFICA) ----
+        {"Equipamento": "Tubulação Água Fria 25mm", "Vazao_Ls": 0.40, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Fria 20mm", "Vazao_Ls": 0.20, "Peso": 0.0, "Agua_mm": 20, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Fria 32mm", "Vazao_Ls": 0.60, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Fria 40mm", "Vazao_Ls": 1.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Fria 50mm", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Quente 22mm", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Água Quente 28mm", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 28, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 75, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 160, "Esgoto_mm": 100, "Vent_mm": 0},
+        # ---- TUBOS DE QUEDA, SUBIDA E RAMAIS ----
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 50mm)", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 40mm)", "Vazao_Ls": 1.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 32mm)", "Vazao_Ls": 0.60, "Peso": 0.0, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
@@ -1060,7 +1073,7 @@ def rotear_hidro(df_bh, ctx):
     peso_total_projeto = 0.0
     aparelhos_com_af = []
     for ap in df_bh:
-        if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
+        if ap['Tipo_BIM'] in ['Aparelho Hidráulico', 'Conexões Hidráulicas AF'] and ap['Equipamento'] in equips_af_validos:
             aparelhos_com_af.append(ap)
             f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
             if f_eq.any():
@@ -1208,7 +1221,7 @@ def rotear_hidro(df_bh, ctx):
 
     if fontes_aq:
         for ap in df_bh:
-            if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_aq_validos:
+            if ap['Tipo_BIM'] in ['Aparelho Hidráulico', 'Conexões Hidráulicas AQ'] and ap['Equipamento'] in equips_aq_validos:
                 fonte_q = min(fontes_aq, key=lambda f: dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
                 if fonte_q['ID_CAD'] == ap['ID_CAD']:
                     continue
@@ -1276,7 +1289,7 @@ def rotear_hidro(df_bh, ctx):
                     })
 
     # 5.2. Roteamento de Aparelhos e Ramais de Descarga respeitando a hierarquia NBR 8160
-    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']]
+    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Conexões Tubulação Esgoto']]
     uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
 
     for ap in origens_descarga:
@@ -1970,10 +1983,35 @@ def normalizar_texto_bim(txt):
     s = "".join(c for c in unicodedata.normalize("NFD", str(txt)) if unicodedata.category(c) != "Mn")
     return s.upper().replace("_", " ").replace("-", " ").strip()
 
+def extrair_handles_bloco_dinamico(obj_dxf):
+    """Extrai todos os handles de referência (códigos 1005, 340, 341, 330) de XDATA e DXFTagStorage."""
+    handles = []
+    if obj_dxf is None:
+        return handles
+    try:
+        if hasattr(obj_dxf, "xdata") and obj_dxf.xdata:
+            for appid in obj_dxf.xdata.data.keys():
+                for code, val in obj_dxf.get_xdata(appid):
+                    if code in (1005, 340, 341, 330):
+                        handles.append(str(val))
+    except Exception:
+        pass
+    try:
+        if hasattr(obj_dxf, "tags"):
+            for tag in obj_dxf.tags:
+                if tag.code in (1005, 340, 341, 330):
+                    handles.append(str(tag.value))
+    except Exception:
+        pass
+    return handles
+
 def extrair_nome_real_bloco_dxf(doc, entidade_insert):
     """
-    Recupera o nome real de blocos dinâmicos anônimos do AutoCAD (*U63, *U65, etc.)
-    inspecionando atributos, descrição do bloco, textos internos e a Layer de origem.
+    Descobre o nome verdadeiro de blocos dinâmicos anônimos do AutoCAD (ex: *U166 -> 'Tê'):
+    1. Inspeciona XDATA (AcDbBlockRepBTag) e Extension Dictionary (AcDbBlockRepresentation / DXFTagStorage)
+       no INSERT e no BLOCK_RECORD para recuperar o nome original do bloco no AutoCAD;
+    2. Inspeciona atributos, descrição e textos internos do bloco;
+    3. Caso não possua ponteiro dinâmico, verifica textos colados ao símbolo na planta (ex: 'T', 'C', 'RS', 'B.S.').
     """
     nome_bruto = str(entidade_insert.dxf.name)
     layer_nome = str(entidade_insert.dxf.layer)
@@ -1981,16 +2019,54 @@ def extrair_nome_real_bloco_dxf(doc, entidade_insert):
     if not nome_bruto.startswith("*U"):
         return nome_bruto
 
+    # 1. Busca o nome original do Bloco Dinâmico via Handles (AcDbBlockRepBTag / Extension Dict)
+    handles_testar = []
+    handles_testar.extend(extrair_handles_bloco_dinamico(entidade_insert))
+
+    try:
+        if entidade_insert.has_extension_dict:
+            xdict = entidade_insert.get_extension_dict()
+            for _, v_obj in xdict.items():
+                handles_testar.extend(extrair_handles_bloco_dinamico(v_obj))
+                if hasattr(v_obj, "items"):
+                    for _, sub_obj in v_obj.items():
+                        handles_testar.extend(extrair_handles_bloco_dinamico(sub_obj))
+    except Exception:
+        pass
+
+    try:
+        if nome_bruto in doc.block_records:
+            blk_rec = doc.block_records.get(nome_bruto)
+            handles_testar.extend(extrair_handles_bloco_dinamico(blk_rec))
+            if blk_rec.has_extension_dict:
+                xdict_br = blk_rec.get_extension_dict()
+                for _, v_obj in xdict_br.items():
+                    handles_testar.extend(extrair_handles_bloco_dinamico(v_obj))
+                    if hasattr(v_obj, "items"):
+                        for _, sub_obj in v_obj.items():
+                            handles_testar.extend(extrair_handles_bloco_dinamico(sub_obj))
+    except Exception:
+        pass
+
+    for h_cand in handles_testar:
+        try:
+            ent_ref = doc.entitydb.get(h_cand)
+            if ent_ref is not None and ent_ref.dxftype() in ("BLOCK_RECORD", "BLOCK"):
+                nome_original = str(ent_ref.dxf.name).strip()
+                if nome_original and not nome_original.startswith("*"):
+                    return f"{nome_original} ({nome_bruto})"
+        except Exception:
+            pass
+
+    # 2. Vasculha atributos e textos internos da definição do bloco
     textos_encontrados = []
-    # 1. Verifica atributos diretos da entidade INSERT
     try:
         for att in entidade_insert.attribs:
-            if att.dxf.text and len(str(att.dxf.text).strip()) > 1:
+            if att.dxf.text and len(str(att.dxf.text).strip()) >= 1:
                 textos_encontrados.append(str(att.dxf.text).strip())
     except Exception:
         pass
 
-    # 2. Vasculha a definição interna do bloco no DXF
     try:
         if nome_bruto in doc.blocks:
             bloco_def = doc.blocks.get(nome_bruto)
@@ -2001,12 +2077,8 @@ def extrair_nome_real_bloco_dxf(doc, entidade_insert):
                 dxft = sub_e.dxftype()
                 if dxft in ["TEXT", "MTEXT"]:
                     t_val = getattr(sub_e.dxf, "text", "")
-                    if t_val and len(str(t_val).strip()) > 1:
+                    if t_val and len(str(t_val).strip()) >= 1:
                         textos_encontrados.append(str(t_val).strip())
-                elif dxft == "ATTDEF":
-                    t_tag = getattr(sub_e.dxf, "tag", "")
-                    if t_tag and len(str(t_tag).strip()) > 1:
-                        textos_encontrados.append(str(t_tag).strip())
                 elif dxft == "INSERT" and not str(sub_e.dxf.name).startswith("*U"):
                     textos_encontrados.append(str(sub_e.dxf.name).strip())
     except Exception:
@@ -2014,68 +2086,131 @@ def extrair_nome_real_bloco_dxf(doc, entidade_insert):
 
     if textos_encontrados:
         resumo_txt = " ".join(dict.fromkeys(textos_encontrados))[:35]
-        return f"{nome_bruto} [{resumo_txt}]"
+        return f"{resumo_txt} ({nome_bruto})"
+
     return f"{nome_bruto} [{layer_nome}]"
 
 def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
     """
-    Associa automaticamente Nome_Bloco + Layer ao Eq. (Biblioteca), Função BIM e altura z_relativo.
+    Associa automaticamente Nome_Bloco + Layer ao Eq. (Biblioteca), Função BIM e altura z_relativo:
+    - Conexões com múltiplos diâmetros (Tê, Curva, Joelho, Junção) assumem 25mm para Água Fria e 22mm para Água Quente;
+    - Atribui automaticamente as novas funções 'Conexões Hidráulicas AF', 'Conexões Hidráulicas AQ' e 'Conexões Tubulação Esgoto'.
     """
-    alvo = normalizar_texto_bim(f"{nome_bloco} {layer_bloco}")
-    nome_norm = normalizar_texto_bim(nome_bloco)
+    # Remove o sufixo (*U166) ou [Layer] para analisar o nome limpo do bloco primeiro
+    nome_sem_parenteses = str(nome_bloco).split("(")[0].split("[")[0].strip()
+    nome_norm = normalizar_texto_bim(nome_sem_parenteses)
+    layer_norm = normalizar_texto_bim(layer_bloco)
+    alvo = f"{nome_norm} {layer_norm}".strip()
+    palavras_alvo = set(alvo.split())
     opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_equip}
 
-    def buscar_na_bib(termo_chave, fallback=None):
-        t_norm = normalizar_texto_bim(termo_chave)
+    eh_aq = any(k in alvo for k in ["AGUA QUENTE", "QUENTE", "AQ", "CPVC", "PPR"])
+    eh_esg = any(k in alvo for k in ["ESGOTO", "ESG", "SANIT", "PLUVIAL"]) and not any(k in alvo for k in ["AGUA FRIA", "HIDRICO"])
+
+    def buscar_na_bib(termo_exato):
+        t_norm = normalizar_texto_bim(termo_exato)
+        if t_norm in opcoes_norm:
+            return opcoes_norm[t_norm]
         for k_norm, op_real in opcoes_norm.items():
             if t_norm in k_norm:
                 return op_real
-        return fallback if fallback else (opcoes_equip[0] if opcoes_equip else "")
+        return opcoes_equip[0] if opcoes_equip else ""
 
-    # 1. Verifica correspondência direta ou quase exata entre Nome_Bloco e a Biblioteca
-    if nome_norm in opcoes_norm:
-        eq_direto = opcoes_norm[nome_norm]
-        func_bim = "Prumada Esgoto" if "TUBO DE QUEDA" in nome_norm or "COLUNA DE VENT" in nome_norm else "Aparelho Hidráulico"
-        z_rel = 0.0 if ("RALO" in nome_norm or "CAIXA" in nome_norm) else 0.5
-        return func_bim, eq_direto, z_rel
+    # 1. TRATAMENTO PRIORITÁRIO DE CONEXÕES (TÊ, CURVA, JOELHO, JUNÇÃO Y, LUVA) -> BASE 25mm (AF) E 22mm (AQ)
+    eh_te = (nome_norm in ["TE", "T", "TE 90", "TE SOLDAVEL"] or "TE" in palavras_alvo or nome_norm.startswith("TE "))
+    eh_curva = (nome_norm in ["CURVA", "C", "CURVA 90", "CURVA 45"] or "CURVA" in palavras_alvo)
+    eh_joelho = (nome_norm in ["JOELHO", "J", "JOELHO 90", "JOELHO 45", "COTOVELO"] or "JOELHO" in palavras_alvo)
+    eh_juncao = (nome_norm in ["JUNCAO", "Y", "JUNCAO Y", "JUNCAO 45"] or "JUNCAO" in palavras_alvo)
 
-    for k_norm, op_real in opcoes_norm.items():
-        if len(nome_norm) >= 4 and (nome_norm in k_norm or k_norm in nome_norm):
-            z_rel = 0.0 if ("RALO" in k_norm or "CAIXA" in k_norm) else 0.5
-            return "Aparelho Hidráulico", op_real, z_rel
+    # Identifica se o próprio nome do bloco já especificou um diâmetro explícito (ex: 32mm, 40mm, 50mm, 100mm)
+    dn_explicito = None
+    for dn_cand in ["100", "75", "50", "40", "32", "28", "25", "22", "20"]:
+        if f"{dn_cand}MM" in nome_norm.replace(" ", "") or f" {dn_cand} " in f" {nome_norm} ":
+            dn_explicito = dn_cand
+            break
 
-    # 2. Regras Inteligentes por Palavras-Chave de Engenharia Hidrossanitária
+    if eh_te:
+        if eh_esg:
+            dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Tê 90° Esgoto {dn_uso}mm"), 0.0
+        elif eh_aq:
+            return "Conexões Hidráulicas AQ", buscar_na_bib("Tê 90° (Passagem Direta) 22mm"), 0.6
+        else:
+            dn_uso = dn_explicito if dn_explicito in ["22", "25", "32"] else "25"
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Tê 90° (Passagem Direta) {dn_uso}mm"), 0.6
+
+    if eh_curva:
+        if eh_esg:
+            dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Curva 90° Esgoto {dn_uso}mm"), 0.0
+        elif eh_aq:
+            return "Conexões Hidráulicas AQ", buscar_na_bib("Curva 90° 22mm"), 0.6
+        else:
+            dn_uso = dn_explicito if dn_explicito in ["22", "25", "32"] else "25"
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Curva 90° {dn_uso}mm"), 0.6
+
+    if eh_joelho:
+        grau = "45°" if "45" in nome_norm else "90°"
+        if eh_esg:
+            dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Joelho {grau} Esgoto {dn_uso}mm"), 0.0
+        elif eh_aq:
+            return "Conexões Hidráulicas AQ", buscar_na_bib(f"Joelho {grau} 22mm"), 0.6
+        else:
+            dn_uso = dn_explicito if dn_explicito in ["22", "25", "32"] else "25"
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Joelho {grau} {dn_uso}mm"), 0.6
+
+    if eh_juncao:
+        if eh_aq:
+            return "Conexões Hidráulicas AQ", buscar_na_bib("Junção Y 22mm"), 0.6
+        elif "AGUA FRIA" in alvo or "AF" in palavras_alvo:
+            dn_uso = dn_explicito if dn_explicito in ["22", "25", "32"] else "25"
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Junção Y {dn_uso}mm"), 0.6
+        else:
+            dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Junção Y Esgoto {dn_uso}mm"), 0.0
+
+    # 2. TUBULAÇÕES DE PASSAGEM (PARA INDICAR TRAJETO E ALTURA ESPECÍFICA)
+    if any(k in nome_norm for k in ["TUBULACAO", "TUBO"]) and not any(k in nome_norm for k in ["QUEDA", "SUBIDA"]):
+        if eh_aq:
+            dn_uso = "28" if "28" in nome_norm else "22"
+            return "Conexões Hidráulicas AQ", buscar_na_bib(f"Tubulação Água Quente {dn_uso}mm"), 1.0
+        elif eh_esg:
+            dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Tubulação Esgoto {dn_uso}mm"), -0.15
+        else:
+            dn_uso = dn_explicito if dn_explicito in ["20", "25", "32", "40", "50"] else "25"
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Tubulação Água Fria {dn_uso}mm"), 0.2
+
+    # 3. REGRAS DE APARELHOS, PRUMADAS, SUBIDAS, QUEDAS E CAIXAS
     regras_hidro = [
-        # (Palavras-chave, Função BIM, Termo na Biblioteca, Altura z_relativo)
-        (["RAMAL DE DESCARGA", "RAMAL DESCARGA", "RD "], "Ramal de Descarga", "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", -0.10),
-        (["RAMAL DE ESGOTO", "RAMAL ESGOTO", "RE ", "COLETOR ESGOTO"], "Ramal de Esgoto", "Ramal de Esgoto Coletor 100mm (NBR 8160)", -0.18),
+        (["RAMAL DE DESCARGA", "RAMAL DESCARGA", "RD"], "Ramal de Descarga", "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", -0.10),
+        (["RAMAL DE ESGOTO", "RAMAL ESGOTO", "RE", "COLETOR ESGOTO"], "Ramal de Esgoto", "Ramal de Esgoto Coletor 100mm (NBR 8160)", -0.18),
         (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.0),
         (["SUBIDA AF", "CS AF", "COLUNA SUBIDA AF", "SUBIDA AGUA FRIA", "RECALQUE"], "Coluna de Subida Água Fria", "Coluna de Subida Água Fria (CS-AF 32mm)", 0.0),
         (["QUEDA AQ", "TQ AQ", "DESCIDA AQ", "QUEDA AGUA QUENTE"], "Tubo de Queda Água Quente", "Tubo de Queda Água Quente (TQ-AQ 28mm)", 0.0),
         (["SUBIDA AQ", "CS AQ", "COLUNA SUBIDA AQ", "SUBIDA AGUA QUENTE"], "Coluna de Subida Água Quente", "Coluna de Subida Água Quente (CS-AQ 28mm)", 0.0),
-        (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.5),
-        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI ", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
         (["CAIXA D", "RESERVATORIO SUP", "CX AGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", 0.0),
         (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.0),
-        (["PRUMADA AF", "COLUNA AF", "DESCIDA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.2),
-        (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.0),
-        (["VENTILACAO", "COLUNA VENT"], "Prumada Esgoto", "Coluna de Ventilação", 0.0),
-        (["RALO SIFONADO", "RS ", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.0),
-        (["CAIXA SIFONADA", "CX SIF", "CS "], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.0),
+        (["PRUMADA AF", "COLUNA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.2),
+        (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG", "TQ"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.0),
+        (["VENTILACAO", "COLUNA VENT", "CV"], "Prumada Esgoto", "Coluna de Ventilação", 0.0),
+        (["RALO SIFONADO", "RS", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.0),
+        (["CAIXA SIFONADA", "CX SIF", "CS"], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.0),
         (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.0),
         (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.0),
         (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.0),
-        (["CAIXA DE GORDURA", "CX GORDURA", "[CG]", " CG "], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
-        (["CAIXA DE INSPECAO", "CX INSPECAO", "[CI]", " CI ", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
-        (["CAIXA DE PASSAGEM", "CX PASSAGEM"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
-        (["BACIA", "VASO", "SANITARIO", "VS "], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
-        (["DUCHA HIG", "DH ", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.6),
+        (["CAIXA DE GORDURA", "CX GORDURA", "CG"], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
+        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
+        (["CAIXA DE PASSAGEM", "CX PASSAGEM", "CP"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
+        (["BACIA", "VASO", "SANITARIO", "BS", "VS"], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
+        (["DUCHA HIG", "DH", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.6),
         (["CHUVEIRO MIST", "DUCHA MIST"], "Aparelho Hidráulico", "Chuveiro Misturador (Água Fria + Quente)", 2.1),
-        (["CHUVEIRO", "DUCHA", "CH "], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.1),
+        (["CHUVEIRO", "DUCHA", "CH"], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.1),
         (["BANHEIRA", "HIDROMASSAGEM", "SPA"], "Aparelho Hidráulico", "Banheira Hidromassagem", 0.4),
-        (["LAVATORIO", "LV ", "CUBA BANH", "BANCADA BANH"], "Aparelho Hidráulico", "Lavatório/Pia (Residencial)", 0.65),
+        (["LAVATORIO", "LV", "CUBA BANH", "BANCADA BANH"], "Aparelho Hidráulico", "Lavatório/Pia (Residencial)", 0.65),
         (["PIA GOURMET", "CUBA DUPLA", "TORNEIRA GOURMET"], "Aparelho Hidráulico", "Pia de Cozinha - Cuba Dupla Gourmet", 0.65),
-        (["PIA", "COZINHA", "CUBA"], "Aparelho Hidráulico", "Pia de Cozinha (Residencial)", 0.9),
+        (["PIA", "COZINHA", "CUBA"], "Aparelho Hidráulico", "Pia de Cozinha (Residencial)", 0.65),
         (["LAVA LOUCA", "MLL"], "Aparelho Hidráulico", "Máquina de Lavar Louça", 0.6),
         (["LAVAR ROUPA", "MLR", "MAQUINA DE LAVAR", "LAVADORA"], "Aparelho Hidráulico", "Máquina de Lavar Roupa", 0.9),
         (["TANQUE", "TQ ROUPA", "TQ LAV"], "Aparelho Hidráulico", "Tanque de Lavar Roupa", 0.9),
@@ -2084,33 +2219,32 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["GELADEIRA", "SIDE BY SIDE"], "Aparelho Hidráulico", "Geladeira Side-by-Side (Filtro/Gelo)", 1.35),
         (["MICTORIO"], "Aparelho Hidráulico", "Mictório Cerâmico (c/ válvula)", 0.6),
         (["TORNEIRA QUINTAL", "JARDIM", "EXTERNA"], "Aparelho Hidráulico", "Torneira quintal", 0.6),
-        (["REGISTRO DE PRESSAO", "REG PRESSAO", "RP "], "Aparelho Hidráulico", "Registro de Pressão 25mm (3/4)", 1.1),
-        (["REGISTRO DE GAVETA", "REG GAVETA", "RG "], "Aparelho Hidráulico", "Registro de Gaveta 25mm (3/4)", 1.8),
-        (["VRP", "REDUTORA DE PRESSAO"], "Aparelho Hidráulico", "Válvula Redutora de Pressão (VRP) 32mm", 1.5),
-        (["RETENCAO"], "Aparelho Hidráulico", "Válvula de Retenção 25mm", 0.5),
-        (["BOMBA", "PRESSURIZADORA", "RECALQUE"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.3),
-        (["BOILER"], "Aparelho Hidráulico", "Boiler (Aquecimento de Água Central)", 1.8),
-        (["AQUECEDOR"], "Aparelho Hidráulico", "Aquecedor de Passagem a Gás", 1.5),
+        (["REGISTRO DE PRESSAO", "REG PRESSAO", "RP"], "Conexões Hidráulicas AF", "Registro de Pressão 25mm (3/4)", 1.1),
+        (["REGISTRO DE GAVETA", "REG GAVETA", "RG"], "Conexões Hidráulicas AF", "Registro de Gaveta 25mm (3/4)", 1.8),
+        (["VRP", "REDUTORA DE PRESSAO"], "Conexões Hidráulicas AF", "Válvula Redutora de Pressão (VRP) 32mm", 1.5),
+        (["RETENCAO"], "Conexões Hidráulicas AF", "Válvula de Retenção 25mm", 0.5),
+        (["BOMBA", "PRESSURIZADORA"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.3),
+        (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.5),
         (["GAS", "GLP", "FOGAO"], "Aparelho Hidráulico", "Ponto de Gás (Fogão/Aquecedor)", 0.6),
-        (["JOELHO 90", "J90", "COTOVELO"], "Aparelho Hidráulico", "Joelho 90° 25mm", 0.6),
-        (["JOELHO 45", "J45"], "Aparelho Hidráulico", "Joelho 45° 25mm", 0.6),
-        (["CURVA 90", "C90"], "Aparelho Hidráulico", "Curva 90° 25mm", 0.6),
-        (["TE 90", "TE PASSAGEM", "TE "], "Aparelho Hidráulico", "Tê 90° (Passagem Direta) 25mm", 0.6),
-        (["JUNCAO", "Y "], "Aparelho Hidráulico", "Junção Y Esgoto 50mm", 0.0),
-        # Regras de Fallback pelo nome da Layer quando o bloco é anônimo (*U63, *U65...)
-        (["AGUA QUENTE", "AQ"], "Aparelho Hidráulico", "Saída de Água Quente 22mm", 1.0),
-        (["AGUA FRIA", "AF"], "Aparelho Hidráulico", "Saída de Água Fria 32mm", 0.6),
-        (["ESGOTO", "ESG"], "Aparelho Hidráulico", "Ponto de Esgoto 50mm", 0.0),
+        (["AGUA QUENTE", "AQ"], "Conexões Hidráulicas AQ", "Tubulação Água Quente 22mm", 1.0),
+        (["AGUA FRIA", "AF"], "Conexões Hidráulicas AF", "Tubulação Água Fria 25mm", 0.2),
+        (["ESGOTO", "ESG"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 50mm", -0.15),
     ]
 
     for palavras, func_bim, eq_padrao, z_rel in regras_hidro:
-        if any(p in alvo for p in palavras):
-            return func_bim, buscar_na_bib(eq_padrao), z_rel
+        for p in palavras:
+            if (len(p) <= 2 and p in palavras_alvo) or (len(p) > 2 and p in alvo):
+                return func_bim, buscar_na_bib(eq_padrao), z_rel
 
-    # 3. Busca aproximada por similaridade (Fuzzy Matching)
-    similares = difflib.get_close_matches(nome_norm, list(opcoes_norm.keys()), n=1, cutoff=0.45)
+    similares = difflib.get_close_matches(nome_norm, list(opcoes_norm.keys()), n=1, cutoff=0.50)
     if similares:
-        return "Aparelho Hidráulico", opcoes_norm[similares[0]], 0.5
+        eq_sim = opcoes_norm[similares[0]]
+        if any(k in eq_sim.upper() for k in ["CURVA", "JOELHO", "TÊ", "JUNÇÃO"]):
+            if eh_aq:
+                return "Conexões Hidráulicas AQ", buscar_na_bib(eq_sim.replace("32mm", "22mm").replace("25mm", "22mm")), 0.6
+            elif not eh_esg:
+                return "Conexões Hidráulicas AF", buscar_na_bib(eq_sim.replace("32mm", "25mm").replace("22mm", "25mm")), 0.6
+        return "Aparelho Hidráulico", eq_sim, 0.5
 
     return "Aparelho Hidráulico", (opcoes_equip[0] if opcoes_equip else ""), 0.5
 
@@ -2719,7 +2853,7 @@ with tab_bim:
                     cm1, cm2, cm3 = st.columns([1.5, 2, 1])
                     bloco_alvo = cm1.selectbox("Bloco do CAD:", nomes_unicos_blocos, key="sel_blk_lote")
                     eq_alvo = cm2.selectbox("Associar ao Equipamento:", opcoes_equip, key="sel_eq_lote")
-                    func_alvo = cm3.selectbox("Função BIM:", ["Aparelho Hidráulico", "Prumada Água Fria", "Prumada Esgoto", "Caixa d'Água"], key="sel_fn_lote")
+                    func_alvo = cm3.selectbox("Função BIM:", ["Aparelho Hidráulico", "Conexões Hidráulicas AF", "Conexões Hidráulicas AQ", "Conexões Tubulação Esgoto", "Ramal de Descarga", "Ramal de Esgoto", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria", "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente", "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"], key="sel_fn_lote")
                     if st.button("✅ Aplicar a todos os blocos deste tipo", use_container_width=True):
                         dict_map_lote[bloco_alvo] = (func_alvo, eq_alvo)
                         st.session_state["mapa_blocos_hidro"] = dict_map_lote
@@ -2739,6 +2873,9 @@ with tab_bim:
                             "Função BIM",
                             options=[
                                 "Aparelho Hidráulico",
+                                "Conexões Hidráulicas AF",
+                                "Conexões Hidráulicas AQ",
+                                "Conexões Tubulação Esgoto",
                                 "Ramal de Descarga",
                                 "Ramal de Esgoto",
                                 "Tubo de Queda Água Fria",
