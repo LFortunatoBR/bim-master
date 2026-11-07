@@ -2182,52 +2182,54 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
             dn_uso = dn_explicito if dn_explicito in ["20", "25", "32", "40", "50"] else "25"
             return "Conexões Hidráulicas AF", buscar_na_bib(f"Tubulação Água Fria {dn_uso}mm"), 0.2
 
-    # 3. REGRAS DE APARELHOS, PRUMADAS, SUBIDAS, QUEDAS E CAIXAS
+    altura_cx_padrao = float(st.session_state.get("altura_caixa_3d", 1.50))
+
+    # 3. REGRAS DE APARELHOS, PRUMADAS, SUBIDAS, QUEDAS E CAIXAS (ORDEM DE PRIORIDADE CORRIGIDA)
     regras_hidro = [
+        (["CAIXA DE INSPECAO", "CX INSPECAO", "INSPECAO", "CI", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.50),
+        (["CAIXA DE GORDURA", "CX GORDURA", "GORDURA", "CG"], "Aparelho Hidráulico", "Caixa de Gordura", 0.00),
+        (["CAIXA SIFONADA", "CX SIF", "CS"], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.00),
+        (["RALO SIFONADO", "RS", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.00),
+        (["CAIXA DE PASSAGEM", "CX PASSAGEM", "CP"], "Aparelho Hidráulico", "Caixa de Passagem", 0.00),
+        (["CAIXA D'AGUA", "CAIXA DAGUA", "CAIXA D AGUA", "RESERVATORIO SUP", "CX AGUA", "CX DAGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", altura_cx_padrao),
+        (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.00),
         (["RAMAL DE DESCARGA", "RAMAL DESCARGA", "RD"], "Ramal de Descarga", "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", -0.10),
         (["RAMAL DE ESGOTO", "RAMAL ESGOTO", "RE", "COLETOR ESGOTO"], "Ramal de Esgoto", "Ramal de Esgoto Coletor 100mm (NBR 8160)", -0.18),
-        (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.0),
-        (["SUBIDA AF", "CS AF", "COLUNA SUBIDA AF", "SUBIDA AGUA FRIA", "RECALQUE"], "Coluna de Subida Água Fria", "Coluna de Subida Água Fria (CS-AF 32mm)", 0.0),
-        (["QUEDA AQ", "TQ AQ", "DESCIDA AQ", "QUEDA AGUA QUENTE"], "Tubo de Queda Água Quente", "Tubo de Queda Água Quente (TQ-AQ 28mm)", 0.0),
-        (["SUBIDA AQ", "CS AQ", "COLUNA SUBIDA AQ", "SUBIDA AGUA QUENTE"], "Coluna de Subida Água Quente", "Coluna de Subida Água Quente (CS-AQ 28mm)", 0.0),
-        (["CAIXA D", "RESERVATORIO SUP", "CX AGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", 0.0),
-        (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.0),
-        (["PRUMADA AF", "COLUNA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.2),
-        (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG", "TQ"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.0),
-        (["VENTILACAO", "COLUNA VENT", "CV"], "Prumada Esgoto", "Coluna de Ventilação", 0.0),
-        (["RALO SIFONADO", "RS", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.0),
-        (["CAIXA SIFONADA", "CX SIF", "CS"], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.0),
-        (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.0),
-        (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.0),
-        (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.0),
-        (["CAIXA DE GORDURA", "CX GORDURA", "CG"], "Aparelho Hidráulico", "Caixa de Gordura", 0.0),
-        (["CAIXA DE INSPECAO", "CX INSPECAO", "CI", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.5),
-        (["CAIXA DE PASSAGEM", "CX PASSAGEM", "CP"], "Aparelho Hidráulico", "Caixa de Passagem", 0.0),
-        (["BACIA", "VASO", "SANITARIO", "BS", "VS"], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.2),
-        (["DUCHA HIG", "DH", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.6),
-        (["CHUVEIRO MIST", "DUCHA MIST"], "Aparelho Hidráulico", "Chuveiro Misturador (Água Fria + Quente)", 2.1),
-        (["CHUVEIRO", "DUCHA", "CH"], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.1),
-        (["BANHEIRA", "HIDROMASSAGEM", "SPA"], "Aparelho Hidráulico", "Banheira Hidromassagem", 0.4),
-        (["LAVATORIO", "LV", "CUBA BANH", "BANCADA BANH"], "Aparelho Hidráulico", "Lavatório/Pia (Residencial)", 0.65),
-        (["PIA GOURMET", "CUBA DUPLA", "TORNEIRA GOURMET"], "Aparelho Hidráulico", "Pia de Cozinha - Cuba Dupla Gourmet", 0.65),
-        (["PIA", "COZINHA", "CUBA"], "Aparelho Hidráulico", "Pia de Cozinha (Residencial)", 0.65),
-        (["LAVA LOUCA", "MLL"], "Aparelho Hidráulico", "Máquina de Lavar Louça", 0.6),
-        (["LAVAR ROUPA", "MLR", "MAQUINA DE LAVAR", "LAVADORA"], "Aparelho Hidráulico", "Máquina de Lavar Roupa", 0.9),
-        (["TANQUE", "TQ ROUPA", "TQ LAV"], "Aparelho Hidráulico", "Tanque de Lavar Roupa", 0.9),
-        (["FILTRO", "PURIFICADOR"], "Aparelho Hidráulico", "Filtro/Purificador de Parede", 1.35),
-        (["BEBEDOURO"], "Aparelho Hidráulico", "Bebedouro", 0.9),
+        (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.00),
+        (["SUBIDA AF", "CS AF", "COLUNA SUBIDA AF", "SUBIDA AGUA FRIA", "RECALQUE"], "Coluna de Subida Água Fria", "Coluna de Subida Água Fria (CS-AF 32mm)", 0.00),
+        (["QUEDA AQ", "TQ AQ", "DESCIDA AQ", "QUEDA AGUA QUENTE"], "Tubo de Queda Água Quente", "Tubo de Queda Água Quente (TQ-AQ 28mm)", 0.00),
+        (["SUBIDA AQ", "CS AQ", "COLUNA SUBIDA AQ", "SUBIDA AGUA QUENTE"], "Coluna de Subida Água Quente", "Coluna de Subida Água Quente (CS-AQ 28mm)", 0.00),
+        (["PRUMADA AF", "COLUNA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.20),
+        (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG", "TQ"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.00),
+        (["VENTILACAO", "COLUNA VENT", "CV"], "Prumada Esgoto", "Coluna de Ventilação", 0.00),
+        (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.00),
+        (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.00),
+        (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.00),
+        (["BACIA", "VASO", "SANITARIO", "BS", "VS"], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.20),
+        (["DUCHA HIG", "DH", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.40),
+        (["CHUVEIRO MIST", "DUCHA MIST"], "Aparelho Hidráulico", "Chuveiro Misturador (Água Fria + Quente)", 2.10),
+        (["CHUVEIRO", "DUCHA", "CH"], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.10),
+        (["BANHEIRA", "HIDROMASSAGEM", "SPA"], "Aparelho Hidráulico", "Banheira Hidromassagem", 0.40),
+        (["LAVATORIO", "LV", "CUBA BANH", "BANCADA BANH"], "Aparelho Hidráulico", "Lavatório/Pia (Residencial)", 0.60),
+        (["PIA GOURMET", "CUBA DUPLA", "TORNEIRA GOURMET"], "Aparelho Hidráulico", "Pia de Cozinha - Cuba Dupla Gourmet", 0.90),
+        (["PIA", "COZINHA", "CUBA"], "Aparelho Hidráulico", "Pia de Cozinha (Residencial)", 0.90),
+        (["LAVA LOUCA", "MLL"], "Aparelho Hidráulico", "Máquina de Lavar Louça", 0.60),
+        (["LAVAR ROUPA", "MLR", "MAQUINA DE LAVAR", "LAVADORA"], "Aparelho Hidráulico", "Máquina de Lavar Roupa", 0.90),
+        (["TANQUE", "TQ ROUPA", "TQ LAV"], "Aparelho Hidráulico", "Tanque de Lavar Roupa", 0.90),
+        (["FILTRO", "PURIFICADOR"], "Aparelho Hidráulico", "Filtro/Purificador de Parede", 1.10),
+        (["BEBEDOURO"], "Aparelho Hidráulico", "Bebedouro", 0.90),
         (["GELADEIRA", "SIDE BY SIDE"], "Aparelho Hidráulico", "Geladeira Side-by-Side (Filtro/Gelo)", 1.35),
-        (["MICTORIO"], "Aparelho Hidráulico", "Mictório Cerâmico (c/ válvula)", 0.6),
-        (["TORNEIRA QUINTAL", "JARDIM", "EXTERNA"], "Aparelho Hidráulico", "Torneira quintal", 0.6),
-        (["REGISTRO DE PRESSAO", "REG PRESSAO", "RP"], "Conexões Hidráulicas AF", "Registro de Pressão 25mm (3/4)", 1.1),
-        (["REGISTRO DE GAVETA", "REG GAVETA", "RG"], "Conexões Hidráulicas AF", "Registro de Gaveta 25mm (3/4)", 1.8),
-        (["VRP", "REDUTORA DE PRESSAO"], "Conexões Hidráulicas AF", "Válvula Redutora de Pressão (VRP) 32mm", 1.5),
-        (["RETENCAO"], "Conexões Hidráulicas AF", "Válvula de Retenção 25mm", 0.5),
-        (["BOMBA", "PRESSURIZADORA"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.3),
-        (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.5),
-        (["GAS", "GLP", "FOGAO"], "Aparelho Hidráulico", "Ponto de Gás (Fogão/Aquecedor)", 0.6),
-        (["AGUA QUENTE", "AQ"], "Conexões Hidráulicas AQ", "Tubulação Água Quente 22mm", 1.0),
-        (["AGUA FRIA", "AF"], "Conexões Hidráulicas AF", "Tubulação Água Fria 25mm", 0.2),
+        (["MICTORIO"], "Aparelho Hidráulico", "Mictório Cerâmico (c/ válvula)", 0.60),
+        (["TORNEIRA QUINTAL", "JARDIM", "EXTERNA"], "Aparelho Hidráulico", "Torneira quintal", 0.60),
+        (["REGISTRO DE PRESSAO", "REG PRESSAO", "RP"], "Conexões Hidráulicas AF", "Registro de Pressão 25mm (3/4)", 1.10),
+        (["REGISTRO DE GAVETA", "REG GAVETA", "RG"], "Conexões Hidráulicas AF", "Registro de Gaveta 25mm (3/4)", 1.80),
+        (["VRP", "REDUTORA DE PRESSAO"], "Conexões Hidráulicas AF", "Válvula Redutora de Pressão (VRP) 32mm", 1.50),
+        (["RETENCAO"], "Conexões Hidráulicas AF", "Válvula de Retenção 25mm", 0.50),
+        (["BOMBA", "PRESSURIZADORA"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.30),
+        (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.50),
+        (["GAS", "GLP", "FOGAO"], "Aparelho Hidráulico", "Ponto de Gás (Fogão/Aquecedor)", 0.60),
+        (["AGUA QUENTE", "AQ"], "Conexões Hidráulicas AQ", "Tubulação Água Quente 22mm", 1.00),
+        (["AGUA FRIA", "AF"], "Conexões Hidráulicas AF", "Tubulação Água Fria 25mm", 0.20),
         (["ESGOTO", "ESG"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 50mm", -0.15),
     ]
 
@@ -2830,9 +2832,25 @@ with tab_bim:
             
             if not df_bh.empty:
                 opcoes_equip = list(st.session_state.bib_hidro['Equipamento'])
-                tipos_bim_h, equips_h, z_rel_h = [], [], []
+                opcoes_func_bim = [
+                    "Aparelho Hidráulico",
+                    "Conexões Hidráulicas AF",
+                    "Conexões Hidráulicas AQ",
+                    "Conexões Tubulação Esgoto",
+                    "Ramal de Descarga",
+                    "Ramal de Esgoto",
+                    "Tubo de Queda Água Fria",
+                    "Coluna de Subida Água Fria",
+                    "Prumada Água Fria",
+                    "Boiler / Aquecedor",
+                    "Tubo de Queda Água Quente",
+                    "Coluna de Subida Água Quente",
+                    "Prumada Esgoto",
+                    "Caixa de Inspeção / Destino Esgoto",
+                    "Caixa d'Água"
+                ]
 
-                # Classificação automática linha a linha pelo Nome_Bloco + Layer
+                tipos_bim_h, equips_h, z_rel_h = [], [], []
                 for _, r_h in df_bh.iterrows():
                     tb_h, eq_h, zr_h = classificar_bloco_hidro_inteligente(
                         r_h['Nome_Bloco'], r_h.get('Layer_CAD', ''), opcoes_equip
@@ -2845,59 +2863,89 @@ with tab_bim:
                 df_bh['Equipamento'] = equips_h
                 df_bh['z_relativo'] = z_rel_h
 
-                # Ferramenta rápida para mapear em lote blocos anônimos repetidos (*U63, *U65, etc.)
+                # 1. Mescla com a memória de edições anteriores
+                df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
+
+                # 2. Auto-correção de blocos de Inspeção e Gordura que tinham ficado salvos como Caixa d'Água na sessão
+                for idx_fix, r_fix in df_bh.iterrows():
+                    nb_norm = normalizar_texto_bim(str(r_fix.get('Nome_Bloco', '')).split('(')[0])
+                    if r_fix.get('Tipo_BIM') == "Caixa d'Água" and ("INSPECAO" in nb_norm or "GORDURA" in nb_norm):
+                        tb_novo, eq_novo, zr_novo = classificar_bloco_hidro_inteligente(r_fix['Nome_Bloco'], r_fix.get('Layer_CAD', ''), opcoes_equip)
+                        df_bh.at[idx_fix, 'Tipo_BIM'] = tb_novo
+                        df_bh.at[idx_fix, 'Equipamento'] = eq_novo
+                        df_bh.at[idx_fix, 'z_relativo'] = zr_novo
+
+                # 3. Mapeamento em Lote por Nome_Bloco (Aplicado APÓS a memória e com atualização imediata da tabela)
+                dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
+                for blk_k, (fn_v, eq_v) in dict_map_lote.items():
+                    base_k = str(blk_k).split("(")[0].strip()
+                    mask_b = (df_bh['Nome_Bloco'] == blk_k) | (df_bh['Nome_Bloco'].apply(lambda x: str(x).split("(")[0].strip() == base_k))
+                    df_bh.loc[mask_b, 'Tipo_BIM'] = fn_v
+                    df_bh.loc[mask_b, 'Equipamento'] = eq_v
+
                 nomes_unicos_blocos = sorted(df_bh['Nome_Bloco'].unique().tolist())
                 with st.expander("🪄 Mapeamento em Lote por Nome_Bloco (Ideal para blocos *U63, *U65...)", expanded=False):
-                    st.caption("Se um bloco anônimo do CAD repetir várias vezes, vincule-o abaixo para atualizar todas as linhas dele de uma só vez:")
-                    dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
-                    cm1, cm2, cm3 = st.columns([1.5, 2, 1])
+                    st.caption("Se um bloco do CAD repetir várias vezes, vincule-o abaixo para atualizar todas as linhas dele de uma só vez:")
+                    cm1, cm2, cm3 = st.columns([1.5, 2, 1.5])
                     bloco_alvo = cm1.selectbox("Bloco do CAD:", nomes_unicos_blocos, key="sel_blk_lote")
                     eq_alvo = cm2.selectbox("Associar ao Equipamento:", opcoes_equip, key="sel_eq_lote")
-                    func_alvo = cm3.selectbox("Função BIM:", ["Aparelho Hidráulico", "Conexões Hidráulicas AF", "Conexões Hidráulicas AQ", "Conexões Tubulação Esgoto", "Ramal de Descarga", "Ramal de Esgoto", "Tubo de Queda Água Fria", "Coluna de Subida Água Fria", "Prumada Água Fria", "Boiler / Aquecedor", "Tubo de Queda Água Quente", "Coluna de Subida Água Quente", "Prumada Esgoto", "Caixa de Inspeção / Destino Esgoto", "Caixa d'Água"], key="sel_fn_lote")
+                    func_alvo = cm3.selectbox("Função BIM:", opcoes_func_bim, key="sel_fn_lote")
                     if st.button("✅ Aplicar a todos os blocos deste tipo", use_container_width=True):
                         dict_map_lote[bloco_alvo] = (func_alvo, eq_alvo)
                         st.session_state["mapa_blocos_hidro"] = dict_map_lote
+                        base_alvo = str(bloco_alvo).split("(")[0].strip()
+                        mask_alvo = (df_bh['Nome_Bloco'] == bloco_alvo) | (df_bh['Nome_Bloco'].apply(lambda x: str(x).split("(")[0].strip() == base_alvo))
+                        df_bh.loc[mask_alvo, 'Tipo_BIM'] = func_alvo
+                        df_bh.loc[mask_alvo, 'Equipamento'] = eq_alvo
+                        salvar_edicoes_na_memoria(df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(), df_bh)
+                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+                        st.rerun()
 
-                    for blk_k, (fn_v, eq_v) in dict_map_lote.items():
-                        mask_b = df_bh['Nome_Bloco'] == blk_k
-                        df_bh.loc[mask_b, 'Tipo_BIM'] = fn_v
-                        df_bh.loc[mask_b, 'Equipamento'] = eq_v
-                
-                # --- TABELA HIDRÁULICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
-                df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
+                # 4. Sincroniza o z_relativo dos blocos de Caixa d'Água com a Altura acima da laje configurada
+                altura_caixa_atual = float(st.session_state.get("altura_caixa_3d", 1.50))
+                mask_cx_agua = (df_bh['Tipo_BIM'] == "Caixa d'Água") | (df_bh['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
+                if mask_cx_agua.any():
+                    df_bh.loc[mask_cx_agua, 'z_relativo'] = altura_caixa_atual
 
                 df_editado_hidro = st.data_editor(
                     df_bh,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn(
-                            "Função BIM",
-                            options=[
-                                "Aparelho Hidráulico",
-                                "Conexões Hidráulicas AF",
-                                "Conexões Hidráulicas AQ",
-                                "Conexões Tubulação Esgoto",
-                                "Ramal de Descarga",
-                                "Ramal de Esgoto",
-                                "Tubo de Queda Água Fria",
-                                "Coluna de Subida Água Fria",
-                                "Prumada Água Fria",
-                                "Boiler / Aquecedor",
-                                "Tubo de Queda Água Quente",
-                                "Coluna de Subida Água Quente",
-                                "Prumada Esgoto",
-                                "Caixa de Inspeção / Destino Esgoto",
-                                "Caixa d'Água"
-                            ]
-                        ),
-                        "Equipamento": st.column_config.SelectboxColumn(
-                            "Eq. (Biblioteca)",
-                            options=opcoes_equip
-                        )
+                        "Tipo_BIM": st.column_config.SelectboxColumn("Função BIM", options=opcoes_func_bim),
+                        "Equipamento": st.column_config.SelectboxColumn("Eq. (Biblioteca)", options=opcoes_equip)
                     },
                     use_container_width=True,
                     hide_index=True,
                     key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
                 )
+
+                # 5. Parâmetros da Caixa d'Água 3D (Vinculado automaticamente ao z_relativo da Caixa d'Água)
+                tem_caixa = not df_editado_hidro[
+                    (df_editado_hidro['Tipo_BIM'] == "Caixa d'Água") |
+                    (df_editado_hidro['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
+                ].empty
+
+                if tem_caixa:
+                    st.markdown("**🚰 Parâmetros da Caixa d'Água 3D**")
+                    c_cx1, c_cx2 = st.columns(2)
+                    altura_caixa = c_cx1.number_input(
+                        "Altura acima da última laje (m) → [z_relativo]",
+                        min_value=0.2,
+                        value=altura_caixa_atual,
+                        step=0.1
+                    )
+                    num_barriletes = c_cx2.number_input("Nº de Barriletes", min_value=1, value=1, step=1)
+
+                    # Se o usuário alterou a altura da Caixa d'Água, atualiza imediatamente o z_relativo na tabela!
+                    if abs(altura_caixa - altura_caixa_atual) > 0.001:
+                        st.session_state["altura_caixa_3d"] = float(altura_caixa)
+                        mask_cx_ed = (df_editado_hidro['Tipo_BIM'] == "Caixa d'Água") | (df_editado_hidro['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
+                        df_editado_hidro.loc[mask_cx_ed, 'z_relativo'] = float(altura_caixa)
+                        salvar_edicoes_na_memoria(df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(), df_editado_hidro)
+                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+                        st.rerun()
+                else:
+                    altura_caixa = altura_caixa_atual
+                    num_barriletes = 1
 
                 salvar_edicoes_na_memoria(
                     df_editado_elet if 'df_editado_elet' in locals() else pd.DataFrame(),
@@ -2912,16 +2960,6 @@ with tab_bim:
                     )
                     st.toast(st.session_state["resumo_ultimo_sync"], icon="🔄")
                     st.session_state["disparou_sync"] = False
-                
-                tem_caixa = not df_editado_hidro[df_editado_hidro['Tipo_BIM'] == 'Caixa d\'Água'].empty
-                if tem_caixa:
-                    st.markdown("**🚰 Parâmetros da Caixa d'Água 3D**")
-                    c_cx1, c_cx2 = st.columns(2)
-                    altura_caixa = c_cx1.number_input("Altura acima da última laje (m)", min_value=0.5, value=1.5, step=0.1)
-                    num_barriletes = c_cx2.number_input("Nº de Barriletes", min_value=1, value=1, step=1)
-                else:
-                    altura_caixa = 1.5
-                    num_barriletes = 1
             else:
                 st.warning("Nenhum bloco hidrossanitário detectado nas layers selecionadas.")
                 df_editado_hidro = pd.DataFrame()
