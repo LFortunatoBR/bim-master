@@ -522,10 +522,18 @@ def garantir_tubos_queda_subida_na_biblioteca():
         {"Equipamento": "Tubulação Água Fria 50mm", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubulação Água Quente 22mm", "Vazao_Ls": 0.30, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubulação Água Quente 28mm", "Vazao_Ls": 0.50, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 28, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-        {"Equipamento": "Tubulação Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 0},
-        {"Equipamento": "Tubulação Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 0},
-        {"Equipamento": "Tubulação Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 75, "Vent_mm": 0},
-        {"Equipamento": "Tubulação Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 160, "Esgoto_mm": 100, "Vent_mm": 0},
+        {"Equipamento": "Tubulação Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 160, "Esgoto_mm": 100, "Vent_mm": 75},
+        {"Equipamento": "Tubulação Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Tubulação Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Tubulação Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 40},
+        {"Equipamento": "Ponto de Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
+        {"Equipamento": "Ponto de Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 75, "Vent_mm": 50},
+        # ---- CAIXAS SIFONADAS E CAIXAS DE GORDURA NORMATIVAS (NBR 8160 - ITEM 5.1.5) ----
+        {"Equipamento": "Ralo Sifonado 100x100x50mm (Fecho 50mm - Máx 6 UHC)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Caixa Sifonada 150x150x50mm (Fecho 50mm - Máx 15 UHC)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 15, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Caixa de Gordura Pequena (CGP 18L - 1 Cozinha - Saída 50/75mm)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Caixa de Gordura Simples (CGS 31L - 1 a 2 Cozinhas - Saída 75mm)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 12, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Caixa de Gordura Dupla (CGD 120L - 2 a 12 Cozinhas - Saída 100mm)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 36, "Esgoto_mm": 100, "Vent_mm": 75},
         # ---- TUBOS DE QUEDA, SUBIDA E RAMAIS ----
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 50mm)", "Vazao_Ls": 1.50, "Peso": 0.0, "Agua_mm": 50, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
         {"Equipamento": "Tubo de Queda Água Fria (TQ-AF 40mm)", "Vazao_Ls": 1.00, "Peso": 0.0, "Agua_mm": 40, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
@@ -1415,17 +1423,29 @@ def rotear_hidro(df_bh, ctx):
                         'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
                     })
 
+    # =========================================================================
+    # ETAPA 5: HIERARQUIA NORMATIVA DE ESGOTO (ABNT NBR 8160)
+    # 1. Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro, Tanque) -> Caixa Sifonada / Ralo Sifonado (DN 40mm, i=2%)
+    # 2. Efluente Gorduroso (Pia de Cozinha, Lava-Louça) -> Caixa de Gordura (DN 50mm, i=2%)
+    # 3. Saída da Caixa Sifonada (Esgoto Primário DN 50/75mm) + Bacia Sanitária (DN 100mm) -> Ramal de Esgoto -> TQ / CI
+    # 4. Saída da Caixa de Gordura (DN 75/100mm) -> Direto p/ Caixa de Inspeção (CI) ou TQ Primário
+    # =========================================================================
     alvos_finais_esg = prumadas_esg if prumadas_esg else caixas_inspecao
 
     caixas_sifonadas = [
         b for b in df_bh
-        if "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', '')) or "SIFONAD" in normalizar_texto_bim(b.get('Nome_Bloco', ''))
+        if b.get('Tipo_BIM') == 'Caixa Sifonada / Ralo Sifonado'
+        or "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', ''))
     ]
     caixas_gordura = [
         b for b in df_bh
-        if "GORDURA" in normalizar_texto_bim(b.get('Equipamento', '')) or "[CG]" in str(b.get('Nome_Bloco', '')).upper()
+        if b.get('Tipo_BIM') == 'Caixa de Gordura'
+        or "GORDURA" in normalizar_texto_bim(b.get('Equipamento', ''))
     ]
+    ids_cs = {c['ID_CAD'] for c in caixas_sifonadas}
+    ids_cg = {c['ID_CAD'] for c in caixas_gordura}
 
+    # 5.1. Tubos de Queda (TQ), Colunas de Ventilação e Subcoletores até Caixa de Inspeção
     if prumadas_esg:
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
         for prum_e in prumadas_esg:
@@ -1456,10 +1476,20 @@ def rotear_hidro(df_bh, ctx):
                         'tipo': f"Subcoletor Esgoto -> {ci_prox['Nome_Bloco']}", 'diametro': 100, 'declividade_pct': 1.0
                     })
 
-    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']]
+    # Dicionários para acumular as UHCs que chegam em cada Caixa Sifonada, Caixa de Gordura e Ramal de Esgoto
+    uhc_recebido_cs = {c['ID_CAD']: 0.0 for c in caixas_sifonadas}
+    uhc_recebido_cg = {c['ID_CAD']: 0.0 for c in caixas_gordura}
     uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
 
-    for ap in origens_descarga:
+    # 5.2. Roteamento dos Aparelhos Sanitários e Ramais de Descarga (excluindo CS e CG, que são tratadas nas Etapas 5.3 e 5.4)
+    origens_aparelhos = [
+        b for b in df_bh
+        if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Conexões Tubulação Esgoto']
+        and b['ID_CAD'] not in ids_cs
+        and b['ID_CAD'] not in ids_cg
+    ]
+
+    for ap in origens_aparelhos:
         f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
         if not f_eq.any():
             continue
@@ -1472,66 +1502,136 @@ def rotear_hidro(df_bh, ctx):
             uhc_ap = max(2.0, uhc_ap)
 
         eq_norm = normalizar_texto_bim(ap['Equipamento'])
-        eh_cx_sifonada = ap in caixas_sifonadas
-        eh_cx_gordura = ap in caixas_gordura
-        eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA"]) and not eh_cx_gordura
-        eh_secundario_banheiro = (esg_mm_ap <= 40 or "RALO SECO" in eq_norm or "LAVATORIO" in eq_norm or "CHUVEIRO" in eq_norm) and not eh_cx_sifonada
+        eh_bacia = ("BACIA" in eq_norm or "VASO" in eq_norm or "SANITARIO" in eq_norm or esg_mm_ap >= 100)
+        eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA", "GOURMET"])
 
         alvo_escolhido = None
         cor_ramal = 'brown'
 
-        if eh_secundario_banheiro and caixas_sifonadas:
-            cs_cand = [cs for cs in caixas_sifonadas if cs['ID_CAD'] != ap['ID_CAD'] and abs(cs['z_base'] - ap['z_base']) < 0.5 and dist_2d((ap['x'], ap['y']), (cs['x'], cs['y'])) <= 5.0]
+        # REGRA A (NBR 8160 Item 5.1.5): Pias de Cozinha e Lava-Louças DEVEM ir exclusivamente para a Caixa de Gordura!
+        if eh_cozinha and caixas_gordura:
+            cg_cand = [cg for cg in caixas_gordura if abs(cg['z_base'] - ap['z_base']) < 0.8]
+            alvo_escolhido = min(cg_cand if cg_cand else caixas_gordura, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
+            uhc_recebido_cg[alvo_escolhido['ID_CAD']] += uhc_ap
+            esg_mm_ap = max(50, esg_mm_ap) # NBR 8160 exige DN mínimo 50mm para ramal de descarga de pia de cozinha
+            cor_ramal = '#b8860b'
+
+        # REGRA B (NBR 8160): Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro, Tanque) -> Caixa Sifonada / Ralo Sifonado!
+        elif not eh_bacia and not eh_cozinha and caixas_sifonadas:
+            cs_cand = [
+                cs for cs in caixas_sifonadas
+                if abs(cs['z_base'] - ap['z_base']) < 0.5 and dist_2d((ap['x'], ap['y']), (cs['x'], cs['y'])) <= 6.5
+            ]
             if cs_cand:
                 alvo_escolhido = min(cs_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
+                uhc_recebido_cs[alvo_escolhido['ID_CAD']] += uhc_ap
                 cor_ramal = '#cd853f'
 
-        elif eh_cozinha and caixas_gordura:
-            cg_cand = [cg for cg in caixas_gordura if cg['ID_CAD'] != ap['ID_CAD'] and abs(cg['z_base'] - ap['z_base']) < 0.5]
-            if cg_cand:
-                alvo_escolhido = min(cg_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
-                cor_ramal = '#b8860b'
-
+        # REGRA C (NBR 8160): Bacia Sanitária (Esgoto Primário DN 100mm) -> Ramal de Esgoto -> TQ / Caixa de Inspeção (NUNCA passa por CS nem CG)
         if alvo_escolhido is None:
-            ramais_esg_andar = [re_b for re_b in ramais_esgoto if re_b['ID_CAD'] != ap['ID_CAD'] and abs(re_b['z_base'] - ap['z_base']) < 0.5]
+            ramais_esg_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - ap['z_base']) < 0.5]
             opcoes_primario = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
-            opcoes_primario = [op for op in opcoes_primario if op['ID_CAD'] != ap['ID_CAD']]
             if not opcoes_primario:
                 continue
             alvo_escolhido = min(opcoes_primario, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-
-        if alvo_escolhido['ID_CAD'] in uhc_acumulado_ramal_esg:
-            uhc_acumulado_ramal_esg[alvo_escolhido['ID_CAD']] += uhc_ap
+            if alvo_escolhido['ID_CAD'] in uhc_acumulado_ramal_esg:
+                uhc_acumulado_ramal_esg[alvo_escolhido['ID_CAD']] += uhc_ap
 
         diam_rd = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_ap))
         declividade_rd = 0.01 if diam_rd >= 100 else 0.02
 
         pts_2d_rd = rota_a_star_2d(ap, alvo_escolhido, permitir_diagonal=True)
         if pts_2d_rd:
-            z_inicio_rd = ap['z_base'] - 0.12
+            z_inicio_rd = ap['z_base'] - 0.10
             linha_rd = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.0)), (ap['x'], ap['y'], z_inicio_rd)]
+            linha_3d_inter = []
             dist_ac = 0.0
             pt_ant = (ap['x'], ap['y'])
             for px_r, py_r in pts_2d_rd:
                 dist_ac += dist_2d(pt_ant, (px_r, py_r))
-                linha_rd.append((px_r, py_r, z_inicio_rd - (dist_ac * declividade_rd)))
+                linha_3d_inter.append((px_r, py_r, z_inicio_rd - (dist_ac * declividade_rd)))
                 pt_ant = (px_r, py_r)
+            linha_rd.extend(linha_3d_inter)
             linha_rd.append((alvo_escolhido['x'], alvo_escolhido['y'], z_inicio_rd - (dist_ac * declividade_rd)))
-
-            if ap['Tipo_BIM'] == 'Ramal de Descarga':
-                rotulo_tipo = f"Ramal de Descarga ({ap['ID_CAD']}) -> {alvo_escolhido['Nome_Bloco']}"
-            elif eh_secundario_banheiro and alvo_escolhido in caixas_sifonadas:
-                rotulo_tipo = f"Descarga Sec. ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}"
-            else:
-                rotulo_tipo = f"Esgoto ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}"
 
             linhas_processadas.append({
                 'pontos': linha_rd, 'cor': cor_ramal,
-                'tipo': rotulo_tipo,
+                'tipo': f"Ramal de Descarga ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}",
                 'diametro': diam_rd, 'declividade_pct': declividade_rd * 100,
                 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_escolhido['ID_CAD']
             })
 
+    # 5.3. SAÍDA DAS CAIXAS SIFONADAS / RALOS SIFONADOS (Esgoto Primário DN 50/75mm -> Ramal de Esgoto / TQ / Caixa de Inspeção)
+    for cs_b in caixas_sifonadas:
+        uhc_cs_total = max(2.0, uhc_recebido_cs.get(cs_b['ID_CAD'], 0.0) + 1.0)
+        # Pela NBR 8160 Tabela 5, saída de Caixa Sifonada é no mínimo DN 50mm (até 6 UHC) ou DN 75mm (> 6 UHC)
+        diam_saida_cs = 50 if uhc_cs_total <= 6.0 else 75
+        decliv_cs = 0.02
+
+        ramais_esg_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - cs_b['z_base']) < 0.5]
+        opcoes_dest_cs = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
+        opcoes_dest_cs = [op for op in opcoes_dest_cs if op['ID_CAD'] != cs_b['ID_CAD']]
+        if not opcoes_dest_cs:
+            continue
+
+        alvo_cs = min(opcoes_dest_cs, key=lambda p: dist_2d((cs_b['x'], cs_b['y']), (p['x'], p['y'])))
+        if alvo_cs['ID_CAD'] in uhc_acumulado_ramal_esg:
+            uhc_acumulado_ramal_esg[alvo_cs['ID_CAD']] += uhc_cs_total
+
+        pts_2d_cs = rota_a_star_2d(cs_b, alvo_cs, permitir_diagonal=True)
+        if pts_2d_cs:
+            z_ini_cs = cs_b['z_base'] - 0.14
+            linha_cs = [(cs_b['x'], cs_b['y'], cs_b['z_base']), (cs_b['x'], cs_b['y'], z_ini_cs)]
+            d_ac = 0.0
+            pt_a = (cs_b['x'], cs_b['y'])
+            for px_c, py_c in pts_2d_cs:
+                d_ac += dist_2d(pt_a, (px_c, py_c))
+                linha_cs.append((px_c, py_c, z_ini_cs - (d_ac * decliv_cs)))
+                pt_a = (px_c, py_c)
+            linha_cs.append((alvo_cs['x'], alvo_cs['y'], z_ini_cs - (d_ac * decliv_cs)))
+            linhas_processadas.append({
+                'pontos': linha_cs, 'cor': '#8b4513',
+                'tipo': f"Ramal de Esgoto [Saída Ralo Sifonado {cs_b['ID_CAD']}] -> {alvo_cs['Nome_Bloco']}",
+                'diametro': diam_saida_cs, 'declividade_pct': decliv_cs * 100,
+                'equipamento': cs_b['Equipamento'], 'id_ap': cs_b['ID_CAD'], 'prumada_ref': alvo_cs['ID_CAD'],
+                'uhc_acumulado_no': uhc_cs_total
+            })
+
+    # 5.4. SAÍDA DAS CAIXAS DE GORDURA (NBR 8160 Item 5.1.5: Saída DN 75mm/100mm -> Direto p/ Caixa de Inspeção ou TQ)
+    for cg_b in caixas_gordura:
+        uhc_cg_total = max(6.0, uhc_recebido_cg.get(cg_b['ID_CAD'], 0.0))
+        f_eq_cg = st.session_state.bib_hidro['Equipamento'] == cg_b['Equipamento']
+        dn_base_cg = int(st.session_state.bib_hidro.loc[f_eq_cg, 'Esgoto_mm'].values[0]) if f_eq_cg.any() else 75
+        diam_saida_cg = max(75, dn_base_cg, dimensionar_tubo_esgoto(uhc_cg_total))
+        decliv_cg = 0.01 if diam_saida_cg >= 100 else 0.02
+
+        # Caixa de Gordura descarrega prioritariamente na Caixa de Inspeção externa (CI)
+        opcoes_dest_cg = caixas_inspecao if caixas_inspecao else alvos_finais_esg
+        opcoes_dest_cg = [op for op in opcoes_dest_cg if op['ID_CAD'] != cg_b['ID_CAD']]
+        if not opcoes_dest_cg:
+            continue
+
+        alvo_cg = min(opcoes_dest_cg, key=lambda ci: dist_2d((cg_b['x'], cg_b['y']), (ci['x'], ci['y'])))
+        pts_2d_cg = rota_a_star_2d(cg_b, alvo_cg, permitir_diagonal=True)
+        if pts_2d_cg:
+            z_ini_cg = cg_b['z_base'] - 0.30
+            linha_cg = [(cg_b['x'], cg_b['y'], cg_b['z_base']), (cg_b['x'], cg_b['y'], z_ini_cg)]
+            d_ac = 0.0
+            pt_a = (cg_b['x'], cg_b['y'])
+            for px_g, py_g in pts_2d_cg:
+                d_ac += dist_2d(pt_a, (px_g, py_g))
+                linha_cg.append((px_g, py_g, z_ini_cg - (d_ac * decliv_cg)))
+                pt_a = (px_g, py_g)
+            linha_cg.append((alvo_cg['x'], alvo_cg['y'], z_ini_cg - (d_ac * decliv_cg)))
+            linhas_processadas.append({
+                'pontos': linha_cg, 'cor': '#5c3a21',
+                'tipo': f"Ramal de Esgoto [Saída Caixa de Gordura {cg_b['ID_CAD']}] -> {alvo_cg['Nome_Bloco']}",
+                'diametro': diam_saida_cg, 'declividade_pct': decliv_cg * 100,
+                'equipamento': cg_b['Equipamento'], 'id_ap': cg_b['ID_CAD'], 'prumada_ref': alvo_cg['ID_CAD'],
+                'uhc_acumulado_no': uhc_cg_total
+            })
+
+    # 5.5. RAMAIS DE ESGOTO COLETORES -> Tubo de Queda (TQ) ou Caixa de Inspeção (CI)
     if ramais_esgoto and alvos_finais_esg:
         for re_b in ramais_esgoto:
             f_eq_re = st.session_state.bib_hidro['Equipamento'] == re_b['Equipamento']
@@ -1555,10 +1655,11 @@ def rotear_hidro(df_bh, ctx):
                     pt_ant = (px_e, py_e)
                 linha_re.append((alvo_final['x'], alvo_final['y'], z_ini_re - (dist_ac * declividade_re)))
                 linhas_processadas.append({
-                    'pontos': linha_re, 'cor': '#5c3a21',
-                    'tipo': f"Ramal de Esgoto ({re_b['Nome_Bloco']}) -> {alvo_final['Nome_Bloco']}",
+                    'pontos': linha_re, 'cor': '#4a2e1b',
+                    'tipo': f"Ramal de Esgoto Coletor ({re_b['Nome_Bloco']}) -> {alvo_final['Nome_Bloco']}",
                     'diametro': diam_re, 'declividade_pct': declividade_re * 100,
-                    'equipamento': re_b['Equipamento'], 'id_ap': re_b['ID_CAD'], 'prumada_ref': alvo_final['ID_CAD']
+                    'equipamento': re_b['Equipamento'], 'id_ap': re_b['ID_CAD'], 'prumada_ref': alvo_final['ID_CAD'],
+                    'uhc_acumulado_no': uhc_total_ramal
                 })
 
     return linhas_processadas
@@ -2324,12 +2425,13 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
 
     regras_hidro = [
         (["CAIXA DE INSPECAO", "CX INSPECAO", "INSPECAO", "CI", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.50),
-        (["CAIXA DE GORDURA", "CX GORDURA", "GORDURA", "CG"], "Aparelho Hidráulico", "Caixa de Gordura", 0.00),
-        (["CAIXA SIFONADA", "CX SIF", "CS"], "Aparelho Hidráulico", "Caixa Sifonada 150x150x50mm", 0.00),
-        (["RALO SIFONADO", "RS", "CX SIFONADA 100"], "Aparelho Hidráulico", "Ralo Sifonado", 0.00),
-        (["CAIXA DE PASSAGEM", "CX PASSAGEM", "CP"], "Aparelho Hidráulico", "Caixa de Passagem", 0.00),
+        (["CAIXA DE GORDURA DUPLA", "CGD"], "Caixa de Gordura", "Caixa de Gordura Dupla (CGD 120L - 2 a 12 Cozinhas - Saída 100mm)", -0.35),
+        (["CAIXA DE GORDURA", "CX GORDURA", "GORDURA", "CG", "CGS", "CGP"], "Caixa de Gordura", "Caixa de Gordura Simples (CGS 31L - 1 a 2 Cozinhas - Saída 75mm)", -0.30),
+        (["CAIXA SIFONADA", "CX SIF", "CS", "150X150"], "Caixa Sifonada / Ralo Sifonado", "Caixa Sifonada 150x150x50mm", 0.00),
+        (["RALO SIFONADO", "RS", "CX SIFONADA 100"], "Caixa Sifonada / Ralo Sifonado", "Ralo Sifonado", 0.00),
+        (["CAIXA DE PASSAGEM", "CX PASSAGEM", "CP"], "Ramal de Esgoto", "Caixa de Passagem", 0.00),
         (["CAIXA D'AGUA", "CAIXA DAGUA", "CAIXA D AGUA", "RESERVATORIO SUP", "CX AGUA", "CX DAGUA"], "Caixa d'Água", "Caixa d'Água (Reservatório Superior)", altura_cx_padrao),
-        (["CISTERNA", "RESERVATORIO INF"], "Aparelho Hidráulico", "Cisterna (Reservatório Inferior)", 0.00),
+        (["CISTERNA", "RESERVATORIO INF"], "CAIXA D AGUA", "Cisterna (Reservatório Inferior)", 0.00),
         (["RAMAL DE DESCARGA", "RAMAL DESCARGA", "RD"], "Ramal de Descarga", "Ramal de Descarga Esgoto 40mm (Lavatório/Ralo)", -0.10),
         (["RAMAL DE ESGOTO", "RAMAL ESGOTO", "RE", "COLETOR ESGOTO"], "Ramal de Esgoto", "Ramal de Esgoto Coletor 100mm (NBR 8160)", -0.18),
         (["QUEDA AF", "TQ AF", "DESCIDA AF", "QUEDA AGUA FRIA"], "Tubo de Queda Água Fria", "Tubo de Queda Água Fria (TQ-AF 32mm)", 0.00),
@@ -2339,10 +2441,10 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["PRUMADA AF", "COLUNA AF", "PRUMADA AGUA"], "Prumada Água Fria", "Saída de Água Fria 32mm", 2.20),
         (["TUBO DE QUEDA", "TUBO QUEDA", "PRUMADA ESG", "COLUNA ESG", "TQ"], "Prumada Esgoto", "Tubo de Queda (TQ - Esgoto Primário)", 0.00),
         (["VENTILACAO", "COLUNA VENT", "CV"], "Prumada Esgoto", "Coluna de Ventilação", 0.00),
-        (["RALO SECO", "RSE"], "Aparelho Hidráulico", "Ralo Seco (Chuveiro)", 0.00),
-        (["RALO LINEAR", "RALO BOX"], "Aparelho Hidráulico", "Ralo Linear Inox (Box Banheiro)", 0.00),
-        (["RALO VARANDA", "RALO SACADA"], "Aparelho Hidráulico", "Ralo de Varanda/Sacada", 0.00),
-        (["BACIA", "VASO", "SANITARIO", "BS", "VS"], "Aparelho Hidráulico", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.20),
+        (["RALO SECO", "RSE"], "Ramal de Descarga", "Ralo Seco (Chuveiro)", 0.00),
+        (["RALO LINEAR", "RALO BOX"], "Ramal de Descarga", "Ralo Linear Inox (Box Banheiro)", 0.00),
+        (["RALO VARANDA", "RALO SACADA"], "Ramal de Descarga", "Ralo de Varanda/Sacada", 0.00),
+        (["BACIA", "VASO", "SANITARIO", "BS", "VS"], "Ramal de Descarga", "Bacia Sanitária (Caixa Acoplada) - Popular", 0.20),
         (["DUCHA HIG", "DH", "BIDE"], "Aparelho Hidráulico", "Ducha Higiênica", 0.40),
         (["CHUVEIRO MIST", "DUCHA MIST"], "Aparelho Hidráulico", "Chuveiro Misturador (Água Fria + Quente)", 2.10),
         (["CHUVEIRO", "DUCHA", "CH"], "Aparelho Hidráulico", "Chuveiro Elétrico Padrão", 2.10),
@@ -2365,9 +2467,18 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["BOMBA", "PRESSURIZADORA"], "Aparelho Hidráulico", "Bomba Pressurizadora Residencial", 0.30),
         (["BOILER", "AQUECEDOR"], "Boiler / Aquecedor", "Boiler (Aquecimento de Água Central)", 1.50),
         (["GAS", "GLP", "FOGAO"], "Aparelho Hidráulico", "Ponto de Gás (Fogão/Aquecedor)", 0.60),
+        (["AGUA QUENTE 28", "AQ 28"], "Conexões Hidráulicas AQ", "Tubulação Água Quente 28mm", 1.00),
         (["AGUA QUENTE", "AQ"], "Conexões Hidráulicas AQ", "Tubulação Água Quente 22mm", 1.00),
+        (["AGUA FRIA 50", "AF 50"], "Conexões Hidráulicas AF", "Tubulação Água Fria 50mm", 0.20),
+        (["AGUA FRIA 40", "AF 40"], "Conexões Hidráulicas AF", "Tubulação Água Fria 40mm", 0.20),
+        (["AGUA FRIA 32", "AF 32"], "Conexões Hidráulicas AF", "Tubulação Água Fria 32mm", 0.20),
+        (["AGUA FRIA 20", "AF 20"], "Conexões Hidráulicas AF", "Tubulação Água Fria 20mm", 0.20),
         (["AGUA FRIA", "AF"], "Conexões Hidráulicas AF", "Tubulação Água Fria 25mm", 0.20),
-        (["ESGOTO", "ESG"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 50mm", -0.15),
+        (["ESGOTO 100", "ESG 100", "TUBO 100", "TUBULACAO 100", "PRIMARIO", "SUBCOLETOR"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 100mm", -0.20),
+        (["ESGOTO 75", "ESG 75", "TUBO 75", "TUBULACAO 75"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 75mm", -0.18),
+        (["ESGOTO 40", "ESG 40", "TUBO 40", "TUBULACAO 40", "SECUNDARIO"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 40mm", -0.10),
+        (["ESGOTO 50", "ESG 50", "TUBO 50", "TUBULACAO 50"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 50mm", -0.15),
+        (["ESGOTO", "ESG"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 100mm", -0.15),
     ]
 
     for palavras, func_bim, eq_padrao, z_rel in regras_hidro:
@@ -3303,6 +3414,8 @@ with tab_bim:
                 opcoes_equip = list(st.session_state.bib_hidro['Equipamento'])
                 opcoes_func_bim = [
                     "Aparelho Hidráulico",
+                    "Caixa Sifonada / Ralo Sifonado",
+                    "Caixa de Gordura",
                     "Conexões Hidráulicas AF",
                     "Conexões Hidráulicas AQ",
                     "Conexões Tubulação Esgoto",
@@ -3334,6 +3447,22 @@ with tab_bim:
 
                 df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
 
+                # 2. Auto-correção de Ralo Sifonado, Caixa Sifonada, Caixa de Gordura e Caixa de Inspeção para suas Funções BIM próprias
+                for idx_fix, r_fix in df_bh.iterrows():
+                    nb_norm = normalizar_texto_bim(f"{r_fix.get('Nome_Bloco', '')} {r_fix.get('Equipamento', '')}")
+                    if "GORDURA" in nb_norm or "[CG]" in nb_norm:
+                        df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa de Gordura"
+                        if "GORDURA" not in normalizar_texto_bim(r_fix.get('Equipamento', '')):
+                            df_bh.at[idx_fix, 'Equipamento'] = "Caixa de Gordura"
+                        df_bh.at[idx_fix, 'z_relativo'] = -0.30
+                    elif "SIFONAD" in nb_norm:
+                        df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa Sifonada / Ralo Sifonado"
+                        df_bh.at[idx_fix, 'z_relativo'] = 0.00
+                    elif ("INSPECAO" in nb_norm or "[CI]" in nb_norm) and r_fix.get('Tipo_BIM') != "Caixa de Inspeção / Destino Esgoto":
+                        df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa de Inspeção / Destino Esgoto"
+                        df_bh.at[idx_fix, 'Equipamento'] = "Caixa de Inspeção"
+                        df_bh.at[idx_fix, 'z_relativo'] = -0.50
+                
                 for idx_fix, r_fix in df_bh.iterrows():
                     nb_norm = normalizar_texto_bim(str(r_fix.get('Nome_Bloco', '')).split('(')[0])
                     if r_fix.get('Tipo_BIM') == "Caixa d'Água" and ("INSPECAO" in nb_norm or "GORDURA" in nb_norm):
@@ -3536,7 +3665,41 @@ with tab_bim:
                 novos_pontos_hidro = []
                 z_res_mca = z_cobertura + altura_caixa
                 for b_hd in ctx['df_hidro']:
-                    if b_hd['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Ramal de Esgoto']:
+                    if b_hd['Tipo_BIM'] not in [
+                        'Aparelho Hidráulico', 'Caixa Sifonada / Ralo Sifonado',
+                        'Caixa de Gordura', 'Ramal de Descarga', 'Ramal de Esgoto'
+                    ]:
+                        continue
+                    eq_h = b_hd['Equipamento']
+                    filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
+                    if not filtro_h.any():
+                        continue
+                    row_h = st.session_state.bib_hidro.loc[filtro_h].iloc[0]
+                    peso_h, uhc_h, af_mm, esg_mm, pressao_req_kpa = float(row_h['Peso']), float(row_h['UHC']), int(row_h['Agua_mm']), int(row_h['Esgoto_mm']), float(row_h['Pressao_kpa'])
+
+                    # Se for Caixa de Gordura ou Caixa Sifonada, não consome Água Fria e exibe conformidade sanitária NBR 8160
+                    if b_hd['Tipo_BIM'] in ['Caixa de Gordura', 'Caixa Sifonada / Ralo Sifonado', 'Ramal de Descarga', 'Ramal de Esgoto']:
+                        rota_esg_no = next((r for r in linhas_hidro if r.get('id_ap') == b_hd['ID_CAD']), None)
+                        comp_esg_m = calcular_comprimento_rota(rota_esg_no['pontos']) if rota_esg_no else 3.0
+                        uhc_real = rota_esg_no.get('uhc_acumulado_no', uhc_h) if rota_esg_no else uhc_h
+                        dn_esg_real = rota_esg_no.get('diametro', esg_mm) if rota_esg_no else esg_mm
+                        z_ponto = b_hd['z_base'] + b_hd.get('z_relativo', 0.0)
+                        if b_hd['Tipo_BIM'] == 'Caixa de Gordura':
+                            status_pressao = "OK (Septo ≥20cm | Retenção NBR 8160)"
+                        elif b_hd['Tipo_BIM'] == 'Caixa Sifonada / Ralo Sifonado':
+                            status_pressao = "OK (Fecho Hídrico ≥50mm NBR 8160)"
+                        else:
+                            status_pressao = "OK (Escoamento Gravidade NBR 8160)"
+
+                        novos_pontos_hidro.append({
+                            "ID": b_hd['ID_CAD'], "Andar": b_hd.get('Andar', 'Pav 0'), "Ambiente": b_hd['Tipo_BIM'],
+                            "Equipamento": eq_h, "z": round(z_ponto, 2), "Peso (NBR 5626)": 0.0, "Vazão (L/s)": 0.0,
+                            "Tubo AF (mm)": 0, "L Real + Eq (m)": round(comp_esg_m, 2), "Perda Carga (m.c.a.)": 0.0,
+                            "Pressão Estática (m.c.a.)": 0.0, "Pressão Disp. (kPa)": 0.0,
+                            "Pressão Mín. (kPa)": 0.0, "Status Pressão": status_pressao,
+                            "UHC": uhc_real, "Tubo Esgoto (mm)": dn_esg_real,
+                            "Declividade Esg. (%)": 1.0 if dn_esg_real >= 100 else 2.0
+                        })
                         continue
                     eq_h = b_hd['Equipamento']
                     filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
