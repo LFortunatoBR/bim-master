@@ -2395,17 +2395,60 @@ def mesclar_blocos_com_memoria(df_novo, disciplina="hidro"):
 
 with st.sidebar:
     st.header("💾 Arquivo do Projeto")
-    arquivo_projeto = st.file_uploader("Abrir Projeto Salvo (.bim)", type=["bim", "json"])
-    if arquivo_projeto is not None:
-        if st.button("📂 Carregar Dados do Arquivo", use_container_width=True):
-            importar_projeto(arquivo_projeto)
-            st.success("Projeto carregado com sucesso!")
-            st.rerun()
+    arquivo_bim = st.file_uploader("Abrir Projeto Salvo (.bim)", type=["bim", "json"])
+    if arquivo_bim and st.button("📁 Carregar Dados do Arquivo", use_container_width=True):
+        dados_bim = json.load(arquivo_bim)
+        st.session_state.circuitos = pd.DataFrame(dados_bim.get("circuitos", []))
+        st.session_state.pontos_hidro = dados_bim.get("pontos_hidro", [])
+        st.session_state.linhas_3d_master = dados_bim.get("linhas_3d_master", {'eletrica': [], 'hidro': []})
+        st.session_state.contexto_bim = dados_bim.get("contexto_bim", {})
+        if "bib_eletrica" in dados_bim:
+            st.session_state.bib_eletrica = pd.DataFrame(dados_bim["bib_eletrica"])
+        if "bib_hidro" in dados_bim:
+            st.session_state.bib_hidro = pd.DataFrame(dados_bim["bib_hidro"])
+            garantir_tubos_queda_subida_na_biblioteca()
+        if "bib_gas_avac" in dados_bim:
+            st.session_state.bib_gas_avac = pd.DataFrame(dados_bim["bib_gas_avac"])
+        if "quantitativos_master" in dados_bim:
+            qm = dados_bim["quantitativos_master"]
+            st.session_state.quantitativos_master = {k: pd.DataFrame(v) for k, v in qm.items()}
 
+        # Restaura as memórias de edição das tabelas (ou reconstrói a partir do contexto_bim já salvo no arquivo de 138KB)
+        ctx_salvo = st.session_state.contexto_bim
+        st.session_state["memoria_edicoes_elet"] = dados_bim.get("memoria_edicoes_elet", ctx_salvo.get("df_elet", []))
+        st.session_state["memoria_edicoes_hidro"] = dados_bim.get("memoria_edicoes_hidro", ctx_salvo.get("df_hidro", []))
+        st.session_state["memoria_edicoes_esq"] = dados_bim.get("memoria_edicoes_esq", {})
+        st.session_state["mapa_blocos_hidro"] = dados_bim.get("mapa_blocos_hidro", {})
+        st.session_state["altura_caixa_3d"] = float(dados_bim.get("altura_caixa_3d", ctx_salvo.get("altura_caixa", 1.50)))
+        st.session_state["projeto_bim_ativo"] = True
+        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+        st.success("✅ Projeto .BIM restaurado com sucesso!")
+        st.rerun()
+
+    pacote_bim = {
+        "circuitos": st.session_state.circuitos.to_dict(orient="records") if not st.session_state.circuitos.empty else [],
+        "pontos_hidro": st.session_state.pontos_hidro,
+        "linhas_3d_master": st.session_state.linhas_3d_master,
+        "contexto_bim": st.session_state.contexto_bim,
+        "bib_eletrica": st.session_state.bib_eletrica.to_dict(orient="records"),
+        "bib_hidro": st.session_state.bib_hidro.to_dict(orient="records"),
+        "bib_gas_avac": st.session_state.bib_gas_avac.to_dict(orient="records"),
+        "quantitativos_master": {k: v.to_dict(orient="records") for k, v in st.session_state.quantitativos_master.items()},
+        "memoria_edicoes_elet": st.session_state.get("memoria_edicoes_elet", []),
+        "memoria_edicoes_hidro": st.session_state.get("memoria_edicoes_hidro", []),
+        "memoria_edicoes_esq": st.session_state.get("memoria_edicoes_esq", {}),
+        "mapa_blocos_hidro": st.session_state.get("mapa_blocos_hidro", {}),
+        "altura_caixa_3d": st.session_state.get("altura_caixa_3d", 1.50)
+    }
     st.download_button(
-        label="💾 Salvar Projeto Atual (.bim)", data=exportar_projeto(),
-        file_name="meu_projeto.bim", mime="application/json", use_container_width=True, type="primary"
+        "💾 Salvar Projeto Atual (.bim)",
+        data=json.dumps(pacote_bim, indent=2),
+        file_name="meu_projeto.bim",
+        mime="application/json",
+        type="primary",
+        use_container_width=True
     )
+    st.divider()
 
     st.divider()
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
@@ -2491,76 +2534,82 @@ tab_bim, tab_clash, tab_eletrica, tab_hidro, tab_pecas_ifc, tab_export = st.tabs
 
 with tab_bim:
     st.title("Modelagem e Roteamento Multidisciplinar Consciente de Estrutura (DXF & IFC)")
-    
-    if arquivos_dxf:
-        todas_layers_set = set()
-        layers_com_blocos = set()
-        dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
 
-        if dxf_files_only:
-            for dxf_f in dxf_files_only:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
-                    tmp_file.write(dxf_f.getvalue())
-                    temp_path = tmp_file.name
-                doc_base = ezdxf.readfile(temp_path)
-                msp_base = doc_base.modelspace()
-                # Captura layers da tabela oficial E também layers aplicadas diretamente nos objetos e blocos
-                for layer in doc_base.layers:
-                    todas_layers_set.add(layer.dxf.name)
-                for ent in msp_base:
-                    if hasattr(ent.dxf, "layer"):
-                        todas_layers_set.add(ent.dxf.layer)
-                        if ent.dxftype() == "INSERT":
-                            layers_com_blocos.add(ent.dxf.layer)
-                os.unlink(temp_path)
-            todas_layers = sorted(list(todas_layers_set))
+    tem_projeto_bim = bool(
+        st.session_state.get("projeto_bim_ativo")
+        or st.session_state.contexto_bim.get("paredes")
+        or st.session_state.contexto_bim.get("df_hidro")
+        or st.session_state.get("memoria_edicoes_hidro")
+    )
+
+    if arquivos_dxf or tem_projeto_bim:
+        if arquivos_dxf:
+            todas_layers_set = set()
+            layers_com_blocos = set()
+            dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
+
+            if dxf_files_only:
+                for dxf_f in dxf_files_only:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
+                        tmp_file.write(dxf_f.getvalue())
+                        temp_path = tmp_file.name
+                    doc_base = ezdxf.readfile(temp_path)
+                    msp_base = doc_base.modelspace()
+                    for layer in doc_base.layers:
+                        todas_layers_set.add(layer.dxf.name)
+                    for ent in msp_base:
+                        if hasattr(ent.dxf, "layer"):
+                            todas_layers_set.add(ent.dxf.layer)
+                            if ent.dxftype() == "INSERT":
+                                layers_com_blocos.add(ent.dxf.layer)
+                    os.unlink(temp_path)
+                todas_layers = sorted(list(todas_layers_set))
+            else:
+                todas_layers = ["IFC_WALLS", "IFC_DOORS_WINDOWS", "IFC_STRUCTURE", "IFC_ELECTRICAL", "IFC_PLUMBING"]
+
+            layers_conhecidas = st.session_state.get("layers_conhecidas_dxf", set())
+            layers_novas_detectadas = set(todas_layers) - layers_conhecidas if layers_conhecidas else set()
+            st.session_state["layers_conhecidas_dxf"] = set(todas_layers)
+
+            if layers_novas_detectadas:
+                st.info(f"✨ **Novas layers detectadas no arquivo atualizado:** `{', '.join(sorted(layers_novas_detectadas))}`")
+
+            def sugerir_layers(palavras, padrao_vazio=False):
+                sug = [ly for ly in todas_layers if any(p in normalizar_texto_bim(ly) for p in palavras)]
+                if not sug and not padrao_vazio and todas_layers:
+                    return [todas_layers[0]]
+                return sug
+
+            default_arq = sugerir_layers(["ALVENARIA", "PAREDE", "ARQ", "MURO"], padrao_vazio=False)
+            default_esq = sugerir_layers(["ESQUADRIA", "PORTA", "JANELA"], padrao_vazio=True)
+            default_est = sugerir_layers(["VIGA", "PILAR", "ESTRUTURA", "CONCRETO"], padrao_vazio=True)
+            default_elet = sugerir_layers(["ELETRICA", "ELET", "LUZ", "TOMADA", "ILUM"], padrao_vazio=True)
+            default_hidro = sugerir_layers(["HIDR", "AGUA", "ESGOTO", "SANIT", "TUBULACAO", "PLUVIAL", "GAS"], padrao_vazio=True)
+
+            for ly_b in layers_com_blocos:
+                if ly_b not in default_esq and ly_b not in default_est and ly_b not in default_elet and ly_b not in default_hidro:
+                    if any(k in normalizar_texto_bim(ly_b) for k in ["ELET", "LUZ", "TOM"]):
+                        default_elet.append(ly_b)
+                    elif ly_b in layers_novas_detectadas:
+                        default_hidro.append(ly_b)
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            layer_arq = c1.multiselect("Paredes:", todas_layers, default=default_arq)
+            layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=default_esq)
+            layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=default_est)
+            layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=default_elet)
+            layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=sorted(list(set(default_hidro))))
         else:
-            todas_layers = ["IFC_WALLS", "IFC_DOORS_WINDOWS", "IFC_STRUCTURE", "IFC_ELECTRICAL", "IFC_PLUMBING"]
-
-        # Detecta se surgiram layers novas no arquivo atualizado
-        layers_conhecidas = st.session_state.get("layers_conhecidas_dxf", set())
-        layers_novas_detectadas = set(todas_layers) - layers_conhecidas if layers_conhecidas else set()
-        st.session_state["layers_conhecidas_dxf"] = set(todas_layers)
-
-        if layers_novas_detectadas:
-            st.info(f"✨ **Novas layers detectadas no arquivo atualizado:** `{', '.join(sorted(layers_novas_detectadas))}`")
-
-        # Pré-seleção inteligente de layers por palavras-chave + inclusão automática de novas layers com blocos
-        def sugerir_layers(palavras, padrao_vazio=False):
-            sug = [ly for ly in todas_layers if any(p in normalizar_texto_bim(ly) for p in palavras)]
-            if not sug and not padrao_vazio and todas_layers:
-                return [todas_layers[0]]
-            return sug
-
-        default_arq = sugerir_layers(["ALVENARIA", "PAREDE", "ARQ", "MURO"], padrao_vazio=False)
-        default_esq = sugerir_layers(["ESQUADRIA", "PORTA", "JANELA"], padrao_vazio=True)
-        default_est = sugerir_layers(["VIGA", "PILAR", "ESTRUTURA", "CONCRETO"], padrao_vazio=True)
-        default_elet = sugerir_layers(["ELETRICA", "ELET", "LUZ", "TOMADA", "ILUM"], padrao_vazio=True)
-        default_hidro = sugerir_layers(["HIDR", "AGUA", "ESGOTO", "SANIT", "TUBULACAO", "PLUVIAL", "GAS"], padrao_vazio=True)
-
-        # Inclui automaticamente qualquer nova layer que contenha blocos (INSERT) e não seja esquadria/estrutura
-        for ly_b in layers_com_blocos:
-            if ly_b not in default_esq and ly_b not in default_est and ly_b not in default_elet and ly_b not in default_hidro:
-                if any(k in normalizar_texto_bim(ly_b) for k in ["ELET", "LUZ", "TOM"]):
-                    default_elet.append(ly_b)
-                elif ly_b in layers_novas_detectadas:
-                    default_hidro.append(ly_b)
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-        layer_arq = c1.multiselect("Paredes:", todas_layers, default=default_arq)
-        layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=default_esq)
-        layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=default_est)
-        layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=default_elet)
-        layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=sorted(list(set(default_hidro))))
+            st.success("📂 **Projeto carregado do arquivo `.bim`!** Todas as tabelas, paredes e tubulações 3D estão ativas abaixo. *(Se desejar atualizar a geometria do CAD depois, basta subir o arquivo `.dxf` na barra lateral).*")
 
         st.divider()
         st.subheader("Configuração de Alturas (Tubulações, Portas e Janelas) e Escopo")
+        ctx_mem = st.session_state.contexto_bim
         col_h1, col_h2, col_h3 = st.columns(3)
-        h_agua_fria = col_h1.number_input("Altura Tubulação Água Fria na Parede (m)", value=0.20, step=0.1)
-        h_agua_quente = col_h2.number_input("Altura Tubulação Água Quente na Parede (m)", value=1.00, step=0.1)
+        h_agua_fria = col_h1.number_input("Altura Tubulação Água Fria na Parede (m)", value=float(ctx_mem.get("h_agua_fria", 0.20)), step=0.1)
+        h_agua_quente = col_h2.number_input("Altura Tubulação Água Quente na Parede (m)", value=float(ctx_mem.get("h_agua_quente", 1.00)), step=0.1)
         modo_visualizacao = col_h3.selectbox("Visualização e Escopo do Projeto:", ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica", "Apenas Hidrossanitário"])
 
-        # NOVOS CONTROLES PADRÃO DE PEITORIL, SOLEIRA E ALTURA DE JANELAS E PORTAS
         ce_p1, ce_p2, ce_j1, ce_j2 = st.columns(4)
         soleira_padrao_porta = ce_p1.number_input("Soleira Padrão de Portas (m)", min_value=0.0, max_value=1.0, value=0.00, step=0.05)
         altura_padrao_porta = ce_p2.number_input("Altura Padrão de Portas (m)", min_value=1.5, max_value=4.0, value=2.10, step=0.05)
@@ -2571,6 +2620,15 @@ with tab_bim:
         max_z_projeto = 0.0
         z_acumulado = 0.0
 
+        # MODO A: Se o usuário carregou apenas o arquivo .bim (sem .dxf na barra lateral), reconstrói tudo do .bim
+        if not arquivos_dxf:
+            paredes_raw = ctx_mem.get("paredes", [])
+            elementos_arquitetonicos = ctx_mem.get("elementos_arquitetonicos", [])
+            blocos_elet = st.session_state.get("memoria_edicoes_elet", ctx_mem.get("df_elet", []))
+            blocos_hidro = st.session_state.get("memoria_edicoes_hidro", ctx_mem.get("df_hidro", []))
+            max_z_projeto = max(0.0, float(ctx_mem.get("max_z_cobertura", 3.0)) - 3.0)
+
+        # MODO B: Se há arquivo .dxf ou .ifc carregado, lê a geometria e mescla com a memória
         for andar_idx, config in enumerate(config_andares):
             dxf_file = config["arquivo"]
             pe_direito_atual = config["pe_direito"]
@@ -2635,7 +2693,6 @@ with tab_bim:
                             p1_vao = (cx_e - (larg_real / 2.0) * math.cos(rot_rad), cy_e - (larg_real / 2.0) * math.sin(rot_rad))
                             p2_vao = (cx_e + (larg_real / 2.0) * math.cos(rot_rad), cy_e + (larg_real / 2.0) * math.sin(rot_rad))
 
-                        # Reconhece janela alta de banheiro (báscula) se o nome indicar
                         eh_bascula = any(k in nome_bloco_u for k in ["BASC", "BANH", "WC", "J_ALTA"])
                         peit_ini = soleira_padrao_porta if eh_porta else (1.60 if eh_bascula else peitoril_padrao_janela)
                         alt_ini = altura_padrao_porta if eh_porta else (0.60 if eh_bascula else altura_padrao_janela)
@@ -2973,6 +3030,11 @@ with tab_bim:
         with col_tog2:
             mostrar_fios = st.toggle("Ver Rótulos de Fios 3D (F N T / 2R)", value=True)
 
+        st.session_state.contexto_bim['paredes'] = paredes_raw
+        st.session_state.contexto_bim['elementos_arquitetonicos'] = elementos_arquitetonicos
+        st.session_state.contexto_bim['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+        st.session_state.contexto_bim['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+        
         if col_btn_proc.button("🚀 Processar Rotas Multidisciplinares, Dimensionamento ABNT e Quantitativos", type="primary", use_container_width=True):
             with st.spinner("Mapeando vigas, pilares, múltiplas prumadas, cascata TUG e calculando malhas ABNT..."):
                 pontos_gerais = []
