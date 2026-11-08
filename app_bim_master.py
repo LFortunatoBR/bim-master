@@ -884,16 +884,132 @@ def balancear_fases_automatico(df_circuitos):
 # PARTE 6 DE 10: ROTEADORES 3D (MÚLTIPLAS PRUMADAS, CASCATA TUG, PLUVIAL E GÁS)
 # ==============================================================================
 def distancia_ponto_segmento_2d(px, py, x1, y1, x2, y2):
-    """Calcula a menor distância em planta entre um ponto (px, py) e o segmento do vão (x1,y1)-(x2,y2)."""
+    """Calcula a menor distância 2D entre um ponto (px, py) e o segmento (x1,y1)-(x2,y2)."""
     dx, dy = x2 - x1, y2 - y1
     if dx == 0 and dy == 0:
         return math.hypot(px - x1, py - y1)
     t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
-    proj_x, proj_y = x1 + t * dx, y1 + t * dy
-    return math.hypot(px - proj_x, py - proj_y)
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max_ext=0.30):
+    """
+    Calcula quanto a Verga/Contraverga pode avançar além de p1_vao e p2_vao (até 30cm para cada lado),
+    interrompendo antes caso a parede acabe ou dobre em uma quina antes dos 30cm.
+    Também retorna a espessura real da parede (vetor normal nx, ny) para desenhar as duas faces em 3D.
+    """
+    vx, vy = p2_vao[0] - p1_vao[0], p2_vao[1] - p1_vao[1]
+    comp_vao = math.hypot(vx, vy)
+    if comp_vao < 1e-4:
+        return p1_vao, p2_vao, 0.0, 0.0, (0.0, 0.15)
+    ux, uy = vx / comp_vao, vy / comp_vao
+    nx, ny = -uy, ux
+
+    avan_esq, avan_dir = 0.0, 0.0
+    espessura_detectada = 0.15
+    encontrou_parede_colinear = False
+
+    for seg in paredes_lista:
+        w1, w2 = seg[0], seg[1]
+        if abs(w1[2] - z_base) > 0.6:
+            continue
+        wx, wy = w2[0] - w1[0], w2[1] - w1[1]
+        w_len = math.hypot(wx, wy)
+        if w_len < 0.08:
+            continue
+        wux, wuy = wx / w_len, wy / w_len
+        alinhamento = abs(ux * wux + uy * wuy)
+
+        # Parede alinhada com o vão (paralela)
+        if alinhamento >= 0.85:
+            # Distância perpendicular entre o eixo do vão e a face da parede
+            dist_perp = abs((w1[0] - p1_vao[0]) * nx + (w1[1] - p1_vao[1]) * ny)
+            if dist_perp <= 0.35:
+                encontrou_parede_colinear = True
+                if 0.05 <= dist_perp <= 0.25:
+                    espessura_detectada = max(0.12, min(0.25, dist_perp * 2.0))
+                # Projeção dos pontos da parede ao longo do eixo do vão (origem em p1_vao)
+                s1 = (w1[0] - p1_vao[0]) * ux + (w1[1] - p1_vao[1]) * uy
+                s2 = (w2[0] - p1_vao[0]) * ux + (w2[1] - p1_vao[1]) * uy
+                s_min, s_max = min(s1, s2), max(s1, s2)
+                # Verifica comprimento de parede disponível à esquerda de p1_vao (s <= 0)
+                if s_max >= -0.10 and s_min < 0.0:
+                    avan_esq = max(avan_esq, min(max_ext, abs(s_min)))
+                # Verifica comprimento de parede disponível à direita de p2_vao (s >= comp_vao)
+                if s_min <= comp_vao + 0.10 and s_max > comp_vao:
+                    avan_dir = max(avan_dir, min(max_ext, s_max - comp_vao))
+
+    if not encontrou_parede_colinear:
+        avan_esq, avan_dir = max_ext, max_ext
+
+    p1_ext = (p1_vao[0] - ux * avan_esq, p1_vao[1] - uy * avan_esq)
+    p2_ext = (p2_vao[0] + ux * avan_dir, p2_vao[1] + uy * avan_dir)
+    return p1_ext, p2_ext, round(avan_esq, 3), round(avan_dir, 3), (nx * (espessura_detectada / 2.0), ny * (espessura_detectada / 2.0))
+
+def detectar_vaos_pelos_batentes_das_paredes(paredes_lista, z_base, pe_direito, soleira_p, alt_p, peit_j, alt_j):
+    """
+    Detecta automaticamente os vãos de portas e janelas diretamente pelos batentes/bonecas
+    (pequenos segmentos transversais de 10cm a 30cm onde a parede dupla é interrompida),
+    garantindo que todos os vãos apareçam em 3D mesmo ao abrir apenas o arquivo .bim!
+    """
+    batentes = []
+    for p1, p2 in paredes_lista:
+        if abs(p1[2] - z_base) > 0.6:
+            continue
+        comp = dist_2d(p1, p2)
+        if 0.09 <= comp <= 0.32:
+            mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
+            dx, dy = (p2[0] - p1[0]) / comp, (p2[1] - p1[1]) / comp
+            batentes.append({"mx": mx, "my": my, "dx": dx, "dy": dy, "esp": comp, "usado": False})
+
+    vaos_detectados = []
+    for i in range(len(batentes)):
+        if batentes[i]["usado"]:
+            continue
+        b1 = batentes[i]
+        melhor_j = None
+        menor_d = 999.0
+        for j in range(i + 1, len(batentes)):
+            if batentes[j]["usado"]:
+                continue
+            b2 = batentes[j]
+            # Batentes paralelos entre si
+            if abs(b1["dx"] * b2["dx"] + b1["dy"] * b2["dy"]) >= 0.85:
+                vx, vy = b2["mx"] - b1["mx"], b2["my"] - b1["my"]
+                dist_v = math.hypot(vx, vy)
+                if 0.55 <= dist_v <= 2.60:
+                    # O vetor entre os dois batentes deve ser perpendicular ao próprio batente (alinhado com a parede)
+                    perp = abs((vx / dist_v) * b1["dx"] + (vy / dist_v) * b1["dy"])
+                    if perp <= 0.25 and dist_v < menor_d:
+                        menor_d = dist_v
+                        melhor_j = j
+
+        if melhor_j is not None:
+            b2 = batentes[melhor_j]
+            batentes[i]["usado"] = True
+            batentes[melhor_j]["usado"] = True
+            cx, cy = (b1["mx"] + b2["mx"]) / 2.0, (b1["my"] + b2["my"]) / 2.0
+            larg = round(menor_d, 2)
+            # Heurística padrão: vãos entre 0.60m e 0.98m internos costumam ser Portas; >= 1.00m ou em bordas externas costumam ser Janelas
+            eh_porta = (0.58 <= larg <= 0.98)
+            vaos_detectados.append({
+                "ID_CAD": f"VAO_AUTO_{len(vaos_detectados)+1}",
+                "Nome_Bloco": "Porta Detectada" if eh_porta else "Janela Detectada",
+                "Layer_CAD": "ALVENARIA (Vão)",
+                "Andar": "Pav 0",
+                "Tipo": "Esquadria",
+                "Subtipo": "Porta" if eh_porta else "Janela",
+                "x": round(cx, 4), "y": round(cy, 4), "z_base": z_base,
+                "pe_direito": pe_direito,
+                "p1_vao": (b1["mx"], b1["my"]),
+                "p2_vao": (b2["mx"], b2["my"]),
+                "Largura": larg,
+                "Peitoril": soleira_p if eh_porta else peit_j,
+                "Altura": alt_p if eh_porta else alt_j
+            })
+    return vaos_detectados
 
 def liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx):
-    """Garante que o algoritmo 2D A* permita que a tubulação atravesse a zona de portas e janelas."""
+    """Abre os vãos de portas e janelas na matriz 2D A* para permitir a passagem dos tubos."""
     for elem in elementos_arq:
         if elem.get('Tipo') == 'Esquadria':
             p1_v = elem.get('p1_vao', (elem['x'] - 0.45, elem['y']))
@@ -907,11 +1023,10 @@ def liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx):
 
 def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_direito, h_viga=0.40):
     """
-    Analisa cada trecho da tubulação 3D a cada 10cm:
-    - Se já estiver abaixo do peitoril da janela ou acima da verga da porta/janela, passa reto!
-    - Se colidir com Janela: desvia por baixo do peitoril (se tiver espaço) ou por cima da janela.
-    - Se colidir com Porta: desvia por cima da verga da porta (ou por baixo da soleira se já for tubulação de piso).
-    - Se colidir com Viga no teto: mergulha por baixo da viga.
+    Desvia as tubulações (Elétrica, Água Fria, Água Quente e Esgoto) respeitando:
+    1. O vão da Porta ou Janela;
+    2. A VERGA superior (10cm de altura acima do vão + até 30cm para cada lado);
+    3. A CONTRAVERGA inferior (10cm de altura abaixo do peitoril da janela + até 30cm para cada lado).
     """
     if not elementos_arq or len(linha_3d) < 2:
         return linha_3d
@@ -920,7 +1035,9 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
     if not elems_andar:
         return linha_3d
 
-    z_teto_livre = z_base + pe_direito - 0.08
+    paredes_ctx = st.session_state.contexto_bim.get('paredes', [])
+    z_teto_livre = z_base + pe_direito - 0.06
+    ALT_VERGA = 0.10  # 10 cm de altura obrigatória para Verga e Contraverga
     nova_linha = [linha_3d[0]]
 
     for i in range(len(linha_3d) - 1):
@@ -928,15 +1045,11 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
         p_fim = linha_3d[i + 1]
         comp_2d = dist_2d(p_ini, p_fim)
 
-        # Segmentos puramente verticais (subidas/descidas) não precisam de subdivisão horizontal
         if comp_2d < 0.08:
             nova_linha.append(p_fim)
             continue
 
-        # Subdivide o segmento horizontal a cada 12cm para detectar portas/janelas no meio da parede
-        n_passos = max(2, int(comp_2d / 0.12) + 1)
-        z_original = p_fim[2]
-
+        n_passos = max(2, int(comp_2d / 0.10) + 1)
         for k in range(1, n_passos + 1):
             t = k / float(n_passos)
             px = p_ini[0] + t * (p_fim[0] - p_ini[0])
@@ -949,32 +1062,37 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
                     larg = elem.get('Largura', 0.90)
                     p1_v = elem.get('p1_vao', (elem['x'] - larg / 2.0, elem['y']))
                     p2_v = elem.get('p2_vao', (elem['x'] + larg / 2.0, elem['y']))
-                    dist_vao = distancia_ponto_segmento_2d(px, py, p1_v[0], p1_v[1], p2_v[0], p2_v[1])
+                    p1_ext, p2_ext, _, _, _ = calcular_extensao_verga_na_parede(p1_v, p2_v, z_base, paredes_ctx, max_ext=0.30)
 
-                    # Se o tubo passa dentro da faixa da porta/janela (distância <= 25cm do eixo do vão)
-                    if dist_vao <= 0.25:
+                    # Distância ao trecho estendido (Vão + 30cm de cada lado da Verga/Contraverga)
+                    dist_ext = distancia_ponto_segmento_2d(px, py, p1_ext[0], p1_ext[1], p2_ext[0], p2_ext[1])
+                    if dist_ext <= 0.28:
                         peitoril = float(elem.get('Peitoril', 0.0))
                         altura_vao = float(elem.get('Altura', 2.10))
-                        z_min_vao = z_base + peitoril
-                        z_max_vao = z_min_vao + altura_vao
+                        eh_janela = (elem.get('Subtipo') == 'Janela')
 
-                        # Só desvia se a altura atual do tubo bater dentro da abertura [z_min_vao, z_max_vao]
-                        if (z_min_vao - 0.06) < pz < (z_max_vao + 0.06):
-                            z_por_cima = min(z_teto_livre, z_max_vao + 0.12)
-                            z_por_baixo = z_min_vao - 0.12
+                        # Cota inferior bloqueada (inclui os 10cm da Contraverga nas janelas)
+                        z_base_contraverga = z_base + max(0.0, peitoril - ALT_VERGA) if (eh_janela and peitoril >= 0.15) else (z_base + peitoril)
+                        # Cota superior bloqueada (inclui os 10cm da Verga acima de portas e janelas)
+                        z_topo_verga = z_base + peitoril + altura_vao + ALT_VERGA
 
-                            if elem.get('Subtipo') == 'Janela' and peitoril >= 0.25:
-                                # Na janela, escolhe passar por baixo do peitoril ou por cima da verga (o que for mais próximo da altura do tubo)
-                                if abs(pz - z_por_baixo) <= abs(z_por_cima - pz):
-                                    z_ajustado = max(z_base + 0.05, z_por_baixo)
+                        # Se o tubo estiver na faixa bloqueada [z_base_contraverga, z_topo_verga], obriga a desviar!
+                        if (z_base_contraverga - 0.04) < pz < (z_topo_verga + 0.04):
+                            z_acima_verga = min(z_teto_livre, z_topo_verga + 0.06)
+                            z_abaixo_contraverga = max(z_base + 0.05, z_base_contraverga - 0.06)
+
+                            if eh_janela and peitoril >= 0.25:
+                                # Na janela: passa abaixo da Contraverga ou acima da Verga
+                                if abs(pz - z_abaixo_contraverga) <= abs(z_acima_verga - pz):
+                                    z_ajustado = z_abaixo_contraverga
                                 else:
-                                    z_ajustado = z_por_cima
+                                    z_ajustado = z_acima_verga
                             else:
-                                # Na porta, passa por cima da porta (verga superior) se for tubulação de parede, ou por baixo da soleira se já estiver rente ao piso
-                                if peitoril >= 0.15 and pz <= z_min_vao + 0.10:
-                                    z_ajustado = z_por_baixo
+                                # Na porta: passa acima da Verga (ou abaixo da soleira se já estiver no contrapiso)
+                                if peitoril >= 0.15 and pz <= z_base_contraverga + 0.08:
+                                    z_ajustado = z_abaixo_contraverga
                                 else:
-                                    z_ajustado = z_por_cima
+                                    z_ajustado = z_acima_verga
                             break
 
                 elif elem.get('Tipo') == 'Pilar/Viga':
@@ -984,7 +1102,6 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
                             z_ajustado = z_fundo_viga
 
             pt_novo = (round(px, 4), round(py, 4), round(z_ajustado, 4))
-            # Simplifica pontos colineares na mesma altura para manter a malha limpa
             if len(nova_linha) >= 2 and abs(nova_linha[-1][2] - pt_novo[2]) < 0.005 and abs(nova_linha[-2][2] - pt_novo[2]) < 0.005:
                 if abs(dist_2d(nova_linha[-2], nova_linha[-1]) + dist_2d(nova_linha[-1], pt_novo) - dist_2d(nova_linha[-2], pt_novo)) < 0.005:
                     nova_linha[-1] = pt_novo
@@ -2761,21 +2878,39 @@ with tab_bim:
             
             z_acumulado += pe_direito_atual + espessura_laje
 
-        # TABELA INTERATIVA PARA EDITAR PEITORIL, SOLEIRA, ALTURA E LARGURA DE CADA PORTA E JANELA
+        # Se não vieram blocos de esquadria da layer (ou veio do .bim sem vãos), detecta automaticamente pelos batentes das paredes!
+        esquadrias_atuais = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria"]
+        if not esquadrias_atuais and paredes_raw:
+            vaos_auto = detectar_vaos_pelos_batentes_das_paredes(
+                paredes_raw, 0.0, config_andares[0]["pe_direito"] if config_andares else 3.0,
+                soleira_padrao_porta, altura_padrao_porta, peitoril_padrao_janela, altura_padrao_janela
+            )
+            elementos_arquitetonicos.extend(vaos_auto)
+
+        # Detecta se o usuário alterou algum dos 4 controles globais (Soleira, Altura Porta, Peitoril Janela, Altura Janela)
+        assinatura_padroes = f"{soleira_padrao_porta}_{altura_padrao_porta}_{peitoril_padrao_janela}_{altura_padrao_janela}"
+        padroes_mudaram = (st.session_state.get("assinatura_padroes_esq", "") != assinatura_padroes)
+        st.session_state["assinatura_padroes_esq"] = assinatura_padroes
+
         esquadrias_lista = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria"]
         if esquadrias_lista:
-            with st.expander(f"🚪🪟 Editar Peitoril, Soleira e Alturas Individuais de Portas e Janelas ({len(esquadrias_lista)} vãos detectados)", expanded=False):
-                st.caption("Ajuste abaixo se um vão é Porta ou Janela, seu Peitoril/Soleira (m) e sua Altura (m). As tubulações podem passar livremente abaixo do Peitoril e acima da Verga (Peitoril + Altura)!")
+            with st.expander(f"🚪🪟 Editar Peitoril, Soleira, Vergas e Alturas de Portas e Janelas ({len(esquadrias_lista)} vãos ativos)", expanded=False):
+                st.caption("Vergas e Contravergas de 10cm de altura (+30cm para cada lado, limitadas pelas quinas da parede) são geradas automaticamente para todos os vãos abaixo:")
                 df_esq_raw = pd.DataFrame(esquadrias_lista)
-                # Restaura edições salvas anteriormente pelo usuário por coordenada (x, y)
                 mem_esq = st.session_state.get("memoria_edicoes_esq", {})
+
                 for idx_e, r_e in df_esq_raw.iterrows():
                     chave_pos = f"{r_e.get('Andar','')}_{round(float(r_e['x']),2)}_{round(float(r_e['y']),2)}"
-                    if chave_pos in mem_esq:
+                    if chave_pos in mem_esq and not padroes_mudaram:
                         df_esq_raw.at[idx_e, "Subtipo"] = mem_esq[chave_pos]["Subtipo"]
                         df_esq_raw.at[idx_e, "Peitoril"] = mem_esq[chave_pos]["Peitoril"]
                         df_esq_raw.at[idx_e, "Altura"] = mem_esq[chave_pos]["Altura"]
                         df_esq_raw.at[idx_e, "Largura"] = mem_esq[chave_pos]["Largura"]
+                    else:
+                        # Aplica imediatamente os novos valores padrão de Peitoril/Soleira/Altura escolhidos pelo usuário na tela
+                        eh_p = (r_e["Subtipo"] == "Porta")
+                        df_esq_raw.at[idx_e, "Peitoril"] = soleira_padrao_porta if eh_p else peitoril_padrao_janela
+                        df_esq_raw.at[idx_e, "Altura"] = altura_padrao_porta if eh_p else altura_padrao_janela
 
                 cols_exibir_esq = ["ID_CAD", "Nome_Bloco", "Layer_CAD", "Andar", "Subtipo", "Peitoril", "Altura", "Largura", "x", "y"]
                 df_esq_editado = st.data_editor(
@@ -2788,10 +2923,9 @@ with tab_bim:
                     },
                     use_container_width=True,
                     hide_index=True,
-                    key=f"editor_esq_v{st.session_state.get('sync_version', 0)}"
+                    key=f"editor_esq_v{st.session_state.get('sync_version', 0)}_{assinatura_padroes}"
                 )
 
-                # Salva as edições e atualiza elementos_arquitetonicos com os novos peitoris e alturas
                 novo_mem_esq = {}
                 map_esq_atualizado = {}
                 for _, r_ed in df_esq_editado.iterrows():
@@ -3189,11 +3323,42 @@ with tab_bim:
             else:
                 paredes_filtradas = paredes_raw
 
-            # 1. PAREDES 3D EM MODO RAIO-X (Faces 3D translúcidas + Arestas escuras nítidas no piso e topo)
+            # 1. PAREDES 3D EM MODO RAIO-X + FECHAMENTO ACIMA/ABAIXO DE PORTAS E JANELAS + VERGAS E CONTRAVERGAS
             wx_base, wy_base, wz_base = [], [], []
             wx_topo, wy_topo, wz_topo = [], [], []
             mesh_x, mesh_y, mesh_z = [], [], []
             mesh_i, mesh_j, mesh_k = [], [], []
+
+            # Listas para as Vergas e Contravergas estruturais (10cm de altura + até 30cm para cada lado)
+            vg_mesh_x, vg_mesh_y, vg_mesh_z = [], [], []
+            vg_mesh_i, vg_mesh_j, vg_mesh_k = [], [], []
+            vg_wire_x, vg_wire_y, vg_wire_z = [], [], []
+
+            def adicionar_painel_vertical_3d(pa, pb, z0, z1, mx, my, mz, mi, mj, mk, wx_w=None, wy_w=None, wz_w=None):
+                """Adiciona uma face vertical 3D entre os pontos 2D pa e pb da altura z0 até z1."""
+                if z1 <= z0 + 0.01:
+                    return
+                iv = len(mx)
+                mx.extend([pa[0], pb[0], pb[0], pa[0]])
+                my.extend([pa[1], pb[1], pb[1], pa[1]])
+                mz.extend([z0, z0, z1, z1])
+                mi.extend([iv, iv])
+                mj.extend([iv + 1, iv + 2])
+                mk.extend([iv + 2, iv + 3])
+                if wx_w is not None:
+                    wx_w.extend([pa[0], pb[0], None, pa[0], pb[0], None, pa[0], pa[0], None, pb[0], pb[0], None])
+                    wy_w.extend([pa[1], pb[1], None, pa[1], pb[1], None, pa[1], pa[1], None, pb[1], pb[1], None])
+                    wz_w.extend([z0, z0, None, z1, z1, None, z0, z1, None, z0, z1, None])
+
+            def adicionar_bloco_duplo_parede_3d(pa, pb, z0, z1, offset_n, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w):
+                """Desenha as duas faces paralelas da parede (espessura real da alvenaria) entre z0 e z1."""
+                if z1 <= z0 + 0.01:
+                    return
+                ox, oy = offset_n
+                p1a, p2a = (pa[0] + ox, pa[1] + oy), (pb[0] + ox, pb[1] + oy)
+                p1b, p2b = (pa[0] - ox, pa[1] - ox * 0 + oy * -1), (pb[0] - ox, pb[1] - oy)
+                adicionar_painel_vertical_3d(p1a, p2a, z0, z1, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w)
+                adicionar_painel_vertical_3d(p1b, p2b, z0, z1, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w)
 
             for p1, p2 in paredes_filtradas:
                 if dist_2d(p1, p2) < 0.05:
@@ -3201,52 +3366,21 @@ with tab_bim:
                 z_piso = p1[2]
                 z_topo = p2[2] if p2[2] > z_piso else (z_piso + 3.0)
 
-                # Planta baixa nítida no piso (chumbo escuro) para leitura imediata dos cômodos
                 wx_base.extend([p1[0], p2[0], None])
                 wy_base.extend([p1[1], p2[1], None])
                 wz_base.extend([z_piso, z_piso, None])
 
-                # Arestas superiores e verticais suaves (Wireframe 3D)
                 wx_topo.extend([p1[0], p2[0], None, p1[0], p1[0], None, p2[0], p2[0], None])
                 wy_topo.extend([p1[1], p2[1], None, p1[1], p1[1], None, p2[1], p2[1], None])
                 wz_topo.extend([z_topo, z_topo, None, z_piso, z_topo, None, z_piso, z_topo, None])
 
-                # Face 3D translúcida da parede (efeito vidro/raio-X)
-                idx_v = len(mesh_x)
-                mesh_x.extend([p1[0], p2[0], p2[0], p1[0]])
-                mesh_y.extend([p1[1], p2[1], p2[1], p1[1]])
-                mesh_z.extend([z_piso, z_piso, z_topo, z_topo])
-                mesh_i.extend([idx_v, idx_v])
-                mesh_j.extend([idx_v + 1, idx_v + 2])
-                mesh_k.extend([idx_v + 2, idx_v + 3])
+                adicionar_painel_vertical_3d(p1, p2, z_piso, z_topo, mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k)
 
-            if mesh_x:
-                fig.add_trace(go.Mesh3d(
-                    x=mesh_x, y=mesh_y, z=mesh_z,
-                    i=mesh_i, j=mesh_j, k=mesh_k,
-                    color='#94a3b8', opacity=0.18,
-                    name='🏢 Paredes 3D (Faces Raio-X)',
-                    legendgroup='paredes_3d', showlegend=True, hoverinfo='skip'
-                ))
-            if wx_base:
-                fig.add_trace(go.Scatter3d(
-                    x=wx_base, y=wy_base, z=wz_base, mode='lines',
-                    line=dict(color='#1e293b', width=3.5),
-                    name='📐 Contorno das Paredes (Base)',
-                    legendgroup='paredes_base', showlegend=True, hoverinfo='skip'
-                ))
-            if wx_topo:
-                fig.add_trace(go.Scatter3d(
-                    x=wx_topo, y=wy_topo, z=wz_topo, mode='lines',
-                    line=dict(color='rgba(71, 85, 105, 0.45)', width=1.5),
-                    name='🏢 Paredes 3D (Wireframe Superior)',
-                    legendgroup='paredes_wire', showlegend=True, hoverinfo='skip'
-                ))
-
-            # 2. VÃOS DE PORTAS, JANELAS E PILARES (Filtrados dentro do perímetro da edificação)
+            # 2. VÃOS DE PORTAS/JANELAS, PAREDES ACIMA/ABAIXO DOS VÃOS E VERGAS/CONTRAVERGAS (10cm x +30cm)
             px_porta, py_porta, pz_porta = [], [], []
             jx_jan, jy_jan, jz_jan = [], [], []
             ex_est, ey_est, ez_est = [], [], []
+            ALT_VERGA = 0.10  # 10 cm de altura para Vergas e Contravergas
 
             for elem in elementos_arquitetonicos:
                 if pts_ref_x and not (lim_x_min <= elem['x'] <= lim_x_max and lim_y_min <= elem['y'] <= lim_y_max):
@@ -3256,16 +3390,25 @@ with tab_bim:
                     ex_est.extend([elem['x'], elem['x'], None])
                     ey_est.extend([elem['y'], elem['y'], None])
                     ez_est.extend([elem['z_base'], elem['z_base'] + h_pilar, None])
-                elif elem['Tipo'] == 'Esquadria':
-                    z_piso_e = elem['z_base']
-                    z_teto_e = z_piso_e + elem.get('pe_direito', 3.0)
-                    z_inf = z_piso_e + elem.get('Peitoril', 0.0)
-                    z_sup = min(z_teto_e, z_inf + elem.get('Altura', 2.10))
-                    larg_v = min(2.40, elem.get('Largura', 0.90))
-                    p1_v = elem.get('p1_vao', (elem['x'] - larg_v/2.0, elem['y']))
-                    p2_v = elem.get('p2_vao', (elem['x'] + larg_v/2.0, elem['y']))
 
-                    # 1. Desenha o quadro 3D do vão (Porta ou Janela) na altura exata configurada
+                elif elem['Tipo'] == 'Esquadria':
+                    z_piso_e = float(elem.get('z_base', 0.0))
+                    z_teto_e = z_piso_e + float(elem.get('pe_direito', 3.0))
+                    peit_val = float(elem.get('Peitoril', 0.0))
+                    alt_val = float(elem.get('Altura', 2.10))
+                    z_inf = z_piso_e + peit_val
+                    z_sup = min(z_teto_e, z_inf + alt_val)
+                    larg_v = min(2.60, float(elem.get('Largura', 0.90)))
+
+                    p1_v = elem.get('p1_vao', (elem['x'] - larg_v / 2.0, elem['y']))
+                    p2_v = elem.get('p2_vao', (elem['x'] + larg_v / 2.0, elem['y']))
+
+                    # Calcula extensão da Verga/Contraverga (+30cm para cada lado, parando antes se a parede acabar) e espessura da parede
+                    p1_ext, p2_ext, _, _, offset_norm = calcular_extensao_verga_na_parede(
+                        p1_v, p2_v, z_piso_e, paredes_filtradas, max_ext=0.30
+                    )
+
+                    # 2.1. Quadro do Vão (Porta ou Janela)
                     quadro_x = [p1_v[0], p2_v[0], p2_v[0], p1_v[0], p1_v[0], None]
                     quadro_y = [p1_v[1], p2_v[1], p2_v[1], p1_v[1], p1_v[1], None]
                     quadro_z = [z_inf,   z_inf,   z_sup,   z_sup,   z_inf,   None]
@@ -3279,36 +3422,98 @@ with tab_bim:
                         jy_jan.extend(quadro_y)
                         jz_jan.extend(quadro_z)
 
-                    # 2. Preenche a parede 3D Raio-X ABAIXO DO PEITORIL (se Peitoril > 0)
-                    if z_inf > z_piso_e + 0.05:
-                        idx_v = len(mesh_x)
-                        mesh_x.extend([p1_v[0], p2_v[0], p2_v[0], p1_v[0]])
-                        mesh_y.extend([p1_v[1], p2_v[1], p2_v[1], p1_v[1]])
-                        mesh_z.extend([z_piso_e, z_piso_e, z_inf, z_inf])
-                        mesh_i.extend([idx_v, idx_v])
-                        mesh_j.extend([idx_v + 1, idx_v + 2])
-                        mesh_k.extend([idx_v + 2, idx_v + 3])
+                    # 2.2. CONTRAVERGA (10cm abaixo do peitoril, avançando até 30cm para cada lado) + PAREDE ABAIXO DA JANELA
+                    if elem.get('Subtipo') == 'Janela' and peit_val >= 0.15:
+                        z_base_cv = max(z_piso_e, z_inf - ALT_VERGA)
+                        # Desenha Contraverga de 10cm (de p1_ext até p2_ext)
+                        adicionar_bloco_duplo_parede_3d(
+                            p1_ext, p2_ext, z_base_cv, z_inf, offset_norm,
+                            vg_mesh_x, vg_mesh_y, vg_mesh_z, vg_mesh_i, vg_mesh_j, vg_mesh_k,
+                            vg_wire_x, vg_wire_y, vg_wire_z
+                        )
+                        # Desenha Parede abaixo da Contraverga (do piso até z_base_cv)
+                        if z_base_cv > z_piso_e + 0.02:
+                            adicionar_bloco_duplo_parede_3d(
+                                p1_v, p2_v, z_piso_e, z_base_cv, offset_norm,
+                                mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k,
+                                wx_topo, wy_topo, wz_topo
+                            )
+                    elif z_inf > z_piso_e + 0.02:
+                        # Caso seja porta com soleira elevada
+                        adicionar_bloco_duplo_parede_3d(
+                            p1_v, p2_v, z_piso_e, z_inf, offset_norm,
+                            mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k,
+                            wx_topo, wy_topo, wz_topo
+                        )
 
-                    # 3. Preenche a parede 3D Raio-X ACIMA DA PORTA/JANELA (Verga até o teto)
-                    if z_sup < z_teto_e - 0.05:
-                        idx_v2 = len(mesh_x)
-                        mesh_x.extend([p1_v[0], p2_v[0], p2_v[0], p1_v[0]])
-                        mesh_y.extend([p1_v[1], p2_v[1], p2_v[1], p1_v[1]])
-                        mesh_z.extend([z_sup, z_sup, z_teto_e, z_teto_e])
-                        mesh_i.extend([idx_v2, idx_v2])
-                        mesh_j.extend([idx_v2 + 1, idx_v2 + 2])
-                        mesh_k.extend([idx_v2 + 2, idx_v2 + 3])
+                    # 2.3. VERGA SUPERIOR (10cm acima de Portas e Janelas, avançando até 30cm para cada lado) + PAREDE ACIMA DA VERGA
+                    if z_sup < z_teto_e - 0.02:
+                        z_topo_vg = min(z_teto_e, z_sup + ALT_VERGA)
+                        # Desenha Verga Superior de 10cm (de p1_ext até p2_ext)
+                        adicionar_bloco_duplo_parede_3d(
+                            p1_ext, p2_ext, z_sup, z_topo_vg, offset_norm,
+                            vg_mesh_x, vg_mesh_y, vg_mesh_z, vg_mesh_i, vg_mesh_j, vg_mesh_k,
+                            vg_wire_x, vg_wire_y, vg_wire_z
+                        )
+                        # Desenha Parede acima da Verga até o teto/laje (de z_topo_vg até z_teto_e)
+                        if z_teto_e > z_topo_vg + 0.02:
+                            adicionar_bloco_duplo_parede_3d(
+                                p1_v, p2_v, z_topo_vg, z_teto_e, offset_norm,
+                                mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k,
+                                wx_topo, wy_topo, wz_topo
+                            )
+
+            # ADICIONA AS PAREDES COMPLETAS (INCLUINDO PEITORIL E ACIMA DE PORTAS/JANELAS) AO GRÁFICO 3D
+            if mesh_x:
+                fig.add_trace(go.Mesh3d(
+                    x=mesh_x, y=mesh_y, z=mesh_z,
+                    i=mesh_i, j=mesh_j, k=mesh_k,
+                    color='#94a3b8', opacity=0.22,
+                    name='🏢 Paredes 3D (Faces Raio-X)',
+                    legendgroup='paredes_3d', showlegend=True, hoverinfo='skip'
+                ))
+            if wx_base:
+                fig.add_trace(go.Scatter3d(
+                    x=wx_base, y=wy_base, z=wz_base, mode='lines',
+                    line=dict(color='#1e293b', width=3.5),
+                    name='📐 Contorno das Paredes (Base)',
+                    legendgroup='paredes_base', showlegend=True, hoverinfo='skip'
+                ))
+            if wx_topo:
+                fig.add_trace(go.Scatter3d(
+                    x=wx_topo, y=wy_topo, z=wz_topo, mode='lines',
+                    line=dict(color='rgba(71, 85, 105, 0.50)', width=1.5),
+                    name='🏢 Paredes 3D (Wireframe Superior)',
+                    legendgroup='paredes_wire', showlegend=True, hoverinfo='skip'
+                ))
+
+            # ADICIONA AS VERGAS E CONTRAVERGAS (10cm x +30cm) EM DESTAQUE ESTRUTURAL
+            if vg_mesh_x:
+                fig.add_trace(go.Mesh3d(
+                    x=vg_mesh_x, y=vg_mesh_y, z=vg_mesh_z,
+                    i=vg_mesh_i, j=vg_mesh_j, k=vg_mesh_k,
+                    color='#475569', opacity=0.55,
+                    name='🧱 Vergas e Contravergas (10cm | +30cm)',
+                    legendgroup='vergas_3d', showlegend=True, hoverinfo='skip'
+                ))
+            if vg_wire_x:
+                fig.add_trace(go.Scatter3d(
+                    x=vg_wire_x, y=vg_wire_y, z=vg_wire_z, mode='lines',
+                    line=dict(color='#334155', width=2.0),
+                    name='🧱 Vergas e Contravergas (Arestas)',
+                    legendgroup='vergas_3d', showlegend=False, hoverinfo='skip'
+                ))
 
             if px_porta:
                 fig.add_trace(go.Scatter3d(
                     x=px_porta, y=py_porta, z=pz_porta, mode='lines',
-                    line=dict(color='#d97706', width=3),
+                    line=dict(color='#d97706', width=3.5),
                     name='🚪 Vãos de Porta (3D)', legendgroup='portas'
                 ))
             if jx_jan:
                 fig.add_trace(go.Scatter3d(
                     x=jx_jan, y=jy_jan, z=jz_jan, mode='lines',
-                    line=dict(color='#0284c7', width=3),
+                    line=dict(color='#0284c7', width=3.5),
                     name='🪟 Vãos de Janela (3D)', legendgroup='janelas'
                 ))
             if ex_est:
