@@ -891,22 +891,24 @@ def distancia_ponto_segmento_2d(px, py, x1, y1, x2, y2):
     t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
     return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
 
-def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max_ext=0.30):
+def analisar_parede_hospedeira_e_verga(p1_vao, p2_vao, z_base, paredes_lista, max_ext=0.30):
     """
-    Calcula quanto a Verga/Contraverga pode avançar além de p1_vao e p2_vao (até 30cm para cada lado),
-    interrompendo antes caso a parede acabe ou dobre em uma quina antes dos 30cm.
-    Também retorna a espessura real da parede (vetor normal nx, ny) para desenhar as duas faces em 3D.
+    Verifica se existe uma parede REAL da layer de Paredes colinear ao vão (p1_vao, p2_vao).
+    - Se NÃO existir parede real no local, retorna encontrou_parede=False (não cria parede nem verga fantasma).
+    - Se existir, alinha o vão exatamente nas duas faces da parede e calcula o avanço da
+      Verga e Contraverga (até 30cm para cada lado, parando antes se a parede acabar ou dobrar).
     """
     vx, vy = p2_vao[0] - p1_vao[0], p2_vao[1] - p1_vao[1]
     comp_vao = math.hypot(vx, vy)
-    if comp_vao < 1e-4:
-        return p1_vao, p2_vao, 0.0, 0.0, (0.0, 0.15)
+    if comp_vao < 0.20 or not paredes_lista:
+        return p1_vao, p2_vao, p1_vao, p2_vao, (-0.075, 0.075), (0.0, 1.0), False
+
     ux, uy = vx / comp_vao, vy / comp_vao
     nx, ny = -uy, ux
 
+    offsets_perp = []
     avan_esq, avan_dir = 0.0, 0.0
-    espessura_detectada = 0.15
-    encontrou_parede_colinear = False
+    encontrou_parede = False
 
     for seg in paredes_lista:
         w1, w2 = seg[0], seg[1]
@@ -914,99 +916,177 @@ def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max
             continue
         wx, wy = w2[0] - w1[0], w2[1] - w1[1]
         w_len = math.hypot(wx, wy)
-        if w_len < 0.08:
+        if w_len < 0.12:
             continue
         wux, wuy = wx / w_len, wy / w_len
-        alinhamento = abs(ux * wux + uy * wuy)
+        if abs(ux * wux + uy * wuy) < 0.88:
+            continue
 
-        # Parede alinhada com o vão (paralela)
-        if alinhamento >= 0.85:
-            # Distância perpendicular entre o eixo do vão e a face da parede
-            dist_perp = abs((w1[0] - p1_vao[0]) * nx + (w1[1] - p1_vao[1]) * ny)
-            if dist_perp <= 0.35:
-                encontrou_parede_colinear = True
-                if 0.05 <= dist_perp <= 0.25:
-                    espessura_detectada = max(0.12, min(0.25, dist_perp * 2.0))
-                # Projeção dos pontos da parede ao longo do eixo do vão (origem em p1_vao)
-                s1 = (w1[0] - p1_vao[0]) * ux + (w1[1] - p1_vao[1]) * uy
-                s2 = (w2[0] - p1_vao[0]) * ux + (w2[1] - p1_vao[1]) * uy
-                s_min, s_max = min(s1, s2), max(s1, s2)
-                # Verifica comprimento de parede disponível à esquerda de p1_vao (s <= 0)
-                if s_max >= -0.10 and s_min < 0.0:
-                    avan_esq = max(avan_esq, min(max_ext, abs(s_min)))
-                # Verifica comprimento de parede disponível à direita de p2_vao (s >= comp_vao)
-                if s_min <= comp_vao + 0.10 and s_max > comp_vao:
-                    avan_dir = max(avan_dir, min(max_ext, s_max - comp_vao))
+        # Distância perpendicular com sinal em relação a p1_vao
+        d_perp = (w1[0] - p1_vao[0]) * nx + (w1[1] - p1_vao[1]) * ny
+        if abs(d_perp) > 0.28:
+            continue
 
-    if not encontrou_parede_colinear:
-        avan_esq, avan_dir = max_ext, max_ext
+        # Projeção longitudinal do segmento de parede ao longo do vão [0, comp_vao]
+        s1 = (w1[0] - p1_vao[0]) * ux + (w1[1] - p1_vao[1]) * uy
+        s2 = (w2[0] - p1_vao[0]) * ux + (w2[1] - p1_vao[1]) * uy
+        s_min, s_max = min(s1, s2), max(s1, s2)
+
+        # Só considera parede hospedeira se ela estiver encostada ou sobreposta ao vão (folga <= 25cm)
+        if s_max < -0.25 or s_min > comp_vao + 0.25:
+            continue
+
+        encontrou_parede = True
+        offsets_perp.append(d_perp)
+
+        # Quanto a parede avança continuamente à esquerda de p1_vao (s < 0)
+        if s_max >= -0.15 and s_min < 0.0:
+            avan_esq = max(avan_esq, min(max_ext, abs(s_min)))
+        # Quanto a parede avança continuamente à direita de p2_vao (s > comp_vao)
+        if s_min <= comp_vao + 0.15 and s_max > comp_vao:
+            avan_dir = max(avan_dir, min(max_ext, s_max - comp_vao))
+
+    if not encontrou_parede:
+        return p1_vao, p2_vao, p1_vao, p2_vao, (-0.075, 0.075), (nx, ny), False
+
+    d_min = min(offsets_perp)
+    d_max = max(offsets_perp)
+    if abs(d_max - d_min) < 0.06:
+        d_med = (d_min + d_max) / 2.0
+        d_min, d_max = d_med - 0.075, d_med + 0.075
+    else:
+        d_med = (d_min + d_max) / 2.0
+        d_min, d_max = d_min - d_med, d_max - d_med
+        # Centraliza p1_vao e p2_vao exatamente no eixo central entre as duas faces da parede
+        p1_vao = (p1_vao[0] + nx * d_med, p1_vao[1] + ny * d_med)
+        p2_vao = (p2_vao[0] + nx * d_med, p2_vao[1] + ny * d_med)
 
     p1_ext = (p1_vao[0] - ux * avan_esq, p1_vao[1] - uy * avan_esq)
     p2_ext = (p2_vao[0] + ux * avan_dir, p2_vao[1] + uy * avan_dir)
-    return p1_ext, p2_ext, round(avan_esq, 3), round(avan_dir, 3), (nx * (espessura_detectada / 2.0), ny * (espessura_detectada / 2.0))
+    return p1_vao, p2_vao, p1_ext, p2_ext, (d_min, d_max), (nx, ny), True
 
-def detectar_vaos_pelos_batentes_das_paredes(paredes_lista, z_base, pe_direito, soleira_p, alt_p, peit_j, alt_j):
+def extrair_geometria_esquadria_dxf(entidade_insert, paredes_andar, z_base):
     """
-    Detecta automaticamente os vãos de portas e janelas diretamente pelos batentes/bonecas
-    (pequenos segmentos transversais de 10cm a 30cm onde a parede dupla é interrompida),
-    garantindo que todos os vãos apareçam em 3D mesmo ao abrir apenas o arquivo .bim!
+    Extrai a posição, largura e orientação real de Portas e Janelas do DXF:
+    - Para Portas (com ARC): usa o centro do arco (dobradiça) e o raio alinhado com a parede,
+      ignorando a folha aberta a 90° para não criar parede perpendicular no meio do cômodo.
+    - Para Janelas: alinha o eixo principal da janela com a parede colinear mais próxima.
     """
-    batentes = []
-    for p1, p2 in paredes_lista:
-        if abs(p1[2] - z_base) > 0.6:
-            continue
-        comp = dist_2d(p1, p2)
-        if 0.09 <= comp <= 0.32:
-            mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
-            dx, dy = (p2[0] - p1[0]) / comp, (p2[1] - p1[1]) / comp
-            batentes.append({"mx": mx, "my": my, "dx": dx, "dy": dy, "esp": comp, "usado": False})
+    linhas_internas = []
+    arcos_internos = []
 
-    vaos_detectados = []
-    for i in range(len(batentes)):
-        if batentes[i]["usado"]:
-            continue
-        b1 = batentes[i]
-        melhor_j = None
-        menor_d = 999.0
-        for j in range(i + 1, len(batentes)):
-            if batentes[j]["usado"]:
-                continue
-            b2 = batentes[j]
-            # Batentes paralelos entre si
-            if abs(b1["dx"] * b2["dx"] + b1["dy"] * b2["dy"]) >= 0.85:
-                vx, vy = b2["mx"] - b1["mx"], b2["my"] - b1["my"]
-                dist_v = math.hypot(vx, vy)
-                if 0.55 <= dist_v <= 2.60:
-                    # O vetor entre os dois batentes deve ser perpendicular ao próprio batente (alinhado com a parede)
-                    perp = abs((vx / dist_v) * b1["dx"] + (vy / dist_v) * b1["dy"])
-                    if perp <= 0.25 and dist_v < menor_d:
-                        menor_d = dist_v
-                        melhor_j = j
+    def coletar_entidades(ent_pai, prof=0):
+        if prof > 2:
+            return
+        try:
+            for ve in ent_pai.virtual_entities():
+                dxft = ve.dxftype()
+                if dxft == 'LINE':
+                    p1 = (float(ve.dxf.start.x), float(ve.dxf.start.y))
+                    p2 = (float(ve.dxf.end.x), float(ve.dxf.end.y))
+                    if dist_2d(p1, p2) >= 0.05:
+                        linhas_internas.append((p1, p2))
+                elif dxft == 'LWPOLYLINE':
+                    pts = list(ve.get_points(format='xy'))
+                    for i in range(len(pts) - 1):
+                        p1, p2 = (float(pts[i][0]), float(pts[i][1])), (float(pts[i+1][0]), float(pts[i+1][1]))
+                        if dist_2d(p1, p2) >= 0.05:
+                            linhas_internas.append((p1, p2))
+                    if ve.closed and len(pts) >= 3:
+                        p1, p2 = (float(pts[-1][0]), float(pts[-1][1])), (float(pts[0][0]), float(pts[0][1]))
+                        if dist_2d(p1, p2) >= 0.05:
+                            linhas_internas.append((p1, p2))
+                elif dxft == 'ARC':
+                    r = float(ve.dxf.radius)
+                    if 0.40 <= r <= 1.80:
+                        c_arc = (float(ve.dxf.center.x), float(ve.dxf.center.y))
+                        try:
+                            sp = ve.start_point
+                            ep = ve.end_point
+                            a1, a2 = (float(sp.x), float(sp.y)), (float(ep.x), float(ep.y))
+                        except Exception:
+                            ang1 = math.radians(float(ve.dxf.start_angle))
+                            ang2 = math.radians(float(ve.dxf.end_angle))
+                            a1 = (c_arc[0] + r * math.cos(ang1), c_arc[1] + r * math.sin(ang1))
+                            a2 = (c_arc[0] + r * math.cos(ang2), c_arc[1] + r * math.sin(ang2))
+                        arcos_internos.append((c_arc, r, a1, a2))
+                elif dxft == 'INSERT':
+                    coletar_entidades(ve, prof + 1)
+        except Exception:
+            pass
 
-        if melhor_j is not None:
-            b2 = batentes[melhor_j]
-            batentes[i]["usado"] = True
-            batentes[melhor_j]["usado"] = True
-            cx, cy = (b1["mx"] + b2["mx"]) / 2.0, (b1["my"] + b2["my"]) / 2.0
-            larg = round(menor_d, 2)
-            # Heurística padrão: vãos entre 0.60m e 0.98m internos costumam ser Portas; >= 1.00m ou em bordas externas costumam ser Janelas
-            eh_porta = (0.58 <= larg <= 0.98)
-            vaos_detectados.append({
-                "ID_CAD": f"VAO_AUTO_{len(vaos_detectados)+1}",
-                "Nome_Bloco": "Porta Detectada" if eh_porta else "Janela Detectada",
-                "Layer_CAD": "ALVENARIA (Vão)",
-                "Andar": "Pav 0",
-                "Tipo": "Esquadria",
-                "Subtipo": "Porta" if eh_porta else "Janela",
-                "x": round(cx, 4), "y": round(cy, 4), "z_base": z_base,
-                "pe_direito": pe_direito,
-                "p1_vao": (b1["mx"], b1["my"]),
-                "p2_vao": (b2["mx"], b2["my"]),
-                "Largura": larg,
-                "Peitoril": soleira_p if eh_porta else peit_j,
-                "Altura": alt_p if eh_porta else alt_j
-            })
-    return vaos_detectados
+    coletar_entidades(entidade_insert)
+    tem_arco_porta = len(arcos_internos) > 0
+
+    # CASO 1: Bloco de Porta com Arco de Giro (ARC)
+    if tem_arco_porta:
+        # Escolhe o maior arco de giro da porta
+        c_arc, r_arc, a1, a2 = max(arcos_internos, key=lambda x: x[1])
+        larg_porta = round(max(0.55, min(1.60, r_arc)), 2)
+
+        # Testa qual dos dois raios do arco (c_arc -> a1 ou c_arc -> a2) está alinhado com a parede (e não com a folha aberta)
+         _, _, _, _, _, _, ok1 = analisar_parede_hospedeira_e_verga(c_arc, a1, z_base, paredes_andar)
+         _, _, _, _, _, _, ok2 = analisar_parede_hospedeira_e_verga(c_arc, a2, z_base, paredes_andar)
+
+        if ok1 and not ok2:
+            p1_v, p2_v = c_arc, a1
+        elif ok2 and not ok1:
+            p1_v, p2_v = c_arc, a2
+        else:
+            # A folha aberta tem várias linhas longas paralelas a ela; o vão na parede é o raio SEM linhas da folha!
+            v1x, v1y = (a1[0] - c_arc[0]) / max(r_arc, 0.01), (a1[1] - c_arc[1]) / max(r_arc, 0.01)
+            v2x, v2y = (a2[0] - c_arc[0]) / max(r_arc, 0.01), (a2[1] - c_arc[1]) / max(r_arc, 0.01)
+            peso_folha_1, peso_folha_2 = 0.0, 0.0
+            for l1, l2 in linhas_internas:
+                comp_l = dist_2d(l1, l2)
+                if comp_l >= 0.40:
+                    lux, luy = (l2[0] - l1[0]) / comp_l, (l2[1] - l1[1]) / comp_l
+                    if abs(lux * v1x + luy * v1y) > 0.90:
+                        peso_folha_1 += comp_l
+                    if abs(lux * v2x + luy * v2y) > 0.90:
+                        peso_folha_2 += comp_l
+            p1_v, p2_v = (c_arc, a2) if peso_folha_1 >= peso_folha_2 else (c_arc, a1)
+
+        cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
+        return True, cx_f, cy_f, p1_v, p2_v, larg_porta
+
+    # CASO 2: Bloco de Janela (ou Porta sem arco) formado por linhas
+    if linhas_internas:
+        # Encontra a direção do segmento mais longo do bloco (direção longitudinal da janela)
+        seg_principal = max(linhas_internas, key=lambda s: dist_2d(s[0], s[1]))
+        comp_princ = dist_2d(seg_principal[0], seg_principal[1])
+        ux, uy = (seg_principal[1][0] - seg_principal[0][0]) / comp_princ, (seg_principal[1][1] - seg_principal[0][1]) / comp_princ
+        nx, ny = -uy, ux
+
+        todos_pts = [pt for seg in linhas_internas for pt in seg]
+        cx_m = sum(p[0] for p in todos_pts) / len(todos_pts)
+        cy_m = sum(p[1] for p in todos_pts) / len(todos_pts)
+
+        # Filtra pontos próximos ao centro para não esticar caso seja bloco agrupado
+        pts_locais = [p for p in todos_pts if math.hypot(p[0] - cx_m, p[1] - cy_m) <= 2.0]
+        if not pts_locais:
+            pts_locais = todos_pts
+
+        projs_u = [(p[0] - cx_m) * ux + (p[1] - cy_m) * uy for p in pts_locais]
+        projs_n = [(p[0] - cx_m) * nx + (p[1] - cy_m) * ny for p in pts_locais]
+        u_min, u_max = min(projs_u), max(projs_u)
+        n_med = (min(projs_n) + max(projs_n)) / 2.0
+
+        larg_jan = round(max(0.40, min(3.00, u_max - u_min)), 2)
+        u_med = (u_min + u_max) / 2.0
+        cx_f = round(cx_m + ux * u_med + nx * n_med, 4)
+        cy_f = round(cy_m + uy * u_med + ny * n_med, 4)
+        p1_v = (cx_f - ux * (larg_jan / 2.0), cy_f - uy * (larg_jan / 2.0))
+        p2_v = (cx_f + ux * (larg_jan / 2.0), cy_f + uy * (larg_jan / 2.0))
+        return False, cx_f, cy_f, p1_v, p2_v, larg_jan
+
+    # Fallback caso o bloco seja apenas um ponto
+    cx_ins, cy_ins = round(float(entidade_insert.dxf.insert.x), 4), round(float(entidade_insert.dxf.insert.y), 4)
+    rot_rad = math.radians(getattr(entidade_insert.dxf, 'rotation', 0.0))
+    larg_fb = 0.90
+    p1_v = (cx_ins - (larg_fb / 2.0) * math.cos(rot_rad), cy_ins - (larg_fb / 2.0) * math.sin(rot_rad))
+    p2_v = (cx_ins + (larg_fb / 2.0) * math.cos(rot_rad), cy_ins + (larg_fb / 2.0) * math.sin(rot_rad))
+    return False, cx_ins, cy_ins, p1_v, p2_v, larg_fb
 
 def liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx):
     """Abre os vãos de portas e janelas na matriz 2D A* para permitir a passagem dos tubos."""
@@ -1025,19 +1105,19 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
     """
     Desvia as tubulações (Elétrica, Água Fria, Água Quente e Esgoto) respeitando:
     1. O vão da Porta ou Janela;
-    2. A VERGA superior (10cm de altura acima do vão + até 30cm para cada lado);
+    2. A VERGA superior (10cm de altura acima do vão + até 30cm para cada lado na parede);
     3. A CONTRAVERGA inferior (10cm de altura abaixo do peitoril da janela + até 30cm para cada lado).
     """
     if not elementos_arq or len(linha_3d) < 2:
         return linha_3d
 
-    elems_andar = [e for e in elementos_arq if abs(e.get('z_base', 0.0) - z_base) < 0.6]
+    elems_andar = [e for e in elementos_arq if abs(e.get('z_base', 0.0) - z_base) < 0.6 and not str(e.get('ID_CAD', '')).startswith('VAO_AUTO_')]
     if not elems_andar:
         return linha_3d
 
     paredes_ctx = st.session_state.contexto_bim.get('paredes', [])
     z_teto_livre = z_base + pe_direito - 0.06
-    ALT_VERGA = 0.10  # 10 cm de altura obrigatória para Verga e Contraverga
+    ALT_VERGA = 0.10
     nova_linha = [linha_3d[0]]
 
     for i in range(len(linha_3d) - 1):
@@ -1062,33 +1142,29 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
                     larg = elem.get('Largura', 0.90)
                     p1_v = elem.get('p1_vao', (elem['x'] - larg / 2.0, elem['y']))
                     p2_v = elem.get('p2_vao', (elem['x'] + larg / 2.0, elem['y']))
-                    p1_ext, p2_ext, _, _, _ = calcular_extensao_verga_na_parede(p1_v, p2_v, z_base, paredes_ctx, max_ext=0.30)
+                    _, _, p1_ext, p2_ext, _, _, tem_parede = analisar_parede_hospedeira_e_verga(p1_v, p2_v, z_base, paredes_ctx, max_ext=0.30)
+                    if not tem_parede:
+                        continue
 
-                    # Distância ao trecho estendido (Vão + 30cm de cada lado da Verga/Contraverga)
                     dist_ext = distancia_ponto_segmento_2d(px, py, p1_ext[0], p1_ext[1], p2_ext[0], p2_ext[1])
-                    if dist_ext <= 0.28:
+                    if dist_ext <= 0.25:
                         peitoril = float(elem.get('Peitoril', 0.0))
                         altura_vao = float(elem.get('Altura', 2.10))
                         eh_janela = (elem.get('Subtipo') == 'Janela')
 
-                        # Cota inferior bloqueada (inclui os 10cm da Contraverga nas janelas)
                         z_base_contraverga = z_base + max(0.0, peitoril - ALT_VERGA) if (eh_janela and peitoril >= 0.15) else (z_base + peitoril)
-                        # Cota superior bloqueada (inclui os 10cm da Verga acima de portas e janelas)
                         z_topo_verga = z_base + peitoril + altura_vao + ALT_VERGA
 
-                        # Se o tubo estiver na faixa bloqueada [z_base_contraverga, z_topo_verga], obriga a desviar!
                         if (z_base_contraverga - 0.04) < pz < (z_topo_verga + 0.04):
                             z_acima_verga = min(z_teto_livre, z_topo_verga + 0.06)
                             z_abaixo_contraverga = max(z_base + 0.05, z_base_contraverga - 0.06)
 
                             if eh_janela and peitoril >= 0.25:
-                                # Na janela: passa abaixo da Contraverga ou acima da Verga
                                 if abs(pz - z_abaixo_contraverga) <= abs(z_acima_verga - pz):
                                     z_ajustado = z_abaixo_contraverga
                                 else:
                                     z_ajustado = z_acima_verga
                             else:
-                                # Na porta: passa acima da Verga (ou abaixo da soleira se já estiver no contrapiso)
                                 if peitoril >= 0.15 and pz <= z_base_contraverga + 0.08:
                                     z_ajustado = z_abaixo_contraverga
                                 else:
@@ -1124,13 +1200,7 @@ def contar_conexoes_na_rota(pontos):
     return j90, j45
 
 def rotear_hidro(df_bh, ctx):
-    """
-    Motor Hidrossanitário 3D com Hierarquia Real NBR 5626 & NBR 8160:
-    - Água Fria/Quente: Caixa d'Água -> Tubo de Queda -> Subsolo -> Coluna de Subida -> Prumada -> Aparelhos.
-    - Esgoto Secundário: Ralo Seco / Lavatório / Chuveiro -> Ralo Sifonado / Caixa Sifonada.
-    - Esgoto Gorduroso: Pia de Cozinha / Lava-Louça -> Caixa de Gordura [CG].
-    - Esgoto Primário: Bacia Sanitária / Cx Sifonada / Cx Gordura -> Ramal de Esgoto -> TQ -> Caixa de Inspeção [CI].
-    """
+    """Motor Hidrossanitário 3D com Hierarquia Real NBR 5626 & NBR 8160."""
     linhas_processadas = []
     if not df_bh:
         return linhas_processadas
@@ -1149,14 +1219,13 @@ def rotear_hidro(df_bh, ctx):
         if elem['Tipo'] == 'Pilar/Viga' and 'PILAR' in elem['ID_CAD'].upper():
             px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
             bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
-            liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
+    liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
 
     h_af = ctx.get('h_agua_fria', 2.2)
     h_aq = ctx.get('h_agua_quente', 1.1)
     h_viga = ctx.get('altura_viga', 0.40)
     z_subsolo_af = ctx.get('z_subsolo_af', -0.40)
 
-    # Separação dos blocos por Função BIM
     caixas_dagua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
     quedas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Fria']
     subidas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Fria']
@@ -1190,7 +1259,7 @@ def rotear_hidro(df_bh, ctx):
     peso_total_projeto = 0.0
     aparelhos_com_af = []
     for ap in df_bh:
-        if ap['Tipo_BIM'] in ['Aparelho Hidráulico', 'Conexões Hidráulicas AF'] and ap['Equipamento'] in equips_af_validos:
+        if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
             aparelhos_com_af.append(ap)
             f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
             if f_eq.any():
@@ -1199,9 +1268,6 @@ def rotear_hidro(df_bh, ctx):
 
     historico_no_af = {}
 
-    # =========================================================================
-    # ETAPA 1 E 2: CAIXA D'ÁGUA -> TUBO DE QUEDA AF -> SUBSOLO -> COLUNA DE SUBIDA AF
-    # =========================================================================
     alvos_descida_inicial = quedas_af if quedas_af else prumadas_af
     if caixas_dagua and alvos_descida_inicial:
         for tq_af in alvos_descida_inicial:
@@ -1276,11 +1342,7 @@ def rotear_hidro(df_bh, ctx):
                 'j90': hist_s['j90'] + j90_p, 'tes': hist_s['tes'] + 1
             }
 
-    # =========================================================================
-    # ETAPA 3: RAMAIS DE ÁGUA FRIA ATÉ OS APARELHOS (COM FALLBACK AUTOMÁTICO)
-    # =========================================================================
     fontes_distribuicao_af = prumadas_af if prumadas_af else (subidas_af if subidas_af else (quedas_af if quedas_af else caixas_dagua))
-    # Se o usuário ainda não definiu nenhuma Prumada/Caixa d'Água na tabela, usa o 1º ponto de água como alimentação principal
     if not fontes_distribuicao_af and aparelhos_com_af:
         fontes_distribuicao_af = [aparelhos_com_af[0]]
 
@@ -1321,9 +1383,6 @@ def rotear_hidro(df_bh, ctx):
                     'tes_acumulados': hist_f['tes'] + 1
                 })
 
-    # =========================================================================
-    # ETAPA 4: ÁGUA QUENTE (BOILER -> QUEDA AQ -> SUBIDA AQ -> APARELHOS)
-    # =========================================================================
     fontes_aq = subidas_aq if subidas_aq else (quedas_aq if quedas_aq else (boilers_aq if boilers_aq else fontes_distribuicao_af))
     if quedas_aq and subidas_aq:
         for sub_q in subidas_aq:
@@ -1338,7 +1397,7 @@ def rotear_hidro(df_bh, ctx):
 
     if fontes_aq:
         for ap in df_bh:
-            if ap['Tipo_BIM'] in ['Aparelho Hidráulico', 'Conexões Hidráulicas AQ'] and ap['Equipamento'] in equips_aq_validos:
+            if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_aq_validos:
                 fonte_q = min(fontes_aq, key=lambda f: dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
                 if fonte_q['ID_CAD'] == ap['ID_CAD']:
                     continue
@@ -1356,15 +1415,8 @@ def rotear_hidro(df_bh, ctx):
                         'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
                     })
 
-    # =========================================================================
-    # ETAPA 5: HIERARQUIA REAL DE ESGOTO (NBR 8160)
-    # - Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro) -> Ralo Sifonado / Caixa Sifonada
-    # - Cozinha (Pia / Lava-Louça) -> Caixa de Gordura
-    # - Esgoto Primário (Bacia Sanitária, Ralo Sifonado, Cx Gordura) -> Ramal de Esgoto -> TQ -> Caixa de Inspeção
-    # =========================================================================
     alvos_finais_esg = prumadas_esg if prumadas_esg else caixas_inspecao
 
-    # Identifica Caixas Sifonadas/Ralos Sifonados e Caixas de Gordura presentes na planta
     caixas_sifonadas = [
         b for b in df_bh
         if "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', '')) or "SIFONAD" in normalizar_texto_bim(b.get('Nome_Bloco', ''))
@@ -1374,7 +1426,6 @@ def rotear_hidro(df_bh, ctx):
         if "GORDURA" in normalizar_texto_bim(b.get('Equipamento', '')) or "[CG]" in str(b.get('Nome_Bloco', '')).upper()
     ]
 
-    # 5.1. Tubos de Queda (TQ), Ventilação e Subcoletores até Caixa de Inspeção
     if prumadas_esg:
         z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
         for prum_e in prumadas_esg:
@@ -1405,8 +1456,7 @@ def rotear_hidro(df_bh, ctx):
                         'tipo': f"Subcoletor Esgoto -> {ci_prox['Nome_Bloco']}", 'diametro': 100, 'declividade_pct': 1.0
                     })
 
-    # 5.2. Roteamento de Aparelhos e Ramais de Descarga respeitando a hierarquia NBR 8160
-    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Conexões Tubulação Esgoto']]
+    origens_descarga = [b for b in df_bh if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga']]
     uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
 
     for ap in origens_descarga:
@@ -1430,21 +1480,18 @@ def rotear_hidro(df_bh, ctx):
         alvo_escolhido = None
         cor_ramal = 'brown'
 
-        # Regra 1: Ralo Seco, Lavatório e Chuveiro vão para a Caixa Sifonada / Ralo Sifonado mais próximo (até 5m)
         if eh_secundario_banheiro and caixas_sifonadas:
             cs_cand = [cs for cs in caixas_sifonadas if cs['ID_CAD'] != ap['ID_CAD'] and abs(cs['z_base'] - ap['z_base']) < 0.5 and dist_2d((ap['x'], ap['y']), (cs['x'], cs['y'])) <= 5.0]
             if cs_cand:
                 alvo_escolhido = min(cs_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
-                cor_ramal = '#cd853f' # Marrom claro (Ramal de Descarga Secundário -> Caixa Sifonada)
+                cor_ramal = '#cd853f'
 
-        # Regra 2: Pia de Cozinha vai para a Caixa de Gordura mais próxima
         elif eh_cozinha and caixas_gordura:
             cg_cand = [cg for cg in caixas_gordura if cg['ID_CAD'] != ap['ID_CAD'] and abs(cg['z_base'] - ap['z_base']) < 0.5]
             if cg_cand:
                 alvo_escolhido = min(cg_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
-                cor_ramal = '#b8860b' # Ocre (Ramal de Descarga Cozinha -> Caixa de Gordura)
+                cor_ramal = '#b8860b'
 
-        # Regra 3: Bacia Sanitária, Caixa Sifonada e Caixa de Gordura vão para o Ramal de Esgoto -> TQ -> Caixa de Inspeção
         if alvo_escolhido is None:
             ramais_esg_andar = [re_b for re_b in ramais_esgoto if re_b['ID_CAD'] != ap['ID_CAD'] and abs(re_b['z_base'] - ap['z_base']) < 0.5]
             opcoes_primario = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
@@ -1471,7 +1518,6 @@ def rotear_hidro(df_bh, ctx):
                 pt_ant = (px_r, py_r)
             linha_rd.append((alvo_escolhido['x'], alvo_escolhido['y'], z_inicio_rd - (dist_ac * declividade_rd)))
 
-            # Define o rótulo claro na legenda 3D conforme a função real do bloco!
             if ap['Tipo_BIM'] == 'Ramal de Descarga':
                 rotulo_tipo = f"Ramal de Descarga ({ap['ID_CAD']}) -> {alvo_escolhido['Nome_Bloco']}"
             elif eh_secundario_banheiro and alvo_escolhido in caixas_sifonadas:
@@ -1486,7 +1532,6 @@ def rotear_hidro(df_bh, ctx):
                 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_escolhido['ID_CAD']
             })
 
-    # 5.3. Ramais de Esgoto (Coletor Horizontal) -> Tubo de Queda (TQ) ou Caixa de Inspeção
     if ramais_esgoto and alvos_finais_esg:
         for re_b in ramais_esgoto:
             f_eq_re = st.session_state.bib_hidro['Equipamento'] == re_b['Equipamento']
@@ -1534,7 +1579,7 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
         if elem['Tipo'] == 'Pilar/Viga' and 'PILAR' in elem['ID_CAD'].upper():
             px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
             bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
-            liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
+    liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
 
     if evitar_linhas:
         for linha in evitar_linhas:
@@ -1591,7 +1636,6 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
         caixas = {b['ID_CAD']: b for b in df_be if 'Caixa' in b['Tipo_BIM']}
         controle_lum = {lum_id: [] for lum_id in luminarias.keys()}
 
-        # Separa caixas TUE (circuito exclusivo direto ao QDG) de caixas TUG (roteadas em cascata por andar)
         caixas_tug_por_andar = {}
         for cx_id, cx_dados in caixas.items():
             qg_prox = min(quadros, key=lambda q: abs(q['z_base'] - cx_dados['z_base']) * 10 + dist_2d((cx_dados['x'], cx_dados['y']), (q['x'], q['y'])))
@@ -1610,7 +1654,6 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
                     if l in controle_lum:
                         controle_lum[l].append(cx_id)
 
-        # Roteamento em Cascata para TUGs do mesmo andar (até 4 caixas por tronco)
         for andar_k, lista_cxs in caixas_tug_por_andar.items():
             qg_andar = min(quadros, key=lambda q: abs(q['z_base'] - lista_cxs[0]['z_base']) * 10)
             nao_visitadas = lista_cxs.copy()
@@ -1621,12 +1664,10 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
                 achar_caminho(prox_cx, atual, 'yellow' if evitar_linhas else 'green', 'F N T', prox_cx['ID_CAD'])
                 nao_visitadas.remove(prox_cx)
                 cont_cascata += 1
-                # A cada 4 caixas em série, inicia um novo tronco a partir do QDG
                 atual = qg_andar if cont_cascata >= 4 else prox_cx
                 if cont_cascata >= 4:
                     cont_cascata = 0
 
-        # Roteamento de Luminárias + Interruptores Simples, Three-Way (2R) e Four-Way (4R)
         for lum_id, lum in luminarias.items():
             qg_prox = min(quadros, key=lambda q: abs(q['z_base'] - lum['z_base']) * 10 + dist_2d((lum['x'], lum['y']), (q['x'], q['y'])))
             achar_caminho(lum, qg_prox, 'cyan', 'N T', lum_id)
@@ -1687,7 +1728,7 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
 
         luvas = int(comp_m // 3.0) + 1
 
-        if 'Água Fria' in tipo or 'Barrilete' in tipo:
+        if 'Água Fria' in tipo or 'Barrilete' in tipo or 'AF' in tipo:
             add_item(bom_af, f"Tubo PVC Soldável Marrom DN {dn}mm", "m", round(comp_m * 1.05, 1))
             if joelhos_90 > 0: add_item(bom_af, f"Joelho 90° Soldável {dn}mm", "un", joelhos_90)
             if joelhos_45 > 0: add_item(bom_af, f"Joelho 45° Soldável {dn}mm", "un", joelhos_45)
@@ -1696,7 +1737,7 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
             if 'Barrilete' not in tipo:
                 add_item(bom_af, f"Joelho 90° c/ Bucha de Latão {dn}mm x 1/2\"", "un", 1)
                 add_item(bom_af, f"Registro de Pressão / Gaveta {dn}mm", "un", 1)
-        elif 'Água Quente' in tipo or 'Gás' in tipo:
+        elif 'Água Quente' in tipo or 'AQ' in tipo or 'Gás' in tipo:
             mat_nome = "Cobre/PEX Gás (NBR 15526)" if 'Gás' in tipo else "CPVC/PPR Água Quente"
             add_item(bom_aq, f"Tubo {mat_nome} DN {dn}mm", "m", round(comp_m * 1.05, 1))
             if joelhos_90 > 0: add_item(bom_aq, f"Joelho 90° {mat_nome} {dn}mm", "un", joelhos_90)
@@ -2094,14 +2135,12 @@ import unicodedata
 import difflib
 
 def normalizar_texto_bim(txt):
-    """Remove acentos, caracteres especiais e padroniza para maiúsculas."""
     if not txt:
         return ""
     s = "".join(c for c in unicodedata.normalize("NFD", str(txt)) if unicodedata.category(c) != "Mn")
     return s.upper().replace("_", " ").replace("-", " ").strip()
 
 def extrair_handles_bloco_dinamico(obj_dxf):
-    """Extrai todos os handles de referência (códigos 1005, 340, 341, 330) de XDATA e DXFTagStorage."""
     handles = []
     if obj_dxf is None:
         return handles
@@ -2123,20 +2162,12 @@ def extrair_handles_bloco_dinamico(obj_dxf):
     return handles
 
 def extrair_nome_real_bloco_dxf(doc, entidade_insert):
-    """
-    Descobre o nome verdadeiro de blocos dinâmicos anônimos do AutoCAD (ex: *U166 -> 'Tê'):
-    1. Inspeciona XDATA (AcDbBlockRepBTag) e Extension Dictionary (AcDbBlockRepresentation / DXFTagStorage)
-       no INSERT e no BLOCK_RECORD para recuperar o nome original do bloco no AutoCAD;
-    2. Inspeciona atributos, descrição e textos internos do bloco;
-    3. Caso não possua ponteiro dinâmico, verifica textos colados ao símbolo na planta (ex: 'T', 'C', 'RS', 'B.S.').
-    """
     nome_bruto = str(entidade_insert.dxf.name)
     layer_nome = str(entidade_insert.dxf.layer)
 
     if not nome_bruto.startswith("*U"):
         return nome_bruto
 
-    # 1. Busca o nome original do Bloco Dinâmico via Handles (AcDbBlockRepBTag / Extension Dict)
     handles_testar = []
     handles_testar.extend(extrair_handles_bloco_dinamico(entidade_insert))
 
@@ -2175,7 +2206,6 @@ def extrair_nome_real_bloco_dxf(doc, entidade_insert):
         except Exception:
             pass
 
-    # 2. Vasculha atributos e textos internos da definição do bloco
     textos_encontrados = []
     try:
         for att in entidade_insert.attribs:
@@ -2208,12 +2238,6 @@ def extrair_nome_real_bloco_dxf(doc, entidade_insert):
     return f"{nome_bruto} [{layer_nome}]"
 
 def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
-    """
-    Associa automaticamente Nome_Bloco + Layer ao Eq. (Biblioteca), Função BIM e altura z_relativo:
-    - Conexões com múltiplos diâmetros (Tê, Curva, Joelho, Junção) assumem 25mm para Água Fria e 22mm para Água Quente;
-    - Atribui automaticamente as novas funções 'Conexões Hidráulicas AF', 'Conexões Hidráulicas AQ' e 'Conexões Tubulação Esgoto'.
-    """
-    # Remove o sufixo (*U166) ou [Layer] para analisar o nome limpo do bloco primeiro
     nome_sem_parenteses = str(nome_bloco).split("(")[0].split("[")[0].strip()
     nome_norm = normalizar_texto_bim(nome_sem_parenteses)
     layer_norm = normalizar_texto_bim(layer_bloco)
@@ -2233,13 +2257,11 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
                 return op_real
         return opcoes_equip[0] if opcoes_equip else ""
 
-    # 1. TRATAMENTO PRIORITÁRIO DE CONEXÕES (TÊ, CURVA, JOELHO, JUNÇÃO Y, LUVA) -> BASE 25mm (AF) E 22mm (AQ)
     eh_te = (nome_norm in ["TE", "T", "TE 90", "TE SOLDAVEL"] or "TE" in palavras_alvo or nome_norm.startswith("TE "))
     eh_curva = (nome_norm in ["CURVA", "C", "CURVA 90", "CURVA 45"] or "CURVA" in palavras_alvo)
     eh_joelho = (nome_norm in ["JOELHO", "J", "JOELHO 90", "JOELHO 45", "COTOVELO"] or "JOELHO" in palavras_alvo)
     eh_juncao = (nome_norm in ["JUNCAO", "Y", "JUNCAO Y", "JUNCAO 45"] or "JUNCAO" in palavras_alvo)
 
-    # Identifica se o próprio nome do bloco já especificou um diâmetro explícito (ex: 32mm, 40mm, 50mm, 100mm)
     dn_explicito = None
     for dn_cand in ["100", "75", "50", "40", "32", "28", "25", "22", "20"]:
         if f"{dn_cand}MM" in nome_norm.replace(" ", "") or f" {dn_cand} " in f" {nome_norm} ":
@@ -2287,7 +2309,6 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
             dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
             return "Conexões Tubulação Esgoto", buscar_na_bib(f"Junção Y Esgoto {dn_uso}mm"), 0.0
 
-    # 2. TUBULAÇÕES DE PASSAGEM (PARA INDICAR TRAJETO E ALTURA ESPECÍFICA)
     if any(k in nome_norm for k in ["TUBULACAO", "TUBO"]) and not any(k in nome_norm for k in ["QUEDA", "SUBIDA"]):
         if eh_aq:
             dn_uso = "28" if "28" in nome_norm else "22"
@@ -2301,7 +2322,6 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
 
     altura_cx_padrao = float(st.session_state.get("altura_caixa_3d", 1.50))
 
-    # 3. REGRAS DE APARELHOS, PRUMADAS, SUBIDAS, QUEDAS E CAIXAS (ORDEM DE PRIORIDADE CORRIGIDA)
     regras_hidro = [
         (["CAIXA DE INSPECAO", "CX INSPECAO", "INSPECAO", "CI", "DESTINO ESGOTO", "FOSSA"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Inspeção", -0.50),
         (["CAIXA DE GORDURA", "CX GORDURA", "GORDURA", "CG"], "Aparelho Hidráulico", "Caixa de Gordura", 0.00),
@@ -2368,9 +2388,6 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
     return "Aparelho Hidráulico", (opcoes_equip[0] if opcoes_equip else ""), 0.5
 
 def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, tensao_padrao, opcoes_elet):
-    """
-    Associa automaticamente Nome_Bloco + Layer ao Tipo_BIM, Carga (Biblioteca), Tensão, Amperagem e Altura Z.
-    """
     alvo = normalizar_texto_bim(f"{nome_bloco} {layer_bloco}")
     opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_elet}
 
@@ -2383,30 +2400,23 @@ def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, 
 
     if any(k in alvo for k in ["QUADRO", "QDG", "QDL", "QD "]):
         return "Quadro Geral", buscar_el("Tomada Uso Geral (TUG)"), 0, 0, "10A", tensao_padrao, 1.5
-
     if any(k in alvo for k in ["CHUVEIRO", "DUCHA ELETRICA", "TORNEIRA ELETRICA"]):
         return "Caixa 4x2", buscar_el("Chuveiro Elétrico 7500W"), 1, 0, "20A", 220, 2.1
-
     if any(k in alvo for k in ["COOKTOP", "INDUCAO", "FOGAO"]):
         return "Caixa 4x2", buscar_el("Cooktop Indução 7000W"), 1, 0, "20A", 220, 0.6
-
     if any(k in alvo for k in ["AR CONDICIONADO", "SPLIT", "EVAPORADORA", "AC "]):
         return "Caixa 4x2", buscar_el("Ar-Condicionado 12000 BTU"), 1, 0, "20A", 220, 2.2
-
     if any(k in alvo for k in ["FORNO", "MICROONDAS", "AIR FRYER", "COZINHA", "BANCADA", "SERVICO", "LAVANDERIA"]):
         return "Caixa 4x2", buscar_el("Tomada Cozinha/Serviço (TUG)"), 1, 0, "20A", tensao_padrao, 1.1
-
     if any(k in alvo for k in ["INTERRUPTOR", "INT ", "TECLA", "PARALELO", "3W", "4W"]):
         qtd_int = 2 if ("DUPLO" in alvo or "2S" in alvo) else (3 if ("TRIPLO" in alvo or "3S" in alvo) else 1)
         qtd_tom = 1 if ("CONJ" in alvo or "TOM" in alvo) else 0
         return "Caixa 4x2", buscar_el("Lâmpada LED 15W"), qtd_tom, qtd_int, "10A", tensao_padrao, 1.1
-
     if any(k in alvo for k in ["TOMADA", "TUG", "TUE", "CX ", "4X2", "4X4", "PONTO FORCA"]):
         tb = "Caixa 4x4" if "4X4" in alvo else "Caixa 4x2"
         z_r = 0.3 if "BAIXA" in alvo else (2.1 if "ALTA" in alvo else 0.6)
         qtd_t = 2 if ("DUPLA" in alvo or "2T" in alvo) else 1
         return tb, buscar_el("Tomada Uso Geral (TUG)"), qtd_t, 0, "10A", tensao_padrao, z_r
-
     if any(k in alvo for k in ["LUMINARIA", "LAMPADA", "LUZ", "SPOT", "PLAFON", "PENDENTE", "LED", "LUSTRE", "TETO", "ILUM"]):
         return "Luminária", buscar_el("Lâmpada LED 15W"), 0, 0, "10A", tensao_padrao, pe_direito
 
@@ -2425,18 +2435,12 @@ if "resumo_ultimo_sync" not in st.session_state:
     st.session_state["resumo_ultimo_sync"] = ""
 
 def salvar_edicoes_na_memoria(df_elet, df_hidro):
-    """Salva continuamente na sessão todas as edições feitas pelo usuário nas tabelas."""
     if df_elet is not None and not df_elet.empty:
         st.session_state["memoria_edicoes_elet"] = df_elet.to_dict("records")
     if df_hidro is not None and not df_hidro.empty:
         st.session_state["memoria_edicoes_hidro"] = df_hidro.to_dict("records")
 
 def mesclar_blocos_com_memoria(df_novo, disciplina="hidro"):
-    """
-    Compara os blocos recém-lidos do DXF/IFC com a memória de edições anteriores:
-    - Preserva todas as escolhas manuais nos blocos inalterados ou levemente movidos;
-    - Atualiza apenas coordenadas alteradas, adiciona blocos novos e remove os excluídos.
-    """
     if df_novo is None or df_novo.empty:
         return df_novo, {"mantidos": 0, "movidos": 0, "novos": 0, "removidos": 0}
 
@@ -2455,7 +2459,6 @@ def mesclar_blocos_com_memoria(df_novo, disciplina="hidro"):
     df_mesclado = df_novo.copy()
     cont_mantidos, cont_movidos, cont_novos = 0, 0, 0
 
-    # Passagem 1: Mesma posição exata (distância < 5cm) e mesmo Andar -> Inalterado (mesmo que o ID_CAD tenha mudado a ordem)
     indices_pareados = set()
     for idx, row_n in df_mesclado.iterrows():
         andar_n = str(row_n.get("Andar", ""))
@@ -2476,7 +2479,6 @@ def mesclar_blocos_com_memoria(df_novo, disciplina="hidro"):
                     cont_mantidos += 1
                     break
 
-    # Passagem 2: Blocos que foram movidos no CAD (mesmo Nome_Bloco e Andar em um raio de até 2.0m)
     for idx, row_n in df_mesclado.iterrows():
         if idx in indices_pareados:
             continue
@@ -2519,6 +2521,12 @@ with st.sidebar:
         st.session_state.pontos_hidro = dados_bim.get("pontos_hidro", [])
         st.session_state.linhas_3d_master = dados_bim.get("linhas_3d_master", {'eletrica': [], 'hidro': []})
         st.session_state.contexto_bim = dados_bim.get("contexto_bim", {})
+        # Remove qualquer VAO_AUTO_ antigo salvo em arquivos .bim anteriores
+        if "elementos_arquitetonicos" in st.session_state.contexto_bim:
+            st.session_state.contexto_bim["elementos_arquitetonicos"] = [
+                el for el in st.session_state.contexto_bim["elementos_arquitetonicos"]
+                if not str(el.get("ID_CAD", "")).startswith("VAO_AUTO_")
+            ]
         if "bib_eletrica" in dados_bim:
             st.session_state.bib_eletrica = pd.DataFrame(dados_bim["bib_eletrica"])
         if "bib_hidro" in dados_bim:
@@ -2530,7 +2538,6 @@ with st.sidebar:
             qm = dados_bim["quantitativos_master"]
             st.session_state.quantitativos_master = {k: pd.DataFrame(v) for k, v in qm.items()}
 
-        # Restaura as memórias de edição das tabelas (ou reconstrói a partir do contexto_bim já salvo no arquivo de 138KB)
         ctx_salvo = st.session_state.contexto_bim
         st.session_state["memoria_edicoes_elet"] = dados_bim.get("memoria_edicoes_elet", ctx_salvo.get("df_elet", []))
         st.session_state["memoria_edicoes_hidro"] = dados_bim.get("memoria_edicoes_hidro", ctx_salvo.get("df_hidro", []))
@@ -2566,8 +2573,6 @@ with st.sidebar:
         use_container_width=True
     )
     st.divider()
-
-    st.divider()
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
     import hashlib
     arquivos_dxf = st.file_uploader(
@@ -2578,7 +2583,6 @@ with st.sidebar:
     )
 
     if arquivos_dxf:
-        # Calcula a assinatura digital (Hash) dos bytes dos arquivos para detectar automaticamente qualquer modificação salva no CAD
         hash_atual = hashlib.md5(b"".join([f.getvalue() for f in arquivos_dxf])).hexdigest()[:8]
         hash_anterior = st.session_state.get("hash_arquivo_cad", "")
 
@@ -2640,6 +2644,232 @@ with st.sidebar:
 # ==============================================================================
 # PARTE 9 DE 10: ABAS 1 E 2 (MODELAGEM BIM 3D DXF/IFC E CLASH DETECTION)
 # ==============================================================================
+
+def alinhar_vao_na_parede_real(cx_ins, cy_ins, cx_box, cy_box, larg_Sugerida, eh_porta, z_base, paredes_lista):
+    """
+    Encaixa o vão da Porta ou Janela exatamente dentro da parede real (layer_arq):
+    1. Procura o par de batentes (bonecas da parede de 8cm a 35cm) que delimita a abertura no CAD;
+    2. Caso a parede não tenha linhas de batente fechadas, projeta sobre o eixo das faces paralelas da parede;
+    3. Se não existir nenhuma parede real passando pelo ponto, retorna tem_parede_real=False (nunca cria parede fantasma).
+    """
+    if not paredes_lista:
+        return None, None, larg_Sugerida, (0.0, 0.075), False
+
+    # Ponto de referência principal: para portas o ponto de inserção (dobradiça) está sempre na parede
+    rx, ry = (cx_ins, cy_ins) if eh_porta else (cx_box, cy_box)
+
+    # 1. Busca batentes (segmentos curtos transversais da alvenaria entre 8cm e 35cm) próximos ao vão
+    batentes_prox = []
+    for p1, p2 in paredes_lista:
+        if abs(p1[2] - z_base) > 0.6:
+            continue
+        comp = dist_2d(p1, p2)
+        if 0.08 <= comp <= 0.35:
+            mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
+            if math.hypot(mx - rx, my - ry) <= 2.20 or math.hypot(mx - cx_box, my - cy_box) <= 2.20:
+                dx, dy = (p2[0] - p1[0]) / comp, (p2[1] - p1[1]) / comp
+                batentes_prox.append({
+                    "mx": mx, "my": my, "dx": dx, "dy": dy, "esp": comp,
+                    "ox": (p2[0] - p1[0]) / 2.0, "oy": (p2[1] - p1[1]) / 2.0
+                })
+
+    melhor_par = None
+    menor_erro = 999.0
+    for i in range(len(batentes_prox)):
+        b1 = batentes_prox[i]
+        for j in range(i + 1, len(batentes_prox)):
+            b2 = batentes_prox[j]
+            # Os dois batentes devem ser paralelos entre si
+            if abs(b1["dx"] * b2["dx"] + b1["dy"] * b2["dy"]) >= 0.88:
+                vx, vy = b2["mx"] - b1["mx"], b2["my"] - b1["my"]
+                dist_v = math.hypot(vx, vy)
+                if 0.45 <= dist_v <= 3.20:
+                    # A linha que une os dois batentes deve ser perpendicular aos próprios batentes (eixo da parede)
+                    perp = abs((vx / dist_v) * b1["dx"] + (vy / dist_v) * b1["dy"])
+                    if perp <= 0.22:
+                        # Verifica se há realmente segmento de parede conectado a pelo menos um dos batentes (evita ligar pilares isolados!)
+                        tem_parede_ligada = False
+                        ux_v, uy_v = vx / dist_v, vy / dist_v
+                        for wp1, wp2 in paredes_lista:
+                            if abs(wp1[2] - z_base) > 0.6:
+                                continue
+                            w_len = dist_2d(wp1, wp2)
+                            if w_len >= 0.35:
+                                wux, wuy = (wp2[0] - wp1[0]) / w_len, (wp2[1] - wp1[1]) / w_len
+                                if abs(ux_v * wux + uy_v * wuy) >= 0.88:
+                                    if (
+                                        distancia_ponto_segmento_2d(b1["mx"], b1["my"], wp1[0], wp1[1], wp2[0], wp2[1]) <= 0.25
+                                        or distancia_ponto_segmento_2d(b2["mx"], b2["my"], wp1[0], wp1[1], wp2[0], wp2[1]) <= 0.25
+                                    ):
+                                        tem_parede_ligada = True
+                                        break
+                        if not tem_parede_ligada:
+                            continue
+
+                        d_ins = distancia_ponto_segmento_2d(cx_ins, cy_ins, b1["mx"], b1["my"], b2["mx"], b2["my"])
+                        d_box = distancia_ponto_segmento_2d(cx_box, cy_box, b1["mx"], b1["my"], b2["mx"], b2["my"])
+                        erro = min(d_ins, d_box) + abs(dist_v - larg_Sugerida) * 0.35
+                        if min(d_ins, d_box) <= 0.55 and erro < menor_erro:
+                            menor_erro = erro
+                            melhor_par = (b1, b2, dist_v)
+
+    if melhor_par is not None:
+        b1, b2, larg_exata = melhor_par
+        return (b1["mx"], b1["my"]), (b2["mx"], b2["my"]), round(larg_exata, 3), (b1["ox"], b1["oy"]), True
+
+    # 2. Fallback: projeta na face de parede longa mais próxima (<= 0.35m) caso o vão não tenha linhas de batente
+    melhor_seg = None
+    menor_dist_w = 0.35
+    for wp1, wp2 in paredes_lista:
+        if abs(wp1[2] - z_base) > 0.6:
+            continue
+        w_len = dist_2d(wp1, wp2)
+        if w_len >= 0.40:
+            d_w = min(
+                distancia_ponto_segmento_2d(cx_ins, cy_ins, wp1[0], wp1[1], wp2[0], wp2[1]),
+                distancia_ponto_segmento_2d(cx_box, cy_box, wp1[0], wp1[1], wp2[0], wp2[1])
+            )
+            if d_w < menor_dist_w:
+                menor_dist_w = d_w
+                melhor_seg = (wp1, wp2, w_len)
+
+    if melhor_seg is not None:
+        wp1, wp2, w_len = melhor_seg
+        ux, uy = (wp2[0] - wp1[0]) / w_len, (wp2[1] - wp1[1]) / w_len
+        nx, ny = -uy, ux
+        t_proj = ((rx - wp1[0]) * ux + (ry - wp1[1]) * uy)
+        px_c, py_c = wp1[0] + t_proj * ux, wp1[1] + t_proj * uy
+        p1_v = (px_c - (larg_Sugerida / 2.0) * ux, py_c - (larg_Sugerida / 2.0) * uy)
+        p2_v = (px_c + (larg_Sugerida / 2.0) * ux, py_c + (larg_Sugerida / 2.0) * uy)
+        return p1_v, p2_v, round(larg_Sugerida, 3), (nx * 0.075, ny * 0.075), True
+
+    return None, None, larg_Sugerida, (0.0, 0.075), False
+
+
+def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max_ext=0.30, offset_padrao=(0.0, 0.075)):
+    """
+    Calcula o avanço real da Verga e Contraverga para cada lado do vão (máximo de 30cm para cada lado),
+    respeitando estritamente o comprimento da parede adjacente e parando antes se a parede acabar ou tiver quina.
+    """
+    vx, vy = p2_vao[0] - p1_vao[0], p2_vao[1] - p1_vao[1]
+    comp_vao = math.hypot(vx, vy)
+    if comp_vao < 1e-4:
+        return p1_vao, p2_vao, 0.0, 0.0, offset_padrao
+    ux, uy = vx / comp_vao, vy / comp_vao
+    nx, ny = -uy, ux
+
+    avan_esq, avan_dir = 0.0, 0.0
+    esp_detectada = math.hypot(offset_padrao[0], offset_padrao[1]) * 2.0
+    if esp_detectada < 0.08:
+        esp_detectada = 0.15
+
+    for seg in paredes_lista:
+        w1, w2 = seg[0], seg[1]
+        if abs(w1[2] - z_base) > 0.6:
+            continue
+        wx, wy = w2[0] - w1[0], w2[1] - w1[1]
+        w_len = math.hypot(wx, wy)
+        if w_len < 0.10:
+            continue
+        wux, wuy = wx / w_len, wy / w_len
+        if abs(ux * wux + uy * wuy) >= 0.88:
+            dist_perp = abs((w1[0] - p1_vao[0]) * nx + (w1[1] - p1_vao[1]) * ny)
+            if dist_perp <= 0.26:
+                s1 = (w1[0] - p1_vao[0]) * ux + (w1[1] - p1_vao[1]) * uy
+                s2 = (w2[0] - p1_vao[0]) * ux + (w2[1] - p1_vao[1]) * uy
+                s_min, s_max = min(s1, s2), max(s1, s2)
+                # Parede que encosta no batente esquerdo (s = 0) e segue para s < 0
+                if s_max >= -0.08 and s_min < -0.01:
+                    avan_esq = max(avan_esq, min(max_ext, abs(s_min)))
+                # Parede que encosta no batente direito (s = comp_vao) e segue para s > comp_vao
+                if s_min <= comp_vao + 0.08 and s_max > comp_vao + 0.01:
+                    avan_dir = max(avan_dir, min(max_ext, s_max - comp_vao))
+
+    p1_ext = (p1_vao[0] - ux * avan_esq, p1_vao[1] - uy * avan_esq)
+    p2_ext = (p2_vao[0] + ux * avan_dir, p2_vao[1] + uy * avan_dir)
+    return p1_ext, p2_ext, round(avan_esq, 3), round(avan_dir, 3), offset_padrao
+
+
+def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_direito, h_viga=0.40):
+    """
+    Desvia tubulações de Elétrica, Água Fria, Água Quente e Esgoto:
+    - Passa por cima da Verga (Topo do Vão + 10cm de Verga) em Portas e Janelas;
+    - Ou passa por baixo da Contraverga (Peitoril - 10cm de Contraverga) nas Janelas;
+    - Respeita os 30cm laterais de apoio da Verga e Contraverga na alvenaria.
+    """
+    if not elementos_arq or len(linha_3d) < 2:
+        return linha_3d
+
+    elems_andar = [e for e in elementos_arq if abs(e.get('z_base', 0.0) - z_base) < 0.6 and e.get('tem_parede_real', True)]
+    if not elems_andar:
+        return linha_3d
+
+    paredes_ctx = st.session_state.contexto_bim.get('paredes', [])
+    z_teto_livre = z_base + pe_direito - 0.06
+    ALT_VERGA = 0.10
+    nova_linha = [linha_3d[0]]
+
+    for i in range(len(linha_3d) - 1):
+        p_ini = linha_3d[i]
+        p_fim = linha_3d[i + 1]
+        comp_2d = dist_2d(p_ini, p_fim)
+
+        if comp_2d < 0.08:
+            nova_linha.append(p_fim)
+            continue
+
+        n_passos = max(2, int(comp_2d / 0.10) + 1)
+        for k in range(1, n_passos + 1):
+            t = k / float(n_passos)
+            px = p_ini[0] + t * (p_fim[0] - p_ini[0])
+            py = p_ini[1] + t * (p_fim[1] - p_ini[1])
+            pz = p_ini[2] + t * (p_fim[2] - p_ini[2])
+            z_ajustado = pz
+
+            for elem in elems_andar:
+                if elem.get('Tipo') == 'Esquadria':
+                    larg = elem.get('Largura', 0.90)
+                    p1_v = elem.get('p1_vao', (elem['x'] - larg / 2.0, elem['y']))
+                    p2_v = elem.get('p2_vao', (elem['x'] + larg / 2.0, elem['y']))
+                    off_n = elem.get('offset_norm', (0.0, 0.075))
+                    p1_ext, p2_ext, _, _, _ = calcular_extensao_verga_na_parede(p1_v, p2_v, z_base, paredes_ctx, max_ext=0.30, offset_padrao=off_n)
+
+                    if distancia_ponto_segmento_2d(px, py, p1_ext[0], p1_ext[1], p2_ext[0], p2_ext[1]) <= 0.24:
+                        peitoril = float(elem.get('Peitoril', 0.0))
+                        altura_vao = float(elem.get('Altura', 2.10))
+                        eh_janela = (elem.get('Subtipo') == 'Janela')
+
+                        z_base_contraverga = z_base + max(0.0, peitoril - ALT_VERGA) if (eh_janela and peitoril >= 0.15) else (z_base + peitoril)
+                        z_topo_verga = z_base + peitoril + altura_vao + ALT_VERGA
+
+                        if (z_base_contraverga - 0.04) < pz < (z_topo_verga + 0.04):
+                            z_acima_verga = min(z_teto_livre, z_topo_verga + 0.06)
+                            z_abaixo_contraverga = max(z_base + 0.05, z_base_contraverga - 0.06)
+
+                            if eh_janela and peitoril >= 0.25:
+                                z_ajustado = z_abaixo_contraverga if abs(pz - z_abaixo_contraverga) <= abs(z_acima_verga - pz) else z_acima_verga
+                            else:
+                                z_ajustado = z_abaixo_contraverga if (peitoril >= 0.15 and pz <= z_base_contraverga + 0.08) else z_acima_verga
+                            break
+
+                elif elem.get('Tipo') == 'Pilar/Viga':
+                    if math.hypot(px - elem['x'], py - elem['y']) <= (elem.get('Largura', 0.40) / 2.0 + 0.15):
+                        z_fundo_viga = z_base + pe_direito - h_viga - 0.05
+                        if pz > z_fundo_viga:
+                            z_ajustado = z_fundo_viga
+
+            pt_novo = (round(px, 4), round(py, 4), round(z_ajustado, 4))
+            if len(nova_linha) >= 2 and abs(nova_linha[-1][2] - pt_novo[2]) < 0.005 and abs(nova_linha[-2][2] - pt_novo[2]) < 0.005:
+                if abs(dist_2d(nova_linha[-2], nova_linha[-1]) + dist_2d(nova_linha[-1], pt_novo) - dist_2d(nova_linha[-2], pt_novo)) < 0.005:
+                    nova_linha[-1] = pt_novo
+                else:
+                    nova_linha.append(pt_novo)
+            else:
+                nova_linha.append(pt_novo)
+
+    return nova_linha
+
+
 tab_bim, tab_clash, tab_eletrica, tab_hidro, tab_pecas_ifc, tab_export = st.tabs([
     "🗺️ BIM 3D & Roteamento",
     "⚠️ Clash Detection",
@@ -2730,22 +2960,39 @@ with tab_bim:
         ce_p1, ce_p2, ce_j1, ce_j2 = st.columns(4)
         soleira_padrao_porta = ce_p1.number_input("Soleira Padrão de Portas (m)", min_value=0.0, max_value=1.0, value=0.00, step=0.05)
         altura_padrao_porta = ce_p2.number_input("Altura Padrão de Portas (m)", min_value=1.5, max_value=4.0, value=2.10, step=0.05)
-        peitoril_padrao_janela = ce_j1.number_input("Peitoril Padrão de Janelas (m)", min_value=0.0, max_value=3.0, value=1.00, step=0.05)
-        altura_padrao_janela = ce_j2.number_input("Altura Padrão de Janelas (m)", min_value=0.3, max_value=3.5, value=1.10, step=0.05)
+        peitoril_padrao_janela = ce_j1.number_input("Peitoril Padrão de Janelas (m)", min_value=0.0, max_value=3.0, value=0.80, step=0.05)
+        altura_padrao_janela = ce_j2.number_input("Altura Padrão de Janelas (m)", min_value=0.3, max_value=3.5, value=1.45, step=0.05)
 
         blocos_elet, blocos_hidro, paredes_raw, elementos_arquitetonicos = [], [], [], []
         max_z_projeto = 0.0
         z_acumulado = 0.0
 
-        # MODO A: Se o usuário carregou apenas o arquivo .bim (sem .dxf na barra lateral), reconstrói tudo do .bim
+        # MODO A: Se carregou apenas o .bim, recupera os dados e remove qualquer VAO_AUTO_ antigo indevido
         if not arquivos_dxf:
             paredes_raw = ctx_mem.get("paredes", [])
-            elementos_arquitetonicos = ctx_mem.get("elementos_arquitetonicos", [])
+            elems_salvos = [
+                el for el in ctx_mem.get("elementos_arquitetonicos", [])
+                if not str(el.get("ID_CAD", "")).startswith("VAO_AUTO_")
+            ]
+            # Realinha as esquadrias salvas exatamente nos batentes das paredes reais
+            for el in elems_salvos:
+                if el.get("Tipo") == "Esquadria":
+                    p1_a, p2_a, larg_a, off_a, ok_w = alinhar_vao_na_parede_real(
+                        el.get("x", 0.0), el.get("y", 0.0), el.get("x", 0.0), el.get("y", 0.0),
+                        el.get("Largura", 0.90), el.get("Subtipo") == "Porta", el.get("z_base", 0.0), paredes_raw
+                    )
+                    if ok_w:
+                        el["p1_vao"], el["p2_vao"], el["Largura"], el["offset_norm"], el["tem_parede_real"] = p1_a, p2_a, larg_a, off_a, True
+                        el["x"], el["y"] = round((p1_a[0] + p2_a[0]) / 2.0, 4), round((p1_a[1] + p2_a[1]) / 2.0, 4)
+                        elementos_arquitetonicos.append(el)
+                else:
+                    elementos_arquitetonicos.append(el)
+
             blocos_elet = st.session_state.get("memoria_edicoes_elet", ctx_mem.get("df_elet", []))
             blocos_hidro = st.session_state.get("memoria_edicoes_hidro", ctx_mem.get("df_hidro", []))
             max_z_projeto = max(0.0, float(ctx_mem.get("max_z_cobertura", 3.0)) - 3.0)
 
-        # MODO B: Se há arquivo .dxf ou .ifc carregado, lê a geometria e mescla com a memória
+        # MODO B: Leitura de arquivos .DXF / .IFC (Lendo PRIMEIRO as paredes para encaixar portas e janelas com precisão!)
         for andar_idx, config in enumerate(config_andares):
             dxf_file = config["arquivo"]
             pe_direito_atual = config["pe_direito"]
@@ -2759,7 +3006,23 @@ with tab_bim:
                     temp_path = tmp_file.name
                 doc = ezdxf.readfile(temp_path)
                 msp = doc.modelspace()
-                
+
+                # 1º) Lê todas as PAREDES do andar primeiro (layer_arq)
+                paredes_andar = []
+                for e in msp.query('LINE LWPOLYLINE'):
+                    if e.dxf.layer in layer_arq:
+                        pts = []
+                        if e.dxftype() == 'LINE':
+                            pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base + pe_direito_atual))]
+                        elif e.dxftype() == 'LWPOLYLINE':
+                            pontos = list(e.get_points(format='xy'))
+                            for i in range(len(pontos) - 1):
+                                pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base + pe_direito_atual)))
+                        paredes_andar.extend(pts)
+                paredes_raw.extend(paredes_andar)
+
+                # 2º) Lê as ESQUADRIAS (apenas das layers selecionadas em layer_esquadrias) e encaixa nos batentes reais das paredes
+                vaos_ja_registrados = []
                 for le in layer_esquadrias:
                     for idx_esq, e in enumerate(msp.query(f'INSERT[layer=="{le}"]')):
                         nome_bloco_u = extrair_nome_real_bloco_dxf(doc, e).upper()
@@ -2795,20 +3058,23 @@ with tab_bim:
                             x_min_e, x_max_e = min(xs_b), max(xs_b)
                             y_min_e, y_max_e = min(ys_b), max(ys_b)
                             dx_e, dy_e = x_max_e - x_min_e, y_max_e - y_min_e
-                            larg_real = round(max(0.60, min(2.40, max(dx_e, dy_e))), 2)
-                            cx_e, cy_e = round((x_min_e + x_max_e) / 2.0, 4), round((y_min_e + y_max_e) / 2.0, 4)
-                            if dx_e >= dy_e:
-                                p1_vao = (cx_e - larg_real / 2.0, cy_e)
-                                p2_vao = (cx_e + larg_real / 2.0, cy_e)
-                            else:
-                                p1_vao = (cx_e, cy_e - larg_real / 2.0)
-                                p2_vao = (cx_e, cy_e + larg_real / 2.0)
+                            larg_sug = round(max(0.60, min(2.40, max(dx_e, dy_e))), 2)
+                            cx_box, cy_box = (x_min_e + x_max_e) / 2.0, (y_min_e + y_max_e) / 2.0
                         else:
-                            larg_real = 0.85 if eh_porta else 1.20
-                            rot_rad = math.radians(getattr(e.dxf, 'rotation', 0.0))
-                            cx_e, cy_e = round(cx_ins, 4), round(cy_ins, 4)
-                            p1_vao = (cx_e - (larg_real / 2.0) * math.cos(rot_rad), cy_e - (larg_real / 2.0) * math.sin(rot_rad))
-                            p2_vao = (cx_e + (larg_real / 2.0) * math.cos(rot_rad), cy_e + (larg_real / 2.0) * math.sin(rot_rad))
+                            larg_sug = 0.85 if eh_porta else 1.20
+                            cx_box, cy_box = cx_ins, cy_ins
+
+                        p1_vao, p2_vao, larg_real, offset_norm, ok_parede = alinhar_vao_na_parede_real(
+                            cx_ins, cy_ins, cx_box, cy_box, larg_sug, eh_porta, z_base, paredes_andar
+                        )
+                        if not ok_parede:
+                            continue
+
+                        cx_final, cy_final = round((p1_vao[0] + p2_vao[0]) / 2.0, 4), round((p1_vao[1] + p2_vao[1]) / 2.0, 4)
+                        # Evita duplicar o mesmo vão se o bloco tiver múltiplas entidades sobrepostas
+                        if any(math.hypot(cx_final - vx, cy_final - vy) < 0.35 for vx, vy in vaos_ja_registrados):
+                            continue
+                        vaos_ja_registrados.append((cx_final, cy_final))
 
                         eh_bascula = any(k in nome_bloco_u for k in ["BASC", "BANH", "WC", "J_ALTA"])
                         peit_ini = soleira_padrao_porta if eh_porta else (1.60 if eh_bascula else peitoril_padrao_janela)
@@ -2821,13 +3087,58 @@ with tab_bim:
                             "Andar": f"Pav {config['ordem']}",
                             "Tipo": "Esquadria",
                             "Subtipo": "Porta" if eh_porta else "Janela",
-                            "x": cx_e, "y": cy_e, "z_base": z_base,
+                            "x": cx_final, "y": cy_final, "z_base": z_base,
                             "pe_direito": pe_direito_atual,
                             "p1_vao": p1_vao, "p2_vao": p2_vao,
+                            "offset_norm": offset_norm,
+                            "tem_parede_real": True,
                             "Largura": larg_real,
                             "Peitoril": peit_ini,
                             "Altura": alt_ini
                         })
+
+                    # Captura também janelas/portas desenhadas como linhas na layer_esquadrias (ex: linhas verdes/azuis entre batentes)
+                    for idx_lin, e_lin in enumerate(msp.query(f'*[layer=="{le}"]')):
+                        if e_lin.dxftype() not in ('LINE', 'LWPOLYLINE'):
+                            continue
+                        segs_l = []
+                        if e_lin.dxftype() == 'LINE':
+                            segs_l.append(((e_lin.dxf.start.x, e_lin.dxf.start.y), (e_lin.dxf.end.x, e_lin.dxf.end.y)))
+                        else:
+                            pts_l = list(e_lin.get_points(format='xy'))
+                            for k_l in range(len(pts_l) - 1):
+                                segs_l.append(((pts_l[k_l][0], pts_l[k_l][1]), (pts_l[k_l+1][0], pts_l[k_l+1][1])))
+                        for s_p1, s_p2 in segs_l:
+                            comp_s = dist_2d(s_p1, s_p2)
+                            if 0.50 <= comp_s <= 2.60:
+                                mx_s, my_s = (s_p1[0] + s_p2[0]) / 2.0, (s_p1[1] + s_p2[1]) / 2.0
+                                if any(math.hypot(mx_s - vx, my_s - vy) < 0.45 for vx, vy in vaos_ja_registrados):
+                                    continue
+                                eh_p_l = any(k in le.upper() for k in ["PORTA", "MADEIRA"])
+                                p1_v, p2_v, larg_r, off_n, ok_w = alinhar_vao_na_parede_real(
+                                    mx_s, my_s, mx_s, my_s, comp_s, eh_p_l, z_base, paredes_andar
+                                )
+                                if ok_w:
+                                    cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
+                                    if any(math.hypot(cx_f - vx, cy_f - vy) < 0.45 for vx, vy in vaos_ja_registrados):
+                                        continue
+                                    vaos_ja_registrados.append((cx_f, cy_f))
+                                    elementos_arquitetonicos.append({
+                                        "ID_CAD": f"ESQ_LIN_P{andar_idx}_{idx_lin}",
+                                        "Nome_Bloco": f"Esquadria ({le})",
+                                        "Layer_CAD": le,
+                                        "Andar": f"Pav {config['ordem']}",
+                                        "Tipo": "Esquadria",
+                                        "Subtipo": "Porta" if eh_p_l else "Janela",
+                                        "x": cx_f, "y": cy_f, "z_base": z_base,
+                                        "pe_direito": pe_direito_atual,
+                                        "p1_vao": p1_v, "p2_vao": p2_v,
+                                        "offset_norm": off_n,
+                                        "tem_parede_real": True,
+                                        "Largura": larg_r,
+                                        "Peitoril": soleira_padrao_porta if eh_p_l else peitoril_padrao_janela,
+                                        "Altura": altura_padrao_porta if eh_p_l else altura_padrao_janela
+                                    })
 
                 for le in layer_estrutural:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
@@ -2864,38 +3175,19 @@ with tab_bim:
                             "Andar": f"Pav {config['ordem']}",
                             "pe_direito": pe_direito_atual
                         })
-                for e in msp.query('LINE LWPOLYLINE'):
-                    if e.dxf.layer in layer_arq:
-                        pts = []
-                        if e.dxftype() == 'LINE':
-                            pts = [((e.dxf.start.x, e.dxf.start.y, z_base), (e.dxf.end.x, e.dxf.end.y, z_base + pe_direito_atual))]
-                        elif e.dxftype() == 'LWPOLYLINE':
-                            pontos = list(e.get_points(format='xy'))
-                            for i in range(len(pontos)-1):
-                                pts.append(((pontos[i][0], pontos[i][1], z_base), (pontos[i+1][0], pontos[i+1][1], z_base + pe_direito_atual)))
-                        paredes_raw.extend(pts)
                 os.unlink(temp_path)
-            
-            z_acumulado += pe_direito_atual + espessura_laje
 
-        # Se não vieram blocos de esquadria da layer (ou veio do .bim sem vãos), detecta automaticamente pelos batentes das paredes!
-        esquadrias_atuais = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria"]
-        if not esquadrias_atuais and paredes_raw:
-            vaos_auto = detectar_vaos_pelos_batentes_das_paredes(
-                paredes_raw, 0.0, config_andares[0]["pe_direito"] if config_andares else 3.0,
-                soleira_padrao_porta, altura_padrao_porta, peitoril_padrao_janela, altura_padrao_janela
-            )
-            elementos_arquitetonicos.extend(vaos_auto)
+            z_acumulado += pe_direito_atual + espessura_laje
 
         # Detecta se o usuário alterou algum dos 4 controles globais (Soleira, Altura Porta, Peitoril Janela, Altura Janela)
         assinatura_padroes = f"{soleira_padrao_porta}_{altura_padrao_porta}_{peitoril_padrao_janela}_{altura_padrao_janela}"
         padroes_mudaram = (st.session_state.get("assinatura_padroes_esq", "") != assinatura_padroes)
         st.session_state["assinatura_padroes_esq"] = assinatura_padroes
 
-        esquadrias_lista = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria"]
+        esquadrias_lista = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria" and el.get("tem_parede_real", True)]
         if esquadrias_lista:
-            with st.expander(f"🚪🪟 Editar Peitoril, Soleira, Vergas e Alturas de Portas e Janelas ({len(esquadrias_lista)} vãos ativos)", expanded=False):
-                st.caption("Vergas e Contravergas de 10cm de altura (+30cm para cada lado, limitadas pelas quinas da parede) são geradas automaticamente para todos os vãos abaixo:")
+            with st.expander(f"🚪🪟 Editar Peitoril, Soleira, Vergas e Alturas de Portas e Janelas ({len(esquadrias_lista)} vãos reais nas paredes)", expanded=False):
+                st.caption("Vergas e Contravergas de 10cm de altura (+30cm para cada lado, limitadas pelas quinas da parede) são geradas exclusivamente sobre as paredes reais:")
                 df_esq_raw = pd.DataFrame(esquadrias_lista)
                 mem_esq = st.session_state.get("memoria_edicoes_esq", {})
 
@@ -2907,7 +3199,6 @@ with tab_bim:
                         df_esq_raw.at[idx_e, "Altura"] = mem_esq[chave_pos]["Altura"]
                         df_esq_raw.at[idx_e, "Largura"] = mem_esq[chave_pos]["Largura"]
                     else:
-                        # Aplica imediatamente os novos valores padrão de Peitoril/Soleira/Altura escolhidos pelo usuário na tela
                         eh_p = (r_e["Subtipo"] == "Porta")
                         df_esq_raw.at[idx_e, "Peitoril"] = soleira_padrao_porta if eh_p else peitoril_padrao_janela
                         df_esq_raw.at[idx_e, "Altura"] = altura_padrao_porta if eh_p else altura_padrao_janela
@@ -2946,12 +3237,12 @@ with tab_bim:
                         el_arq["Peitoril"] = dados_at["Peitoril"]
                         el_arq["Altura"] = dados_at["Altura"]
                         el_arq["Largura"] = dados_at["Largura"]
-        
+
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             st.subheader("⚡ Equipamentos Elétricos")
             df_be = pd.DataFrame(blocos_elet) if blocos_elet else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "z_relativo"])
-            
+
             if not df_be.empty:
                 opcoes_eq_elet = list(st.session_state.bib_eletrica['Equipamento'])
                 tipos_bim_el, equips_el, qtd_tom_el, qtd_int_el, amp_el, tens_el, z_rel_el = [], [], [], [], [], [], []
@@ -2976,29 +3267,16 @@ with tab_bim:
                 df_be['Qtd_Interruptores'] = qtd_int_el
                 df_be['Luminarias_Controladas'] = ""
                 df_be['z_relativo'] = z_rel_el
-                                
-                # --- TABELA ELÉTRICA (FECHAMENTO CORRETO DE PARÊNTESES) ---
+
                 df_be, stats_el = mesclar_blocos_com_memoria(df_be, disciplina="elet")
 
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn(
-                            "Tipo Físico",
-                            options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]
-                        ),
-                        "Equipamento_Associado": st.column_config.SelectboxColumn(
-                            "Carga (Biblioteca)",
-                            options=opcoes_eq_elet
-                        ),
-                        "Amperagem_Tomadas": st.column_config.SelectboxColumn(
-                            "Amperagem",
-                            options=["10A", "20A"]
-                        ),
-                        "Tensao_V": st.column_config.SelectboxColumn(
-                            "Tensão (V)",
-                            options=[127, 220]
-                        ),
+                        "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]),
+                        "Equipamento_Associado": st.column_config.SelectboxColumn("Carga (Biblioteca)", options=opcoes_eq_elet),
+                        "Amperagem_Tomadas": st.column_config.SelectboxColumn("Amperagem", options=["10A", "20A"]),
+                        "Tensao_V": st.column_config.SelectboxColumn("Tensão (V)", options=[127, 220]),
                         "Qtd_Tomadas": st.column_config.NumberColumn("Qtd Tomadas", min_value=0, max_value=4),
                         "Qtd_Interruptores": st.column_config.NumberColumn("Qtd Interruptores", min_value=0, max_value=6)
                     },
@@ -3020,7 +3298,7 @@ with tab_bim:
         with col_t2:
             st.subheader("💧 Equipamentos Hidráulicos, Pluviais e Gás")
             df_bh = pd.DataFrame(blocos_hidro) if blocos_hidro else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "Equipamento", "z_relativo"])
-            
+
             if not df_bh.empty:
                 opcoes_equip = list(st.session_state.bib_hidro['Equipamento'])
                 opcoes_func_bim = [
@@ -3054,10 +3332,8 @@ with tab_bim:
                 df_bh['Equipamento'] = equips_h
                 df_bh['z_relativo'] = z_rel_h
 
-                # 1. Mescla com a memória de edições anteriores
                 df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
 
-                # 2. Auto-correção de blocos de Inspeção e Gordura que tinham ficado salvos como Caixa d'Água na sessão
                 for idx_fix, r_fix in df_bh.iterrows():
                     nb_norm = normalizar_texto_bim(str(r_fix.get('Nome_Bloco', '')).split('(')[0])
                     if r_fix.get('Tipo_BIM') == "Caixa d'Água" and ("INSPECAO" in nb_norm or "GORDURA" in nb_norm):
@@ -3066,7 +3342,6 @@ with tab_bim:
                         df_bh.at[idx_fix, 'Equipamento'] = eq_novo
                         df_bh.at[idx_fix, 'z_relativo'] = zr_novo
 
-                # 3. Mapeamento em Lote por Nome_Bloco (Aplicado APÓS a memória e com atualização imediata da tabela)
                 dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
                 for blk_k, (fn_v, eq_v) in dict_map_lote.items():
                     base_k = str(blk_k).split("(")[0].strip()
@@ -3092,7 +3367,6 @@ with tab_bim:
                         st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
                         st.rerun()
 
-                # 4. Sincroniza o z_relativo dos blocos de Caixa d'Água com a Altura acima da laje configurada
                 altura_caixa_atual = float(st.session_state.get("altura_caixa_3d", 1.50))
                 mask_cx_agua = (df_bh['Tipo_BIM'] == "Caixa d'Água") | (df_bh['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
                 if mask_cx_agua.any():
@@ -3109,7 +3383,6 @@ with tab_bim:
                     key=f"editor_hidro_v{st.session_state.get('sync_version', 0)}"
                 )
 
-                # 5. Parâmetros da Caixa d'Água 3D (Vinculado automaticamente ao z_relativo da Caixa d'Água)
                 tem_caixa = not df_editado_hidro[
                     (df_editado_hidro['Tipo_BIM'] == "Caixa d'Água") |
                     (df_editado_hidro['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
@@ -3126,7 +3399,6 @@ with tab_bim:
                     )
                     num_barriletes = c_cx2.number_input("Nº de Barriletes", min_value=1, value=1, step=1)
 
-                    # Se o usuário alterou a altura da Caixa d'Água, atualiza imediatamente o z_relativo na tabela!
                     if abs(altura_caixa - altura_caixa_atual) > 0.001:
                         st.session_state["altura_caixa_3d"] = float(altura_caixa)
                         mask_cx_ed = (df_editado_hidro['Tipo_BIM'] == "Caixa d'Água") | (df_editado_hidro['Equipamento'].astype(str).str.contains("Caixa d'Água", na=False))
@@ -3168,18 +3440,19 @@ with tab_bim:
         st.session_state.contexto_bim['elementos_arquitetonicos'] = elementos_arquitetonicos
         st.session_state.contexto_bim['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
         st.session_state.contexto_bim['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
-        
         if col_btn_proc.button("🚀 Processar Rotas Multidisciplinares, Dimensionamento ABNT e Quantitativos", type="primary", use_container_width=True):
-            with st.spinner("Mapeando vigas, pilares, múltiplas prumadas, cascata TUG e calculando malhas ABNT..."):
+            with st.spinner("Mapeando vigas, pilares, vergas/contravergas (+30cm), múltiplas prumadas e calculando malhas ABNT..."):
                 pontos_gerais = []
-                if not df_editado_elet.empty: pontos_gerais.extend(df_editado_elet.to_dict('records'))
-                if not df_editado_hidro.empty: pontos_gerais.extend(df_editado_hidro.to_dict('records'))
+                if not df_editado_elet.empty:
+                    pontos_gerais.extend(df_editado_elet.to_dict('records'))
+                if not df_editado_hidro.empty:
+                    pontos_gerais.extend(df_editado_hidro.to_dict('records'))
 
                 min_x = min([b['x'] for b in pontos_gerais] + [min(p1[0], p2[0]) for p1, p2 in paredes_raw] + [0]) if (pontos_gerais or paredes_raw) else 0
                 max_x = max([b['x'] for b in pontos_gerais] + [max(p1[0], p2[0]) for p1, p2 in paredes_raw] + [10]) if (pontos_gerais or paredes_raw) else 10
                 min_y = min([b['y'] for b in pontos_gerais] + [min(p1[1], p2[1]) for p1, p2 in paredes_raw] + [0]) if (pontos_gerais or paredes_raw) else 0
                 max_y = max([b['y'] for b in pontos_gerais] + [max(p1[1], p2[1]) for p1, p2 in paredes_raw] + [10]) if (pontos_gerais or paredes_raw) else 10
-                
+
                 offset, grid_w, grid_h = 2.0, escalar_coord((max_x - min_x) + 4.0), escalar_coord((max_y - min_y) + 4.0)
                 ultimo_pe_direito = config_andares[-1]["pe_direito"] if config_andares else 3.0
                 z_cobertura = max_z_projeto + ultimo_pe_direito
@@ -3205,11 +3478,11 @@ with tab_bim:
                 st.session_state.linhas_3d_master = {'eletrica': linhas_elet, 'hidro': linhas_hidro, 'equipamentos_3d': pontos_gerais}
                 st.session_state.colisoes_detectadas = []
 
-                # Geração Inteligente do Quadro de Cargas (Agrupando TUGs/Iluminação por Pavimento ou Individual)
                 novos_circuitos = []
                 grupos_agrupados = {}
                 for b_el in ctx['df_eletrica']:
-                    if b_el['Tipo_BIM'] == 'Quadro Geral': continue
+                    if b_el['Tipo_BIM'] == 'Quadro Geral':
+                        continue
                     eq_nome = b_el.get('Equipamento_Associado', 'Tomada Uso Geral (TUG)')
                     filtro_el = st.session_state.bib_eletrica['Equipamento'] == eq_nome
                     if filtro_el.any():
@@ -3218,7 +3491,8 @@ with tab_bim:
                     else:
                         pot_unit, tensao_eq, fp_eq, tipo_eq, curva_eq, uso_dr = 100.0, 127, 1.0, "TUG", "B", "Opcional"
 
-                    if b_el.get('Amperagem_Tomadas') == '20A' and pot_unit == 100.0: pot_unit = 600.0
+                    if b_el.get('Amperagem_Tomadas') == '20A' and pot_unit == 100.0:
+                        pot_unit = 600.0
                     qtd_pts = max(1, int(b_el.get('Qtd_Tomadas', 1))) if 'Caixa' in b_el['Tipo_BIM'] else 1
                     pot_total = pot_unit * qtd_pts
                     rota_assoc = next((r for r in linhas_elet if r.get('id_origem') == b_el['ID_CAD']), None)
@@ -3262,10 +3536,12 @@ with tab_bim:
                 novos_pontos_hidro = []
                 z_res_mca = z_cobertura + altura_caixa
                 for b_hd in ctx['df_hidro']:
-                    if b_hd['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Ramal de Esgoto']: continue
+                    if b_hd['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Ramal de Esgoto']:
+                        continue
                     eq_h = b_hd['Equipamento']
                     filtro_h = st.session_state.bib_hidro['Equipamento'] == eq_h
-                    if not filtro_h.any(): continue
+                    if not filtro_h.any():
+                        continue
                     row_h = st.session_state.bib_hidro.loc[filtro_h].iloc[0]
                     peso_h, uhc_h, af_mm, esg_mm, pressao_req_kpa = float(row_h['Peso']), float(row_h['UHC']), int(row_h['Agua_mm']), int(row_h['Esgoto_mm']), float(row_h['Pressao_kpa'])
                     rota_af = next((r for r in linhas_hidro if r.get('id_ap') == b_hd['ID_CAD'] and r.get('tipo') == 'Água Fria'), None)
@@ -3278,9 +3554,12 @@ with tab_bim:
                     pressao_disp_mca = max(0.0, pressao_estatica_mca - perda_mca)
                     pressao_disp_kpa = round(pressao_disp_mca * 9.81, 1)
 
-                    if pressao_disp_kpa < pressao_req_kpa: status_pressao = "⚠️ Pressurizar! (< Mín.)"
-                    elif pressao_estatica_mca > 40.0: status_pressao = "⚠️ Instalar VRP (> 40 m.c.a.)"
-                    else: status_pressao = "OK (NBR 5626)"
+                    if pressao_disp_kpa < pressao_req_kpa:
+                        status_pressao = "⚠️ Pressurizar! (< Mín.)"
+                    elif pressao_estatica_mca > 40.0:
+                        status_pressao = "⚠️ Instalar VRP (> 40 m.c.a.)"
+                    else:
+                        status_pressao = "OK (NBR 5626)"
 
                     novos_pontos_hidro.append({
                         "ID": b_hd['ID_CAD'], "Andar": b_hd.get('Andar', 'Pav 0'), "Ambiente": b_hd.get('Andar', 'Banheiro/Cozinha'),
@@ -3292,7 +3571,7 @@ with tab_bim:
                     })
                 st.session_state.pontos_hidro = novos_pontos_hidro
                 st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, st.session_state.circuitos, ctx['df_eletrica'], ctx['df_hidro'])
-                st.success("✅ Roteamento 3D (DXF/IFC), Múltiplas Prumadas, Cascata TUG e Quantitativos concluídos!")
+                st.success("✅ Roteamento 3D (DXF/IFC), Vergas/Contravergas (+30cm), Múltiplas Prumadas e Quantitativos concluídos!")
 
         if st.session_state.linhas_3d_master['eletrica'] or st.session_state.linhas_3d_master['hidro'] or paredes_raw:
             metragem_el = sum(calcular_comprimento_rota(r['pontos']) for r in st.session_state.linhas_3d_master['eletrica'])
@@ -3306,7 +3585,6 @@ with tab_bim:
 
             fig = go.Figure()
 
-            # Filtra linhas espúrias (como margens de folha CAD distantes dos blocos) para focar 100% na edificação
             pts_ref_x = [b['x'] for b in (blocos_elet + blocos_hidro)]
             pts_ref_y = [b['y'] for b in (blocos_elet + blocos_hidro)]
             if pts_ref_x and pts_ref_y:
@@ -3323,19 +3601,17 @@ with tab_bim:
             else:
                 paredes_filtradas = paredes_raw
 
-            # 1. PAREDES 3D EM MODO RAIO-X + FECHAMENTO ACIMA/ABAIXO DE PORTAS E JANELAS + VERGAS E CONTRAVERGAS
+            # 1. PAREDES 3D EM MODO RAIO-X + FECHAMENTO ESTRITO NOS VÃOS REAIS + VERGAS E CONTRAVERGAS (+30cm)
             wx_base, wy_base, wz_base = [], [], []
             wx_topo, wy_topo, wz_topo = [], [], []
             mesh_x, mesh_y, mesh_z = [], [], []
             mesh_i, mesh_j, mesh_k = [], [], []
 
-            # Listas para as Vergas e Contravergas estruturais (10cm de altura + até 30cm para cada lado)
             vg_mesh_x, vg_mesh_y, vg_mesh_z = [], [], []
             vg_mesh_i, vg_mesh_j, vg_mesh_k = [], [], []
             vg_wire_x, vg_wire_y, vg_wire_z = [], [], []
 
             def adicionar_painel_vertical_3d(pa, pb, z0, z1, mx, my, mz, mi, mj, mk, wx_w=None, wy_w=None, wz_w=None):
-                """Adiciona uma face vertical 3D entre os pontos 2D pa e pb da altura z0 até z1."""
                 if z1 <= z0 + 0.01:
                     return
                 iv = len(mx)
@@ -3351,12 +3627,11 @@ with tab_bim:
                     wz_w.extend([z0, z0, None, z1, z1, None, z0, z1, None, z0, z1, None])
 
             def adicionar_bloco_duplo_parede_3d(pa, pb, z0, z1, offset_n, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w):
-                """Desenha as duas faces paralelas da parede (espessura real da alvenaria) entre z0 e z1."""
                 if z1 <= z0 + 0.01:
                     return
                 ox, oy = offset_n
                 p1a, p2a = (pa[0] + ox, pa[1] + oy), (pb[0] + ox, pb[1] + oy)
-                p1b, p2b = (pa[0] - ox, pa[1] - ox * 0 + oy * -1), (pb[0] - ox, pb[1] - oy)
+                p1b, p2b = (pa[0] - ox, pa[1] - oy), (pb[0] - ox, pb[1] - oy)
                 adicionar_painel_vertical_3d(p1a, p2a, z0, z1, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w)
                 adicionar_painel_vertical_3d(p1b, p2b, z0, z1, mx, my, mz, mi, mj, mk, wx_w, wy_w, wz_w)
 
@@ -3376,11 +3651,10 @@ with tab_bim:
 
                 adicionar_painel_vertical_3d(p1, p2, z_piso, z_topo, mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k)
 
-            # 2. VÃOS DE PORTAS/JANELAS, PAREDES ACIMA/ABAIXO DOS VÃOS E VERGAS/CONTRAVERGAS (10cm x +30cm)
             px_porta, py_porta, pz_porta = [], [], []
             jx_jan, jy_jan, jz_jan = [], [], []
             ex_est, ey_est, ez_est = [], [], []
-            ALT_VERGA = 0.10  # 10 cm de altura para Vergas e Contravergas
+            ALT_VERGA = 0.10
 
             for elem in elementos_arquitetonicos:
                 if pts_ref_x and not (lim_x_min <= elem['x'] <= lim_x_max and lim_y_min <= elem['y'] <= lim_y_max):
@@ -3392,23 +3666,26 @@ with tab_bim:
                     ez_est.extend([elem['z_base'], elem['z_base'] + h_pilar, None])
 
                 elif elem['Tipo'] == 'Esquadria':
+                    # Só desenha paredes de peitoril/verga se o vão pertencer comprovadamente a uma parede real
+                    if not elem.get('tem_parede_real', True):
+                        continue
                     z_piso_e = float(elem.get('z_base', 0.0))
                     z_teto_e = z_piso_e + float(elem.get('pe_direito', 3.0))
                     peit_val = float(elem.get('Peitoril', 0.0))
                     alt_val = float(elem.get('Altura', 2.10))
                     z_inf = z_piso_e + peit_val
                     z_sup = min(z_teto_e, z_inf + alt_val)
-                    larg_v = min(2.60, float(elem.get('Largura', 0.90)))
 
-                    p1_v = elem.get('p1_vao', (elem['x'] - larg_v / 2.0, elem['y']))
-                    p2_v = elem.get('p2_vao', (elem['x'] + larg_v / 2.0, elem['y']))
+                    p1_v = elem.get('p1_vao')
+                    p2_v = elem.get('p2_vao')
+                    if not p1_v or not p2_v:
+                        continue
+                    off_norm = elem.get('offset_norm', (0.0, 0.075))
 
-                    # Calcula extensão da Verga/Contraverga (+30cm para cada lado, parando antes se a parede acabar) e espessura da parede
                     p1_ext, p2_ext, _, _, offset_norm = calcular_extensao_verga_na_parede(
-                        p1_v, p2_v, z_piso_e, paredes_filtradas, max_ext=0.30
+                        p1_v, p2_v, z_piso_e, paredes_filtradas, max_ext=0.30, offset_padrao=off_norm
                     )
 
-                    # 2.1. Quadro do Vão (Porta ou Janela)
                     quadro_x = [p1_v[0], p2_v[0], p2_v[0], p1_v[0], p1_v[0], None]
                     quadro_y = [p1_v[1], p2_v[1], p2_v[1], p1_v[1], p1_v[1], None]
                     quadro_z = [z_inf,   z_inf,   z_sup,   z_sup,   z_inf,   None]
@@ -3422,16 +3699,14 @@ with tab_bim:
                         jy_jan.extend(quadro_y)
                         jz_jan.extend(quadro_z)
 
-                    # 2.2. CONTRAVERGA (10cm abaixo do peitoril, avançando até 30cm para cada lado) + PAREDE ABAIXO DA JANELA
+                    # CONTRAVERGA (10cm abaixo do peitoril + até 30cm p/ cada lado) + PAREDE ABAIXO DA JANELA
                     if elem.get('Subtipo') == 'Janela' and peit_val >= 0.15:
                         z_base_cv = max(z_piso_e, z_inf - ALT_VERGA)
-                        # Desenha Contraverga de 10cm (de p1_ext até p2_ext)
                         adicionar_bloco_duplo_parede_3d(
                             p1_ext, p2_ext, z_base_cv, z_inf, offset_norm,
                             vg_mesh_x, vg_mesh_y, vg_mesh_z, vg_mesh_i, vg_mesh_j, vg_mesh_k,
                             vg_wire_x, vg_wire_y, vg_wire_z
                         )
-                        # Desenha Parede abaixo da Contraverga (do piso até z_base_cv)
                         if z_base_cv > z_piso_e + 0.02:
                             adicionar_bloco_duplo_parede_3d(
                                 p1_v, p2_v, z_piso_e, z_base_cv, offset_norm,
@@ -3439,23 +3714,20 @@ with tab_bim:
                                 wx_topo, wy_topo, wz_topo
                             )
                     elif z_inf > z_piso_e + 0.02:
-                        # Caso seja porta com soleira elevada
                         adicionar_bloco_duplo_parede_3d(
                             p1_v, p2_v, z_piso_e, z_inf, offset_norm,
                             mesh_x, mesh_y, mesh_z, mesh_i, mesh_j, mesh_k,
                             wx_topo, wy_topo, wz_topo
                         )
 
-                    # 2.3. VERGA SUPERIOR (10cm acima de Portas e Janelas, avançando até 30cm para cada lado) + PAREDE ACIMA DA VERGA
+                    # VERGA SUPERIOR (10cm acima de Portas e Janelas + até 30cm p/ cada lado) + PAREDE ACIMA DA VERGA
                     if z_sup < z_teto_e - 0.02:
                         z_topo_vg = min(z_teto_e, z_sup + ALT_VERGA)
-                        # Desenha Verga Superior de 10cm (de p1_ext até p2_ext)
                         adicionar_bloco_duplo_parede_3d(
                             p1_ext, p2_ext, z_sup, z_topo_vg, offset_norm,
                             vg_mesh_x, vg_mesh_y, vg_mesh_z, vg_mesh_i, vg_mesh_j, vg_mesh_k,
                             vg_wire_x, vg_wire_y, vg_wire_z
                         )
-                        # Desenha Parede acima da Verga até o teto/laje (de z_topo_vg até z_teto_e)
                         if z_teto_e > z_topo_vg + 0.02:
                             adicionar_bloco_duplo_parede_3d(
                                 p1_v, p2_v, z_topo_vg, z_teto_e, offset_norm,
@@ -3463,7 +3735,6 @@ with tab_bim:
                                 wx_topo, wy_topo, wz_topo
                             )
 
-            # ADICIONA AS PAREDES COMPLETAS (INCLUINDO PEITORIL E ACIMA DE PORTAS/JANELAS) AO GRÁFICO 3D
             if mesh_x:
                 fig.add_trace(go.Mesh3d(
                     x=mesh_x, y=mesh_y, z=mesh_z,
@@ -3487,7 +3758,6 @@ with tab_bim:
                     legendgroup='paredes_wire', showlegend=True, hoverinfo='skip'
                 ))
 
-            # ADICIONA AS VERGAS E CONTRAVERGAS (10cm x +30cm) EM DESTAQUE ESTRUTURAL
             if vg_mesh_x:
                 fig.add_trace(go.Mesh3d(
                     x=vg_mesh_x, y=vg_mesh_y, z=vg_mesh_z,
@@ -3523,7 +3793,6 @@ with tab_bim:
                     name='🧱 Pilares / Vigas (3D)', legendgroup='pilares'
                 ))
 
-            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM LEGENDA AGRUPADA (SEM REPETIÇÕES!)
             grupos_legenda_usados = set()
 
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
@@ -3630,8 +3899,10 @@ with tab_clash:
     if st.button("🔍 Rodar Verificação de Colisões", type="primary"):
         if st.session_state.linhas_3d_master['eletrica'] and st.session_state.linhas_3d_master['hidro']:
             st.session_state.colisoes_detectadas = checar_clash_detection(st.session_state.linhas_3d_master['eletrica'], st.session_state.linhas_3d_master['hidro'], 0.15)
-            if not st.session_state.colisoes_detectadas: st.success("✅ O Projeto está limpo! Nenhuma interferência entre Elétrica e Hidráulica.")
-        else: st.warning("Processe as rotas primeiro na aba BIM 3D.")
+            if not st.session_state.colisoes_detectadas:
+                st.success("✅ O Projeto está limpo! Nenhuma interferência entre Elétrica e Hidráulica.")
+        else:
+            st.warning("Processe as rotas primeiro na aba BIM 3D.")
     if st.session_state.colisoes_detectadas:
         st.error(f"⚠️ Foram detectados {len(st.session_state.colisoes_detectadas)} pontos de colisão na malha 3D!")
         st.dataframe(pd.DataFrame(st.session_state.colisoes_detectadas), use_container_width=True)
@@ -3749,7 +4020,7 @@ with tab_eletrica:
                 df_calc.at[idx, "Disjuntor (A)"] = res["Disjuntor"]
                 df_calc.at[idx, "Icc (A)"] = res["Icc_A"]
                 df_calc.at[idx, "Eletroduto (mm)"] = res["Eletroduto_mm"]
-                df_calc.at[idx, "Ocupação (%)"] = res["Ocupacao_Pct"]
+                df_calc.at[idx, "Ocupação (%)"] = res["Ocupação_Pct" if "Ocupação_Pct" in res else "Ocupacao_Pct"]
 
             st.session_state.circuitos = balancear_fases_automatico(df_calc)
             st.success("✅ Engenharia reprocessada com FCA automático por eletroduto, corrente de curto-circuito (Icc) e fases equilibradas!")
@@ -3905,12 +4176,12 @@ with tab_pecas_ifc:
 with tab_export:
     st.title("📚 Gerenciamento de Bibliotecas BIM")
     st.markdown("As tabelas abaixo alimentam as opções e cálculos normativos em todo o sistema.")
-    
+
     aba_elet, aba_hidro, aba_gas = st.tabs(["⚡ Elétrica (NBR 5410)", "💧 Instalações Hidrossanitárias (Água + Esgoto)", "🔥 Gás & Climatização (NBR 15526 / 16401)"])
-    
+
     with aba_elet:
         st.session_state.bib_eletrica = st.data_editor(st.session_state.bib_eletrica, num_rows="dynamic", use_container_width=True)
-    
+
     with aba_hidro:
         st.markdown("**Pesos (NBR 5626), Água Quente (CPVC/PPR) e UHCs (NBR 8160) unificados por equipamento**")
         st.session_state.bib_hidro = st.data_editor(st.session_state.bib_hidro, num_rows="dynamic", use_container_width=True)
