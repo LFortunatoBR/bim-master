@@ -1025,8 +1025,8 @@ def extrair_geometria_esquadria_dxf(entidade_insert, paredes_andar, z_base):
         larg_porta = round(max(0.55, min(1.60, r_arc)), 2)
 
         # Testa qual dos dois raios do arco (c_arc -> a1 ou c_arc -> a2) está alinhado com a parede (e não com a folha aberta)
-         _, _, _, _, _, _, ok1 = analisar_parede_hospedeira_e_verga(c_arc, a1, z_base, paredes_andar)
-         _, _, _, _, _, _, ok2 = analisar_parede_hospedeira_e_verga(c_arc, a2, z_base, paredes_andar)
+        _, _, _, _, _, _, ok1 = analisar_parede_hospedeira_e_verga(c_arc, a1, z_base, paredes_andar)
+        _, _, _, _, _, _, ok2 = analisar_parede_hospedeira_e_verga(c_arc, a2, z_base, paredes_andar)
 
         if ok1 and not ok2:
             p1_v, p2_v = c_arc, a1
