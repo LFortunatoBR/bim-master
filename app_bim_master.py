@@ -3798,8 +3798,8 @@ with tab_bim:
                 novos_circuitos = []
                 grupos_agrupados = {}
                 for b_el in ctx['df_eletrica']:
-                    if b_el['Tipo_BIM'] in ['Quadro Geral', 'Caixa de Passagem', 'Conexão / Eletroduto'] or int(b_el.get('Qtd_Tomadas', 0)) == 0 and b_el['Tipo_BIM'] != 'Luminária':
-    continue
+                    if b_el['Tipo_BIM'] in ['Quadro Geral', 'Caixa de Passagem', 'Conexão / Eletroduto'] or (int(b_el.get('Qtd_Tomadas', 0)) == 0 and b_el['Tipo_BIM'] != 'Luminária'): continue
+
                     eq_nome = b_el.get('Equipamento_Associado', 'Tomada Uso Geral (TUG)')
                     filtro_el = st.session_state.bib_eletrica['Equipamento'] == eq_nome
                     if filtro_el.any():
