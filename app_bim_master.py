@@ -4076,14 +4076,70 @@ with tab_clash:
             st.success("✅ Evasão concluída! Verifique o modelo 3D (aba anterior).")
             st.rerun()
 # ==============================================================================
-# PARTE 10 DE 10: ABAS 3, 4, 5 E 6 (ELÉTRICA, HIDRO/PLUVIAL/GÁS, PEÇAS E BIBLIOTECAS)
+# PARTE 10 DE 10: ABAS 3, 4, 5 E 6 (COM CACHE, IO.BYTESIO E PROTEÇÃO KEYERROR)
 # ==============================================================================
+import io
+
+def _converter_saida_pdf_para_bytes(res_funcao, buffer_mem):
+    """Garante retorno 100% em bytes na memória RAM (io.BytesIO), sem deixar arquivos no disco."""
+    if isinstance(res_funcao, bytes):
+        return res_funcao
+    if isinstance(res_funcao, io.BytesIO):
+        res_funcao.seek(0)
+        return res_funcao.getvalue()
+    if buffer_mem.tell() > 0:
+        buffer_mem.seek(0)
+        return buffer_mem.getvalue()
+    if isinstance(res_funcao, str) and os.path.exists(res_funcao):
+        with open(res_funcao, "rb") as f_tmp:
+            dados_b = f_tmp.read()
+        try:
+            os.remove(res_funcao)
+        except Exception:
+            pass
+        return dados_b
+    return b""
+
+@st.cache_data(show_spinner=False)
+def obter_pdf_unifilar_memoria(df_circuitos):
+    buf = io.BytesIO()
+    res = gerar_memorial_unifilar(df_circuitos, buf)
+    return _converter_saida_pdf_para_bytes(res, buf)
+
+@st.cache_data(show_spinner=False)
+def obter_pdf_qdg_memoria(df_circuitos):
+    buf = io.BytesIO()
+    res = gerar_pdf_qdg(df_circuitos, buf)
+    return _converter_saida_pdf_para_bytes(res, buf)
+
+@st.cache_data(show_spinner=False)
+def obter_pdf_hidro_memoria(df_hidro, dados_res):
+    buf = io.BytesIO()
+    res = gerar_memorial_hidraulico(df_hidro, dados_res, buf)
+    return _converter_saida_pdf_para_bytes(res, buf)
+
+@st.cache_data(show_spinner=False)
+def obter_pdf_materiais_memoria(df_af, df_aq, df_esg):
+    buf = io.BytesIO()
+    res = gerar_lista_materiais_pdf(df_af, df_aq, df_esg, buf)
+    return _converter_saida_pdf_para_bytes(res, buf)
+
+@st.cache_data(show_spinner=False)
+def obter_dxf_cached(linhas_el, linhas_hd, paredes, escopo):
+    return exportar_malha_para_dxf(linhas_el, linhas_hd, paredes, escopo)
+
+@st.cache_data(show_spinner=False)
+def obter_ifc_cached(linhas_el, linhas_hd, escopo):
+    return exportar_malha_para_ifc_step(linhas_el, linhas_hd, escopo)
+
+
+# --- ABA 3: ENGENHARIA ELÉTRICA EXECUTIVA (NBR 5410 + PRODIST) ---
 with tab_eletrica:
     st.title("⚡ Engenharia Elétrica Executiva (NBR 5410 + PRODIST + V12)")
 
     with st.expander("📏 Validação Normativa 1: Auditoria de Pontos Mínimos por Área e Perímetro dos Cômodos (NBR 5410 - Item 9.5.2)", expanded=False):
         df_amb_edit = st.data_editor(
-            st.session_state.auditoria_ambientes,
+            st.session_state.get("auditoria_ambientes", pd.DataFrame()),
             column_config={
                 "Tipo Cômodo (NBR 5410)": st.column_config.SelectboxColumn(
                     "Classificação NBR 5410",
@@ -4097,14 +4153,19 @@ with tab_eletrica:
         st.session_state.auditoria_ambientes = df_amb_edit
         if not df_amb_edit.empty:
             df_res_aud = pd.DataFrame([
-                auditar_ambiente_nbr5410(r.get("Ambiente", f"Amb {i+1}"), r.get("Tipo Cômodo (NBR 5410)", "Sala / Dormitório"), float(r.get("Área (m²)", 10.0)), float(r.get("Perímetro (m)", 12.0)))
+                auditar_ambiente_nbr5410(
+                    r.get("Ambiente", f"Amb {i+1}"),
+                    r.get("Tipo Cômodo (NBR 5410)", "Sala / Dormitório"),
+                    float(r.get("Área (m²)", 10.0)),
+                    float(r.get("Perímetro (m)", 12.0))
+                )
                 for i, r in df_amb_edit.iterrows()
             ])
             st.dataframe(df_res_aud, use_container_width=True, hide_index=True)
 
-    df_circ = st.session_state.circuitos
+    df_circ = st.session_state.get("circuitos", pd.DataFrame())
     if not df_circ.empty:
-        pot_instalada = pd.to_numeric(df_circ['Potência Total (W)'], errors='coerce').fillna(0).sum()
+        pot_instalada = pd.to_numeric(df_circ.get('Potência Total (W)', pd.Series(dtype=float)), errors='coerce').fillna(0).sum()
         pot_it, pot_tue, demanda_est, fd_it, fd_tue = calcular_demanda_escalonada_prodist(df_circ)
         tensao_alim = 220 if ("Trifásico" in sistema_fornecimento or "Bifásico" in sistema_fornecimento) else tensao_fase
         fator_fases = 1.732 if "Trifásico" in sistema_fornecimento else 1.0
@@ -4156,7 +4217,7 @@ with tab_eletrica:
     st.divider()
     st.subheader("📋 Quadro Geral de Cargas, Curto-Circuito (Icc) e FCA Automático por Eletroduto")
     if st.button("🚀 Recalcular Fatores (FCA Automático por Eletroduto + Icc + Balanceamento R/S/T)", type="primary", use_container_width=True):
-        if not st.session_state.circuitos.empty:
+        if not st.session_state.get("circuitos", pd.DataFrame()).empty:
             df_calc = st.session_state.circuitos.copy()
             if 'Eletroduto (Ref)' not in df_calc.columns:
                 df_calc['Eletroduto (Ref)'] = 'Eletroduto Geral'
@@ -4183,13 +4244,13 @@ with tab_eletrica:
                 df_calc.at[idx, "Disjuntor (A)"] = res["Disjuntor"]
                 df_calc.at[idx, "Icc (A)"] = res["Icc_A"]
                 df_calc.at[idx, "Eletroduto (mm)"] = res["Eletroduto_mm"]
-                df_calc.at[idx, "Ocupação (%)"] = res["Ocupação_Pct" if "Ocupação_Pct" in res else "Ocupacao_Pct"]
+                df_calc.at[idx, "Ocupação (%)"] = res.get("Ocupação_Pct", res.get("Ocupacao_Pct", 0.0))
 
             st.session_state.circuitos = balancear_fases_automatico(df_calc)
             st.success("✅ Engenharia reprocessada com FCA automático por eletroduto, corrente de curto-circuito (Icc) e fases equilibradas!")
             st.rerun()
 
-    df_circ_edit = st.data_editor(st.session_state.circuitos, num_rows="dynamic", use_container_width=True)
+    df_circ_edit = st.data_editor(st.session_state.get("circuitos", pd.DataFrame()), num_rows="dynamic", use_container_width=True)
     st.session_state.circuitos = df_circ_edit
 
     if not st.session_state.circuitos.empty:
@@ -4225,40 +4286,56 @@ with tab_eletrica:
         st.markdown(html_caixa, unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("📄 Exportação de Memoriais, Diagramas e Planilha Excel")
+    st.subheader("📄 Exportação de Memoriais, Diagramas e Planilha Excel (Memória RAM + Cache)")
     c_pdf1, c_pdf2, c_pdf3 = st.columns(3)
     with c_pdf1:
         if not st.session_state.circuitos.empty:
-            caminho_unif = gerar_memorial_unifilar(st.session_state.circuitos, "Memorial_Unifilar_NBR5410.pdf")
-            with open(caminho_unif, "rb") as f_pdf:
-                st.download_button("📥 Baixar Memorial + Diagrama Unifilar (PDF)", data=f_pdf.read(), file_name="Memorial_Unifilar_NBR5410.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            st.download_button(
+                "📥 Baixar Memorial + Diagrama Unifilar (PDF)",
+                data=obter_pdf_unifilar_memoria(st.session_state.circuitos),
+                file_name="Memorial_Unifilar_NBR5410.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
     with c_pdf2:
         if not st.session_state.circuitos.empty:
-            caminho_qdg = gerar_pdf_qdg(st.session_state.circuitos, "Layout_QDG_DIN.pdf")
-            with open(caminho_qdg, "rb") as f_qdg:
-                st.download_button("📥 Baixar Layout Físico do QDG (PDF)", data=f_qdg.read(), file_name="Layout_QDG_DIN.pdf", mime="application/pdf", use_container_width=True)
+            st.download_button(
+                "📥 Baixar Layout Físico do QDG (PDF)",
+                data=obter_pdf_qdg_memoria(st.session_state.circuitos),
+                file_name="Layout_QDG_DIN.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
     with c_pdf3:
         if not st.session_state.circuitos.empty:
             excel_bytes, excel_nome, excel_mime = gerar_arquivo_excel_completo()
-            st.download_button("📊 Baixar Planilha Completa (.XLSX)", data=excel_bytes, file_name=excel_nome, mime=excel_mime, use_container_width=True)
+            st.download_button(
+                "📊 Baixar Planilha Completa (.XLSX)",
+                data=excel_bytes,
+                file_name=excel_nome,
+                mime=excel_mime,
+                use_container_width=True
+            )
 
 # --- ABA 4: ENGENHARIA HIDROSSANITÁRIA (NBR 5626 & NBR 8160 + VALIDAÇÃO VRP 40 m.c.a.) ---
 with tab_hidro:
     st.title("💧 Engenharia Hidrossanitária Executiva (NBR 5626 & NBR 8160)")
     st.subheader("📋 Verificação de Pressões (Mín. 10 kPa e Máx. Estática 40 m.c.a. c/ VRP), Perda de Carga e Declividades")
 
-    df_h_display = pd.DataFrame(st.session_state.pontos_hidro) if st.session_state.pontos_hidro else pd.DataFrame(columns=[
+    pts_hidro_atuais = st.session_state.get("pontos_hidro", [])
+    df_h_display = pd.DataFrame(pts_hidro_atuais) if pts_hidro_atuais else pd.DataFrame(columns=[
         "ID", "Andar", "Ambiente", "Equipamento", "z", "Peso (NBR 5626)", "Vazão (L/s)",
         "Tubo AF (mm)", "L Real + Eq (m)", "Perda Carga (m.c.a.)", "Pressão Estática (m.c.a.)",
         "Pressão Disp. (kPa)", "Pressão Mín. (kPa)", "Status Pressão", "UHC", "Tubo Esgoto (mm)", "Declividade Esg. (%)"
     ])
 
     if not df_h_display.empty and "Status Pressão" in df_h_display.columns:
-        qtd_ok = sum(df_h_display["Status Pressão"] == "OK (NBR 5626)")
-        qtd_press = sum(df_h_display["Status Pressão"].str.contains("Pressurizar", na=False))
-        qtd_vrp = sum(df_h_display["Status Pressão"].str.contains("VRP", na=False))
+        qtd_ok = sum(df_h_display["Status Pressão"].astype(str).str.startswith("OK"))
+        qtd_press = sum(df_h_display["Status Pressão"].astype(str).str.contains("Pressurizar", na=False))
+        qtd_vrp = sum(df_h_display["Status Pressão"].astype(str).str.contains("VRP", na=False))
         ch1, ch2, ch3 = st.columns(3)
-        ch1.metric("Pontos com Pressão Normal (NBR 5626)", f"{qtd_ok} pts")
+        ch1.metric("Pontos Normais (NBR 5626 / 8160)", f"{qtd_ok} pts")
         ch2.metric("Pontos Exigindo Pressurização (< Mín.)", f"{qtd_press} pts")
         ch3.metric("Pontos Exigindo VRP (> 40 m.c.a. Estática)", f"{qtd_vrp} pts")
 
@@ -4266,20 +4343,32 @@ with tab_hidro:
     st.session_state.pontos_hidro = df_hidro_edit.to_dict('records')
 
     st.divider()
-    st.subheader("📄 Exportação de Memorial Hidrossanitário e Lista de Materiais (PDF)")
+    st.subheader("📄 Exportação de Memorial Hidrossanitário e Lista de Materiais (Memória RAM + Cache)")
     ch_pdf1, ch_pdf2 = st.columns(2)
     with ch_pdf1:
         if not df_hidro_edit.empty:
             dados_res = {"diario": pessoas * consumo_pc, "reserva": vol_caixa, "sugerido": vol_comercial}
-            caminho_hid_pdf = gerar_memorial_hidraulico(df_hidro_edit, dados_res, "Memorial_Hidrossanitario_Executivo.pdf")
-            with open(caminho_hid_pdf, "rb") as fh:
-                st.download_button("📥 Baixar Memorial de Cálculo Hidrossanitário (PDF)", data=fh.read(), file_name="Memorial_Hidrossanitario_Executivo.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            st.download_button(
+                "📥 Baixar Memorial de Cálculo Hidrossanitário (PDF)",
+                data=obter_pdf_hidro_memoria(df_hidro_edit, dados_res),
+                file_name="Memorial_Hidrossanitario_Executivo.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
     with ch_pdf2:
-        q_m = st.session_state.quantitativos_master
-        if not q_m['agua_fria'].empty or not q_m['esgoto'].empty:
-            caminho_mat_pdf = gerar_lista_materiais_pdf(q_m['agua_fria'], q_m['agua_quente'], q_m['esgoto'], "Quantitativo_Hidrossanitario.pdf")
-            with open(caminho_mat_pdf, "rb") as fm:
-                st.download_button("📥 Baixar Lista de Materiais Hidráulicos (PDF)", data=fm.read(), file_name="Quantitativo_Hidrossanitario.pdf", mime="application/pdf", use_container_width=True)
+        q_m = st.session_state.get("quantitativos_master", {})
+        df_q_af = q_m.get("agua_fria", pd.DataFrame())
+        df_q_aq = q_m.get("agua_quente", pd.DataFrame())
+        df_q_esg = q_m.get("esgoto", pd.DataFrame())
+        if not df_q_af.empty or not df_q_esg.empty:
+            st.download_button(
+                "📥 Baixar Lista de Materiais Hidráulicos (PDF)",
+                data=obter_pdf_materiais_memoria(df_q_af, df_q_aq, df_q_esg),
+                file_name="Quantitativo_Hidrossanitario.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
 # --- ABA 5: DESENHOS TÉCNICOS DE PEÇAS (32 FAMÍLIAS), QUANTITATIVOS TOTAIS E IFC/DXF ---
 with tab_pecas_ifc:
@@ -4294,46 +4383,81 @@ with tab_pecas_ifc:
 
     st.divider()
     st.subheader("2. Quantitativos Totais Extraídos da Geometria 3D (Bill of Materials)")
-    q_m = st.session_state.quantitativos_master
+    q_m = st.session_state.get("quantitativos_master", {})
+    df_q_el = q_m.get("eletrica", pd.DataFrame())
+    df_q_af = q_m.get("agua_fria", pd.DataFrame())
+    df_q_aq = q_m.get("agua_quente", pd.DataFrame())
+    df_q_esg = q_m.get("esgoto", pd.DataFrame())
+
     cq1, cq2 = st.columns(2)
     with cq1:
         st.markdown("**⚡ Quantitativo Total - Instalações Elétricas**")
-        st.dataframe(q_m['eletrica'], use_container_width=True, hide_index=True)
+        st.dataframe(df_q_el, use_container_width=True, hide_index=True)
         st.markdown("**🔥 Quantitativo Total - Água Quente (CPVC/PPR)**")
-        st.dataframe(q_m['agua_quente'], use_container_width=True, hide_index=True)
+        st.dataframe(df_q_aq, use_container_width=True, hide_index=True)
     with cq2:
         st.markdown("**💧 Quantitativo Total - Água Fria (PVC Soldável)**")
-        st.dataframe(q_m['agua_fria'], use_container_width=True, hide_index=True)
+        st.dataframe(df_q_af, use_container_width=True, hide_index=True)
         st.markdown("**🤎 Quantitativo Total - Esgoto Sanitário e Ventilação**")
-        st.dataframe(q_m['esgoto'], use_container_width=True, hide_index=True)
+        st.dataframe(df_q_esg, use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("3. Fluxograma Topológico IFC & Exportação de Malhas 3D (.DXF c/ Simbologia ABNT e .IFC)")
     st.markdown("O arquivo `.DXF` exportado já inclui a **Simbologia Unifilar ABNT (Fase, Neutro, Terra e Retorno)** desenhada automaticamente nos eletrodutos.")
-    fig_ifc = gerar_fluxograma_ifc_plotly(
-        st.session_state.linhas_3d_master['eletrica'],
-        st.session_state.linhas_3d_master['hidro'],
-        config_andares
-    )
-    st.plotly_chart(fig_ifc, use_container_width=True)
 
-    paredes_export = st.session_state.contexto_bim.get('paredes', [])
-    linhas_el_exp = st.session_state.linhas_3d_master['eletrica']
-    linhas_hd_exp = st.session_state.linhas_3d_master['hidro']
+    linhas_master = st.session_state.get("linhas_3d_master", {})
+    linhas_el_exp = linhas_master.get("eletrica", [])
+    linhas_hd_exp = linhas_master.get("hidro", [])
+    paredes_export = st.session_state.get("contexto_bim", {}).get("paredes", [])
+
+    fig_ifc = gerar_fluxograma_ifc_plotly(linhas_el_exp, linhas_hd_exp, config_andares)
+    st.plotly_chart(fig_ifc, use_container_width=True)
 
     ce1, ce2, ce3 = st.columns(3)
     with ce1:
         st.markdown("**⚡ Projeto Individual de Elétrica**")
-        st.download_button("📐 Baixar Malha Elétrica 3D + Símbolos ABNT (.DXF)", data=exportar_malha_para_dxf(linhas_el_exp, [], paredes_export, "ELETRICA"), file_name="Malha_Eletrica_3D_ABNT.dxf", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Elétrica (.IFC)", data=exportar_malha_para_ifc_step(linhas_el_exp, [], "ELETRICA"), file_name="Projeto_Eletrico_BIM.ifc", use_container_width=True)
+        st.download_button(
+            "📐 Baixar Malha Elétrica 3D + Símbolos ABNT (.DXF)",
+            data=obter_dxf_cached(linhas_el_exp, [], paredes_export, "ELETRICA"),
+            file_name="Malha_Eletrica_3D_ABNT.dxf",
+            use_container_width=True
+        )
+        st.download_button(
+            "🧱 Baixar Modelo IFC Elétrica (.IFC)",
+            data=obter_ifc_cached(linhas_el_exp, [], "ELETRICA"),
+            file_name="Projeto_Eletrico_BIM.ifc",
+            use_container_width=True
+        )
     with ce2:
         st.markdown("**💧 Projeto Individual de Hidráulica**")
-        st.download_button("📐 Baixar Malha Hidráulica 3D (.DXF)", data=exportar_malha_para_dxf([], linhas_hd_exp, paredes_export, "HIDRO"), file_name="Malha_Hidraulica_3D.dxf", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Hidráulica (.IFC)", data=exportar_malha_para_ifc_step([], linhas_hd_exp, "HIDRO"), file_name="Projeto_Hidraulico_BIM.ifc", use_container_width=True)
+        st.download_button(
+            "📐 Baixar Malha Hidráulica 3D (.DXF)",
+            data=obter_dxf_cached([], linhas_hd_exp, paredes_export, "HIDRO"),
+            file_name="Malha_Hidraulica_3D.dxf",
+            use_container_width=True
+        )
+        st.download_button(
+            "🧱 Baixar Modelo IFC Hidráulica (.IFC)",
+            data=obter_ifc_cached([], linhas_hd_exp, "HIDRO"),
+            file_name="Projeto_Hidraulico_BIM.ifc",
+            use_container_width=True
+        )
     with ce3:
         st.markdown("**🏢 Projeto Unificado Completo (Elétrica + Hidro)**")
-        st.download_button("📐 Baixar Malha Unificada 3D (.DXF)", data=exportar_malha_para_dxf(linhas_el_exp, linhas_hd_exp, paredes_export, "UNIFICADO"), file_name="Malha_MEP_Unificada_3D.dxf", type="primary", use_container_width=True)
-        st.download_button("🧱 Baixar Modelo IFC Unificado (.IFC)", data=exportar_malha_para_ifc_step(linhas_el_exp, linhas_hd_exp, "UNIFICADO"), file_name="Projeto_MEP_Unificado_BIM.ifc", type="primary", use_container_width=True)
+        st.download_button(
+            "📐 Baixar Malha Unificada 3D (.DXF)",
+            data=obter_dxf_cached(linhas_el_exp, linhas_hd_exp, paredes_export, "UNIFICADO"),
+            file_name="Malha_MEP_Unificada_3D.dxf",
+            type="primary",
+            use_container_width=True
+        )
+        st.download_button(
+            "🧱 Baixar Modelo IFC Unificado (.IFC)",
+            data=obter_ifc_cached(linhas_el_exp, linhas_hd_exp, "UNIFICADO"),
+            file_name="Projeto_MEP_Unificado_BIM.ifc",
+            type="primary",
+            use_container_width=True
+        )
 
 # --- ABA 6: GERENCIADOR DE BIBLIOTECAS ---
 with tab_export:
@@ -4343,14 +4467,14 @@ with tab_export:
     aba_elet, aba_hidro, aba_gas = st.tabs(["⚡ Elétrica (NBR 5410)", "💧 Instalações Hidrossanitárias (Água + Esgoto)", "🔥 Gás & Climatização (NBR 15526 / 16401)"])
 
     with aba_elet:
-        st.session_state.bib_eletrica = st.data_editor(st.session_state.bib_eletrica, num_rows="dynamic", use_container_width=True)
+        st.session_state.bib_eletrica = st.data_editor(st.session_state.get("bib_eletrica", pd.DataFrame()), num_rows="dynamic", use_container_width=True)
 
     with aba_hidro:
         st.markdown("**Pesos (NBR 5626), Água Quente (CPVC/PPR) e UHCs (NBR 8160) unificados por equipamento**")
-        st.session_state.bib_hidro = st.data_editor(st.session_state.bib_hidro, num_rows="dynamic", use_container_width=True)
+        st.session_state.bib_hidro = st.data_editor(st.session_state.get("bib_hidro", pd.DataFrame()), num_rows="dynamic", use_container_width=True)
 
     with aba_gas:
         st.markdown("**Parâmetros Normativos de Gás Combustível (GLP/GN - NBR 15526) e Climatização Split (NBR 16401)**")
-        st.session_state.bib_gas_avac = st.data_editor(st.session_state.bib_gas_avac, num_rows="dynamic", use_container_width=True)
+        st.session_state.bib_gas_avac = st.data_editor(st.session_state.get("bib_gas_avac", pd.DataFrame()), num_rows="dynamic", use_container_width=True)
 
 # === FIM DO ARQUIVO ===
