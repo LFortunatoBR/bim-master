@@ -1665,9 +1665,18 @@ def rotear_hidro(df_bh, ctx):
     return linhas_processadas
 
 def rotear_eletrica(df_be, ctx, evitar_linhas=None):
-    """Roteamento Elétrico com suporte a múltiplos Quadros (QDGs) e interligação em cascata para TUGs."""
+    """
+    Motor Elétrico 3D Consciente de Estrutura, Vergas/Contravergas (+30cm) e Simbologia ABNT NBR 5410 / 5444:
+    - Libera vãos de portas e janelas na matriz 2D e aplica desvios 3D acima da Verga ou abaixo da Contraverga;
+    - Utiliza Caixas de Passagem e Conexões de Eletroduto na altura z_relativo como nós intermediários;
+    - Roteia Iluminação pela laje superior, TUGs/TUEs em cascata por pavimento e Retornos de Interruptores.
+    """
+    linhas_processadas = []
+    if not df_be:
+        return linhas_processadas
+
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-    
+
     for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
         x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
         x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
@@ -1677,122 +1686,158 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
 
     elementos_arq = ctx.get('elementos_arquitetonicos', [])
     for elem in elementos_arq:
-        if elem['Tipo'] == 'Pilar/Viga' and 'PILAR' in elem['ID_CAD'].upper():
+        if elem.get('Tipo') == 'Pilar/Viga' and 'PILAR' in str(elem.get('ID_CAD', '')).upper():
             px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
             bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
+
+    # Libera os vãos de portas e janelas na matriz 2D para que os eletrodutos atravessem por cima da verga ou abaixo da contraverga
     liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
 
+    # Se acionado pelo Clash Avoidance (Aba 2), penaliza pontos onde passam tubos hidráulicos na mesma cota
     if evitar_linhas:
-        for linha in evitar_linhas:
-            pts = linha['pontos']
-            for i in range(len(pts)-1):
-                x0, y0 = escalar_coord(pts[i][0] - ctx['min_x'] + ctx['offset']), escalar_coord(pts[i][1] - ctx['min_y'] + ctx['offset'])
-                x1, y1 = escalar_coord(pts[i+1][0] - ctx['min_x'] + ctx['offset']), escalar_coord(pts[i+1][1] - ctx['min_y'] + ctx['offset'])
-                for px, py in algoritmo_bresenham(x0, y0, x1, y1):
-                    for dy in [-1, 0, 1]:
-                        for dx in [-1, 0, 1]:
-                            if 0 <= py+dy < ctx['grid_h'] and 0 <= px+dx < ctx['grid_w']:
-                                matriz[py+dy][px+dx] = 0
+        for l_hid in evitar_linhas:
+            for pt_h in l_hid.get('pontos', []):
+                hx = escalar_coord(pt_h[0] - ctx['min_x'] + ctx['offset'])
+                hy = escalar_coord(pt_h[1] - ctx['min_y'] + ctx['offset'])
+                if 0 <= hy < ctx['grid_h'] and 0 <= hx < ctx['grid_w']:
+                    matriz[hy][hx] = 0
 
-    linhas_processadas = []
-    quadros = [b for b in df_be if b['Tipo_BIM'] == 'Quadro Geral']
     h_viga = ctx.get('altura_viga', 0.40)
-    usar_shaft = ctx.get('incluir_shaft', True)
+    rotear_cascata = ctx.get('rotear_em_cascata', True)
 
-    def achar_caminho(origem, destino, cor, fios, id_ref=""):
-        ox, oy = escalar_coord(origem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(origem['y'] - ctx['min_y'] + ctx['offset'])
-        dx, dy = escalar_coord(destino['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(destino['y'] - ctx['min_y'] + ctx['offset'])
+    def rota_a_star_elet(orig, dest):
+        ox = escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])
+        oy = escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])
+        dx = escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])
+        dy = escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])
         liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'])
         liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'])
         grid = Grid(matrix=matriz)
         finder = AStarFinder(diagonal_movement=DiagonalMovement.never)
-        caminho_2d, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
-        if caminho_2d:
-            z_origem_teto = origem['z_base'] + origem.get('pe_direito', 3.0)
-            z_destino_teto = destino['z_base'] + destino.get('pe_direito', 3.0)
-            linha_3d = [(origem['x'], origem['y'], origem['z_base'] + origem['z_relativo'])]
+        caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
+        return [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
 
-            if usar_shaft and abs(origem['z_base'] - destino['z_base']) > 0.1:
-                linha_3d.append((origem['x'], origem['y'], z_origem_teto))
-                for p in caminho_2d:
-                    linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_origem_teto))
-                linha_3d.append((destino['x'], destino['y'], z_origem_teto))
-                linha_3d.append((destino['x'], destino['y'], z_destino_teto))
-            else:
-                z_nav = max(z_origem_teto, z_destino_teto)
-                linha_3d.append((origem['x'], origem['y'], z_nav))
-                for p in caminho_2d:
-                    linha_3d.append((desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset'], z_nav))
-                linha_3d.append((destino['x'], destino['y'], z_nav))
+    quadros = [b for b in df_be if b.get('Tipo_BIM') == 'Quadro Geral']
+    if not quadros:
+        # Fallback automático: se não houver QDG marcado na tabela, adota o 1º bloco elétrico como origem principal
+        quadros = [df_be[0]]
 
-            linha_3d.append((destino['x'], destino['y'], destino['z_base'] + destino['z_relativo']))
-            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, origem['z_base'], origem.get('pe_direito', 3.0), h_viga)
+    caixas_passagem = [b for b in df_be if b.get('Tipo_BIM') in ['Caixa de Passagem', 'Conexão / Eletroduto']]
+    luminarias = [b for b in df_be if b.get('Tipo_BIM') == 'Luminária']
+    caixas_tom_int = [b for b in df_be if b.get('Tipo_BIM') in ['Caixa 4x2', 'Caixa 4x4']]
+
+    # 1. ROTEAMENTO DAS CAIXAS DE PASSAGEM / CONEXÕES DE ELETRODUTO -> QUADRO GERAL (COM DESVIO DE VERGAS/CONTRAVERGAS)
+    for cp in caixas_passagem:
+        qdg_alvo = min(quadros, key=lambda q: abs(q['z_base'] - cp['z_base']) * 4 + dist_2d((cp['x'], cp['y']), (q['x'], q['y'])))
+        if qdg_alvo['ID_CAD'] == cp['ID_CAD']:
+            continue
+        pts_2d = rota_a_star_elet(cp, qdg_alvo)
+        if pts_2d:
+            z_cp = cp['z_base'] + float(cp.get('z_relativo', 1.30))
+            z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
+            linha_3d = [(cp['x'], cp['y'], z_cp)]
+            for px, py in pts_2d:
+                linha_3d.append((px, py, z_cp))
+            linha_3d.extend([(qdg_alvo['x'], qdg_alvo['y'], z_cp), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)])
+            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cp['z_base'], cp.get('pe_direito', 3.0), h_viga)
+            comp_m = round(calcular_comprimento_rota(linha_3d), 2)
             linhas_processadas.append({
-                'pontos': linha_3d, 'cor': cor, 'fios': fios,
-                'id_origem': id_ref, 'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2)
+                'pontos': linha_3d, 'cor': '#ca8a04', 'fios': 'F N T',
+                'comprimento_m': comp_m, 'id_origem': cp['ID_CAD'], 'tipo': 'Eletroduto Tronco / Passagem'
             })
 
-    if quadros:
-        luminarias = {b['ID_CAD']: b for b in df_be if b['Tipo_BIM'] == 'Luminária'}
-        caixas = {b['ID_CAD']: b for b in df_be if 'Caixa' in b['Tipo_BIM']}
-        controle_lum = {lum_id: [] for lum_id in luminarias.keys()}
+    # 2. ROTEAMENTO DE LUMINÁRIAS (PELO TETO/LAJE COM DESVIO DE VIGAS)
+    for lum in luminarias:
+        qdg_alvo = min(quadros, key=lambda q: abs(q['z_base'] - lum['z_base']) * 4 + dist_2d((lum['x'], lum['y']), (q['x'], q['y'])))
+        if qdg_alvo['ID_CAD'] == lum['ID_CAD']:
+            continue
+        pts_2d = rota_a_star_elet(lum, qdg_alvo)
+        if pts_2d:
+            z_teto = lum['z_base'] + float(lum.get('z_relativo', lum.get('pe_direito', 3.0))) - 0.05
+            z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
+            linha_3d = [(lum['x'], lum['y'], z_teto)]
+            for px, py in pts_2d:
+                linha_3d.append((px, py, z_teto))
+            linha_3d.extend([(qdg_alvo['x'], qdg_alvo['y'], z_teto), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)])
+            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, lum['z_base'], lum.get('pe_direito', 3.0), h_viga)
+            comp_m = round(calcular_comprimento_rota(linha_3d), 2)
+            fios_lum = "F F T" if int(lum.get('Tensao_V', 127)) == 220 else "F N T"
+            linhas_processadas.append({
+                'pontos': linha_3d, 'cor': '#eab308', 'fios': fios_lum,
+                'comprimento_m': comp_m, 'id_origem': lum['ID_CAD'], 'tipo': 'Eletroduto Iluminação (Teto)'
+            })
 
-        caixas_tug_por_andar = {}
-        for cx_id, cx_dados in caixas.items():
-            qg_prox = min(quadros, key=lambda q: abs(q['z_base'] - cx_dados['z_base']) * 10 + dist_2d((cx_dados['x'], cx_dados['y']), (q['x'], q['y'])))
-            if cx_dados.get('Qtd_Tomadas', 0) > 0:
-                eq_assoc = str(cx_dados.get('Equipamento_Associado', 'TUG')).upper()
-                eh_tue = any(k in eq_assoc for k in ['CHUVEIRO', 'COOKTOP', 'AR-CONDICIONADO', 'AR SPLIT', 'FORNO', 'WALLBOX', 'TORNEIRA', 'SECADORA', 'MÁQUINA'])
-                if eh_tue:
-                    achar_caminho(cx_dados, qg_prox, '#ff0055', 'F F T (TUE)' if cx_dados.get('Tensao_V', 127) >= 220 else 'F N T (TUE)', cx_id)
-                else:
-                    andar_k = cx_dados.get('Andar', 'Pav 0')
-                    caixas_tug_por_andar.setdefault(andar_k, []).append(cx_dados)
+    # 3. ROTEAMENTO DE TOMADAS (TUGs EM CASCATA / TUEs DEDICADOS) E INTERRUPTORES PELA PAREDE
+    # Nós alimentadores disponíveis (Quadro Geral + Caixas de Passagem já conectadas)
+    nos_alimentados = list(quadros) + list(caixas_passagem)
+    caixas_ordenadas = sorted(
+        caixas_tom_int,
+        key=lambda c: min(dist_2d((c['x'], c['y']), (q['x'], q['y'])) for q in quadros)
+    )
 
-            if cx_dados.get('Qtd_Interruptores', 0) > 0 and cx_dados.get('Luminarias_Controladas'):
-                lums = [l.strip() for l in str(cx_dados['Luminarias_Controladas']).split(',') if l.strip()]
-                for l in lums:
-                    if l in controle_lum:
-                        controle_lum[l].append(cx_id)
+    for cx in caixas_ordenadas:
+        if int(cx.get('Qtd_Tomadas', 0)) > 0 or int(cx.get('Qtd_Interruptores', 0)) == 0:
+            eq_ass = str(cx.get('Equipamento_Associado', ''))
+            eh_tue = (int(cx.get('Tensao_V', 127)) == 220 and cx.get('Amperagem_Tomadas') == '20A') or any(k in eq_ass.upper() for k in ["CHUVEIRO", "AR-CONDICIONADO", "SPLIT", "HIDROMASSAGEM", "BOILER", "COOKTOP", "FORNO", "TORNEIRA"])
 
-        for andar_k, lista_cxs in caixas_tug_por_andar.items():
-            qg_andar = min(quadros, key=lambda q: abs(q['z_base'] - lista_cxs[0]['z_base']) * 10)
-            nao_visitadas = lista_cxs.copy()
-            atual = qg_andar
-            cont_cascata = 0
-            while nao_visitadas:
-                prox_cx = min(nao_visitadas, key=lambda c: dist_2d((atual['x'], atual['y']), (c['x'], c['y'])))
-                achar_caminho(prox_cx, atual, 'yellow' if evitar_linhas else 'green', 'F N T', prox_cx['ID_CAD'])
-                nao_visitadas.remove(prox_cx)
-                cont_cascata += 1
-                atual = qg_andar if cont_cascata >= 4 else prox_cx
-                if cont_cascata >= 4:
-                    cont_cascata = 0
+            # TUE vai para o QDG (ou Caixa de Passagem); TUG pode encadear em cascata na tomada vizinha do mesmo pavimento
+            opcoes_dest = (list(quadros) + list(caixas_passagem)) if (eh_tue or not rotear_cascata) else [n for n in nos_alimentados if abs(n['z_base'] - cx['z_base']) < 0.6]
+            if not opcoes_dest:
+                opcoes_dest = list(quadros)
 
-        for lum_id, lum in luminarias.items():
-            qg_prox = min(quadros, key=lambda q: abs(q['z_base'] - lum['z_base']) * 10 + dist_2d((lum['x'], lum['y']), (q['x'], q['y'])))
-            achar_caminho(lum, qg_prox, 'cyan', 'N T', lum_id)
-            caixas_comando = controle_lum.get(lum_id, [])
+            alvo_el = min(opcoes_dest, key=lambda n: dist_2d((cx['x'], cx['y']), (n['x'], n['y'])))
+            if alvo_el['ID_CAD'] != cx['ID_CAD']:
+                pts_2d = rota_a_star_elet(cx, alvo_el)
+                if pts_2d:
+                    z_cx = cx['z_base'] + float(cx.get('z_relativo', 0.30))
+                    z_alvo = alvo_el['z_base'] + float(alvo_el.get('z_relativo', 1.30))
+                    # Caminha na altura média de parede do trecho e desvia automaticamente de portas, janelas, vergas e contravergas!
+                    z_travessia = z_cx if abs(z_cx - z_alvo) < 0.4 else min(max(z_cx, 0.35), 1.30)
+                    linha_3d = [(cx['x'], cx['y'], z_cx), (cx['x'], cx['y'], z_travessia)]
+                    for px, py in pts_2d:
+                        linha_3d.append((px, py, z_travessia))
+                    linha_3d.extend([(alvo_el['x'], alvo_el['y'], z_travessia), (alvo_el['x'], alvo_el['y'], z_alvo)])
+                    linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
 
-            if len(caixas_comando) == 1:
-                cx = caixas[caixas_comando[0]]
-                achar_caminho(cx, lum, 'orange', 'F R', cx['ID_CAD'])
-            elif len(caixas_comando) == 2:
-                cx1, cx2 = caixas[caixas_comando[0]], caixas[caixas_comando[1]]
-                achar_caminho(cx1, qg_prox, 'orange', 'F', cx1['ID_CAD'])
-                achar_caminho(cx1, cx2, 'orange', '2R (3W)', cx1['ID_CAD'])
-                achar_caminho(cx2, lum, 'orange', 'R', cx2['ID_CAD'])
-            elif len(caixas_comando) >= 3:
-                cx_inicio = caixas[caixas_comando[0]]
-                cx_fim = caixas[caixas_comando[-1]]
-                achar_caminho(cx_inicio, qg_prox, 'orange', 'F', cx_inicio['ID_CAD'])
-                cx_atual = cx_inicio
-                for cx_meio_id in caixas_comando[1:-1]:
-                    cx_meio = caixas[cx_meio_id]
-                    achar_caminho(cx_atual, cx_meio, '#ff5500', '4R (4W)', cx_atual['ID_CAD'])
-                    cx_atual = cx_meio
-                achar_caminho(cx_atual, cx_fim, 'orange', '2R (3W)', cx_atual['ID_CAD'])
-                achar_caminho(cx_fim, lum, 'orange', 'R', cx_fim['ID_CAD'])
+                    comp_m = round(calcular_comprimento_rota(linha_3d), 2)
+                    fios_tom = "F F T" if int(cx.get('Tensao_V', 127)) == 220 else "F N T"
+                    cor_el = '#dc2626' if eh_tue else '#16a34a'
+                    linhas_processadas.append({
+                        'pontos': linha_3d, 'cor': cor_el, 'fios': fios_tom,
+                        'comprimento_m': comp_m, 'id_origem': cx['ID_CAD'],
+                        'tipo': 'Eletroduto TUE Dedicado' if eh_tue else 'Eletroduto Tomadas (Parede)'
+                    })
+                    if not eh_tue:
+                        nos_alimentados.append(cx)
+
+        # 4. DESCIDA DE COMANDO DE INTERRUPTORES (RETORNO ENTRE INTERRUPTOR E LUMINÁRIA CONTROLADA)
+        if int(cx.get('Qtd_Interruptores', 0)) > 0:
+            lums_ctrl_str = str(cx.get('Luminarias_Controladas', '')).strip()
+            lums_alvo = [l for l in luminarias if l['ID_CAD'] in lums_ctrl_str.split(",")] if lums_ctrl_str else []
+            if not lums_alvo and luminarias:
+                # Se não selecionou manualmente, vincula automaticamente à luminária mais próxima do mesmo pavimento
+                lums_andar = [l for l in luminarias if abs(l['z_base'] - cx['z_base']) < 0.6]
+                if lums_andar:
+                    lums_alvo = [min(lums_andar, key=lambda l: dist_2d((cx['x'], cx['y']), (l['x'], l['y'])))]
+
+            qtd_i = int(cx.get('Qtd_Interruptores', 1))
+            fios_ret = "F R1 R2" if ("PARALELO" in str(cx.get('Nome_Bloco', '')).upper() or qtd_i == 2) else ("F R1 R2 R3" if qtd_i >= 3 else "F R")
+
+            for lum_dest in lums_alvo:
+                pts_2d_r = rota_a_star_elet(cx, lum_dest)
+                if pts_2d_r:
+                    z_int = cx['z_base'] + float(cx.get('z_relativo', 1.20))
+                    z_lum = lum_dest['z_base'] + float(lum_dest.get('z_relativo', lum_dest.get('pe_direito', 3.0))) - 0.05
+                    linha_ret = [(cx['x'], cx['y'], z_int), (cx['x'], cx['y'], z_lum)]
+                    for px, py in pts_2d_r:
+                        linha_ret.append((px, py, z_lum))
+                    linha_ret.append((lum_dest['x'], lum_dest['y'], z_lum))
+                    linha_ret = aplicar_desvios_estruturais_e_vaos_3d(linha_ret, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
+                    linhas_processadas.append({
+                        'pontos': linha_ret, 'cor': '#f59e0b', 'fios': fios_ret,
+                        'comprimento_m': round(calcular_comprimento_rota(linha_ret), 2),
+                        'id_origem': cx['ID_CAD'], 'tipo': f"Retorno Interruptor ({fios_ret})"
+                    })
 
     return linhas_processadas
 # ==============================================================================
@@ -2498,40 +2543,126 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
 
     return "Aparelho Hidráulico", (opcoes_equip[0] if opcoes_equip else ""), 0.5
 
-def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, tensao_padrao, opcoes_elet):
-    alvo = normalizar_texto_bim(f"{nome_bloco} {layer_bloco}")
-    opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_elet}
+def garantir_itens_extras_na_bib_eletrica():
+    """Garante na bib_eletrica as opções de Eletrodutos 25mm, Conexões, Caixas de Passagem e TUEs 220V."""
+    novos_elet = [
+        {"Equipamento": "Sem Carga (Apenas Interruptor / Passagem / Conexão)", "Potência (W)": 0, "Tensão (V)": 127, "Fator de Potência": 1.00, "Tipo": "Passagem", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Eletroduto Corrugado/Rígido 25mm (Passagem)", "Potência (W)": 0, "Tensão (V)": 127, "Fator de Potência": 1.00, "Tipo": "Passagem", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Curva / Joelho 90° Eletroduto 25mm", "Potência (W)": 0, "Tensão (V)": 127, "Fator de Potência": 1.00, "Tipo": "Passagem", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Caixa de Passagem Elétrica 4x2 / 4x4 / Octogonal", "Potência (W)": 0, "Tensão (V)": 127, "Fator de Potência": 1.00, "Tipo": "Passagem", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Tomada Uso Geral (TUG)", "Potência (W)": 100, "Tensão (V)": 127, "Fator de Potência": 0.95, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Tomada Bancada Cozinha / Área de Serviço (600W)", "Potência (W)": 600, "Tensão (V)": 127, "Fator de Potência": 0.95, "Tipo": "TUG", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Lâmpada / Painel LED (Iluminação)", "Potência (W)": 100, "Tensão (V)": 127, "Fator de Potência": 0.95, "Tipo": "Iluminação", "Curva Disjuntor": "B", "Uso de DR": "Opcional"},
+        {"Equipamento": "Chuveiro Elétrico (220V)", "Potência (W)": 6800, "Tensão (V)": 220, "Fator de Potência": 1.00, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Ar-Condicionado Split Inverter (220V)", "Potência (W)": 1500, "Tensão (V)": 220, "Fator de Potência": 0.92, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Opcional"},
+        {"Equipamento": "Bomba Hidromassagem / Spa (220V)", "Potência (W)": 1500, "Tensão (V)": 220, "Fator de Potência": 0.85, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Aquecedor de Água / Boiler Elétrico (220V)", "Potência (W)": 3000, "Tensão (V)": 220, "Fator de Potência": 1.00, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Toalheiro Térmico Elétrico (220V)", "Potência (W)": 150, "Tensão (V)": 220, "Fator de Potência": 1.00, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Cooktop de Indução / Forno Elétrico (220V)", "Potência (W)": 4500, "Tensão (V)": 220, "Fator de Potência": 0.98, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Torneira Elétrica / Lava-Louça (220V)", "Potência (W)": 3500, "Tensão (V)": 220, "Fator de Potência": 1.00, "Tipo": "TUE", "Curva Disjuntor": "B", "Uso de DR": "Obrigatório"},
+        {"Equipamento": "Bomba de Recalque / Piscina (220V)", "Potência (W)": 1100, "Tensão (V)": 220, "Fator de Potência": 0.85, "Tipo": "TUE", "Curva Disjuntor": "C", "Uso de DR": "Obrigatório"},
+    ]
+    if 'bib_eletrica' in st.session_state:
+        existentes = set(st.session_state.bib_eletrica['Equipamento'].values)
+        faltantes = [item for item in novos_elet if item["Equipamento"] not in existentes]
+        if faltantes:
+            st.session_state.bib_eletrica = pd.concat([st.session_state.bib_eletrica, pd.DataFrame(faltantes)], ignore_index=True)
 
-    def buscar_el(termo_chave):
-        t_norm = normalizar_texto_bim(termo_chave)
-        for k_norm, op_real in opcoes_norm.items():
-            if t_norm in k_norm:
-                return op_real
-        return opcoes_elet[0] if opcoes_elet else "Tomada Uso Geral (TUG)"
+garantir_itens_extras_na_bib_eletrica()
 
-    if any(k in alvo for k in ["QUADRO", "QDG", "QDL", "QD "]):
-        return "Quadro Geral", buscar_el("Tomada Uso Geral (TUG)"), 0, 0, "10A", tensao_padrao, 1.5
-    if any(k in alvo for k in ["CHUVEIRO", "DUCHA ELETRICA", "TORNEIRA ELETRICA"]):
-        return "Caixa 4x2", buscar_el("Chuveiro Elétrico 7500W"), 1, 0, "20A", 220, 2.1
-    if any(k in alvo for k in ["COOKTOP", "INDUCAO", "FOGAO"]):
-        return "Caixa 4x2", buscar_el("Cooktop Indução 7000W"), 1, 0, "20A", 220, 0.6
-    if any(k in alvo for k in ["AR CONDICIONADO", "SPLIT", "EVAPORADORA", "AC "]):
-        return "Caixa 4x2", buscar_el("Ar-Condicionado 12000 BTU"), 1, 0, "20A", 220, 2.2
-    if any(k in alvo for k in ["FORNO", "MICROONDAS", "AIR FRYER", "COZINHA", "BANCADA", "SERVICO", "LAVANDERIA"]):
-        return "Caixa 4x2", buscar_el("Tomada Cozinha/Serviço (TUG)"), 1, 0, "20A", tensao_padrao, 1.1
-    if any(k in alvo for k in ["INTERRUPTOR", "INT ", "TECLA", "PARALELO", "3W", "4W"]):
-        qtd_int = 2 if ("DUPLO" in alvo or "2S" in alvo) else (3 if ("TRIPLO" in alvo or "3S" in alvo) else 1)
-        qtd_tom = 1 if ("CONJ" in alvo or "TOM" in alvo) else 0
-        return "Caixa 4x2", buscar_el("Lâmpada LED 15W"), qtd_tom, qtd_int, "10A", tensao_padrao, 1.1
-    if any(k in alvo for k in ["TOMADA", "TUG", "TUE", "CX ", "4X2", "4X4", "PONTO FORCA"]):
-        tb = "Caixa 4x4" if "4X4" in alvo else "Caixa 4x2"
-        z_r = 0.3 if "BAIXA" in alvo else (2.1 if "ALTA" in alvo else 0.6)
-        qtd_t = 2 if ("DUPLA" in alvo or "2T" in alvo) else 1
-        return tb, buscar_el("Tomada Uso Geral (TUG)"), qtd_t, 0, "10A", tensao_padrao, z_r
-    if any(k in alvo for k in ["LUMINARIA", "LAMPADA", "LUZ", "SPOT", "PLAFON", "PENDENTE", "LED", "LUSTRE", "TETO", "ILUM"]):
-        return "Luminária", buscar_el("Lâmpada LED 15W"), 0, 0, "10A", tensao_padrao, pe_direito
 
-    return "Caixa 4x2", buscar_el("Tomada Uso Geral (TUG)"), 1, 0, "10A", tensao_padrao, 0.6
+def classificar_bloco_eletrico_inteligente(nome_bloco, layer_bloco, pe_direito, tensao_padrao, opcoes_eq_elet):
+    """
+    Associa automaticamente Nome_Bloco + Layer à Função Física BIM, Carga da Biblioteca,
+    Qtd de Tomadas, Qtd de Interruptores, Amperagem (10A/20A), Tensão (127V/220V) e altura z_relativo.
+    """
+    nome_limpo = str(nome_bloco).split("(")[0].split("[")[0].strip()
+    nome_norm = normalizar_texto_bim(nome_limpo)
+    layer_norm = normalizar_texto_bim(layer_bloco)
+    alvo = f"{nome_norm} {layer_norm}".strip()
+    palavras_alvo = set(alvo.split())
+    opcoes_norm = {normalizar_texto_bim(op): op for op in opcoes_eq_elet}
+
+    def buscar_eq_el(termo):
+        t_n = normalizar_texto_bim(termo)
+        if t_n in opcoes_norm:
+            return opcoes_norm[t_n]
+        for k_n, op_r in opcoes_norm.items():
+            if t_n in k_n:
+                return op_r
+        return opcoes_eq_elet[0] if opcoes_eq_elet else "Tomada Uso Geral (TUG)"
+
+    # 1. QUADRO DE DISTRIBUIÇÃO (QDG / QDC)
+    if any(k in alvo for k in ["QUADRO", "QDG", "QDC", "QDL", "DISJUNTOR GERAL", "CENTRO DE CARGAS"]):
+        return "Quadro Geral", buscar_eq_el("Sem Carga"), 0, 0, "10A", 220, 1.50
+
+    # 2. CONEXÕES DE ELETRODUTO, CURVAS, LUVAS E TRECHOS DE PASSAGEM (BASE 25mm)
+    eh_curva_el = any(k in palavras_alvo for k in ["CURVA", "JOELHO", "COTOVELO", "LUVA", "BUCHA", "CONDULETE"])
+    eh_eletroduto = any(k in alvo for k in ["ELETRODUTO", "CONDUITE", "TUBULACAO ELETRICA"])
+    if eh_curva_el or eh_eletroduto:
+        z_con = round(float(pe_direito) - 0.05, 2) if "TETO" in alvo or "LAJE" in alvo else (0.05 if "PISO" in alvo else 1.30)
+        eq_c = buscar_eq_el("Curva / Joelho 90° Eletroduto 25mm" if eh_curva_el else "Eletroduto Corrugado/Rígido 25mm")
+        return "Conexão / Eletroduto", eq_c, 0, 0, "10A", tensao_padrao, z_con
+
+    # 3. CAIXAS DE PASSAGEM (PAREDE, PISO OU OCTOGONAL DE TETO)
+    if any(k in alvo for k in ["CAIXA DE PASSAGEM", "CX PASSAGEM", "OCTOGONAL", "PASSAGEM"]):
+        z_cp = round(float(pe_direito) - 0.05, 2) if ("OCTOGONAL" in alvo or "TETO" in alvo) else (0.05 if "PISO" in alvo else 0.30)
+        return "Caixa de Passagem", buscar_eq_el("Caixa de Passagem Elétrica"), 0, 0, "10A", tensao_padrao, z_cp
+
+    # 4. ILUMINAÇÃO (TETO E ARANDELAS DE PAREDE)
+    if any(k in alvo for k in ["ARANDELA", "BALIZADOR"]):
+        z_ar = 0.40 if "BALIZADOR" in alvo else 2.00
+        return "Luminária", buscar_eq_el("Lâmpada"), 0, 0, "10A", tensao_padrao, z_ar
+
+    if any(k in alvo for k in ["LUMINARIA", "LAMPADA", "PLAFON", "SPOT", "PAINEL LED", "PENDENTE", "FITA LED", "REFLETOR", "ILUMINACAO", "LUZ", "PONTO DE LUZ"]):
+        return "Luminária", buscar_eq_el("Lâmpada"), 0, 0, "10A", tensao_padrao, round(float(pe_direito), 2)
+
+    # 5. INTERRUPTORES (SIMPLES, DUPLOS, TRIPLOS, PARALELOS THREE-WAY / FOUR-WAY E CONJUGADOS)
+    tem_int = any(k in alvo for k in ["INTERRUPTOR", "TECLA", "PARALELO", "THREE WAY", "3 WAY", "FOUR WAY", "4 WAY"]) or any(k in palavras_alvo for k in ["INT", "S", "S1", "S2", "S3", "SP", "S4W"])
+    tem_tom = any(k in alvo for k in ["TOMADA", "TUG", "TUE", "2P+T", "CONJUGAD"]) or any(k in palavras_alvo for k in ["TOM", "TB", "TM", "TA"])
+
+    if tem_int and not tem_tom:
+        qtd_sec = 3 if any(k in alvo for k in ["TRIPLO", "3 SECOES", "3 TECLAS", "S3"]) else (2 if any(k in alvo for k in ["DUPLO", "2 SECOES", "2 TECLAS", "S2"]) else 1)
+        caixa_t = "Caixa 4x4" if qtd_sec >= 3 else "Caixa 4x2"
+        return caixa_t, buscar_eq_el("Sem Carga"), 0, qtd_sec, "10A", tensao_padrao, 1.20
+
+    if tem_int and tem_tom:
+        qtd_sec = 2 if any(k in alvo for k in ["DUPLO", "2 SECOES", "S2"]) else 1
+        return "Caixa 4x2", buscar_eq_el("Tomada Uso Geral"), 1, qtd_sec, "10A", tensao_padrao, 1.20
+
+    # 6. EQUIPAMENTOS ESPECÍFICOS DE POTÊNCIA (TUEs - PRIORIDADE 220V E 20A)
+    regras_tue = [
+        (["CHUVEIRO", "DUCHA ELETRICA"], "Chuveiro Elétrico", 220, "20A", 2.20),
+        (["AR CONDICIONADO", "SPLIT", "EVAPORADORA", "CONDENSADORA", "AC "], "Ar-Condicionado", 220, "20A", 2.20),
+        (["HIDROMASSAGEM", "BANHEIRA", "SPA", "JACUZZI"], "Bomba Hidromassagem", 220, "20A", 0.40),
+        (["BOILER", "AQUECEDOR"], "Aquecedor de Água", 220, "20A", 1.50),
+        (["TOALHEIRO"], "Toalheiro Térmico", 220, "10A", 1.10),
+        (["COOKTOP", "FORNO", "FOGAO ELETRICO", "INDUCAO"], "Cooktop", 220, "20A", 0.60),
+        (["TORNEIRA ELETRICA", "LAVA LOUCA", "MLL"], "Torneira Elétrica", 220, "20A", 0.60),
+        (["MICROONDAS", "MICRO-ONDAS"], "Micro-ondas", 220, "20A", 1.30),
+        (["MAQUINA DE LAVAR", "LAVADORA", "SECADORA", "MLR"], "Máquina de Lavar", 220, "20A", 0.90),
+        (["BOMBA", "RECALQUE", "PRESSURIZADORA", "PISCINA"], "Bomba", 220, "20A", 0.40),
+        (["COIFA", "EXAUSTOR", "DEPURADOR"], "Tomada Bancada", 220, "20A", 2.00),
+        (["GELADEIRA", "REFRIGERADOR", "FREEZER"], "Geladeira", tensao_padrao, "10A", 0.60),
+    ]
+    for k_list, eq_busca, v_tue, amp_tue, z_tue in regras_tue:
+        if any(k in alvo for k in k_list):
+            return "Caixa 4x2", buscar_eq_el(eq_busca), 1, 0, amp_tue, v_tue, z_tue
+
+    # 7. TOMADAS DE USO GERAL (TUGs - BAIXA 0.30m, MÉDIA 1.30m, ALTA 2.20m, DUPLA/TRIPLA)
+    qtd_tom = 3 if any(k in alvo for k in ["TRIPLA", "3 TOMADAS", "3X"]) else (2 if any(k in alvo for k in ["DUPLA", "2 TOMADAS", "2X"]) else 1)
+    caixa_tom = "Caixa 4x4" if qtd_tom >= 3 else "Caixa 4x2"
+
+    eh_alta = any(k in alvo for k in ["ALTA", "2.20", "2,20", "2.10"]) or "TA" in palavras_alvo
+    eh_media = any(k in alvo for k in ["MEDIA", "BANCADA", "1.30", "1,30", "1.20", "1.10"]) or "TM" in palavras_alvo
+    eh_area_molhada = any(k in alvo for k in ["COZINHA", "COPA", "SERVICO", "LAVANDERIA", "BANHEIRO", "GOURMET"])
+
+    z_tom = 2.20 if eh_alta else (1.30 if (eh_media or eh_area_molhada) else 0.30)
+    amp_tom = "20A" if ("20A" in alvo or eh_area_molhada) else "10A"
+    tens_tom = 220 if "220" in alvo else tensao_padrao
+    eq_tom = buscar_eq_el("Tomada Bancada" if eh_area_molhada else "Tomada Uso Geral")
+
+    return caixa_tom, eq_tom, qtd_tom, 0, amp_tom, tens_tom, z_tom
 
 # ==========================================
 # 3.F MOTOR DE ATUALIZAÇÃO DIFERENCIAL (SMART SYNC DXF / IFC)
@@ -3355,7 +3486,17 @@ with tab_bim:
             df_be = pd.DataFrame(blocos_elet) if blocos_elet else pd.DataFrame(columns=["ID_CAD", "Nome_Bloco", "x", "y", "z_base", "Andar", "pe_direito", "Tipo_BIM", "z_relativo"])
 
             if not df_be.empty:
+                garantir_itens_extras_na_bib_eletrica()
                 opcoes_eq_elet = list(st.session_state.bib_eletrica['Equipamento'])
+                opcoes_tipo_fisico_el = [
+                    "Quadro Geral",
+                    "Luminária",
+                    "Caixa 4x2",
+                    "Caixa 4x4",
+                    "Caixa de Passagem",
+                    "Conexão / Eletroduto"
+                ]
+
                 tipos_bim_el, equips_el, qtd_tom_el, qtd_int_el, amp_el, tens_el, z_rel_el = [], [], [], [], [], [], []
 
                 for _, r_el in df_be.iterrows():
@@ -3379,12 +3520,54 @@ with tab_bim:
                 df_be['Luminarias_Controladas'] = ""
                 df_be['z_relativo'] = z_rel_el
 
+                # 1. Mescla com a memória de edições anteriores por coordenada (Smart Sync)
                 df_be, stats_el = mesclar_blocos_com_memoria(df_be, disciplina="elet")
+
+                # 2. Mapeamento em Lote por Nome_Bloco Elétrico (Atualiza todas as ocorrências do bloco de uma só vez)
+                dict_map_elet = st.session_state.get("mapa_blocos_elet", {})
+                for blk_e, d_el in dict_map_elet.items():
+                    base_e = str(blk_e).split("(")[0].strip()
+                    mask_e = (df_be['Nome_Bloco'] == blk_e) | (df_be['Nome_Bloco'].apply(lambda x: str(x).split("(")[0].strip() == base_e))
+                    df_be.loc[mask_e, 'Tipo_BIM'] = d_el["tipo_bim"]
+                    df_be.loc[mask_e, 'Equipamento_Associado'] = d_el["equip"]
+                    df_be.loc[mask_e, 'Amperagem_Tomadas'] = d_el["amp"]
+                    df_be.loc[mask_e, 'Tensao_V'] = d_el["tensao"]
+                    df_be.loc[mask_e, 'z_relativo'] = d_el["z_rel"]
+
+                nomes_unicos_elet = sorted(df_be['Nome_Bloco'].unique().tolist())
+                with st.expander("🪄 Mapeamento em Lote por Nome_Bloco Elétrico (Ideal para blocos *U...)", expanded=False):
+                    st.caption("Associe um bloco elétrico repetido do CAD para atualizar todas as linhas dele simultaneamente:")
+                    ce_l1, ce_l2, ce_l3 = st.columns([1.5, 2, 1.3])
+                    bloco_el_alvo = ce_l1.selectbox("Bloco Elétrico do CAD:", nomes_unicos_elet, key="sel_blk_elet_lote")
+                    eq_el_alvo = ce_l2.selectbox("Carga (Biblioteca):", opcoes_eq_elet, key="sel_eq_elet_lote")
+                    tipo_el_alvo = ce_l3.selectbox("Tipo Físico BIM:", opcoes_tipo_fisico_el, key="sel_tp_elet_lote")
+
+                    ce_l4, ce_l5, ce_l6 = st.columns(3)
+                    amp_el_alvo = ce_l4.selectbox("Amperagem:", ["10A", "20A"], key="sel_amp_elet_lote")
+                    tens_el_alvo = ce_l5.selectbox("Tensão (V):", [127, 220], index=1 if tensao_fase == 220 else 0, key="sel_v_elet_lote")
+                    z_el_alvo = ce_l6.number_input("Altura z_relativo (m):", min_value=0.0, max_value=4.5, value=1.30, step=0.10, key="sel_z_elet_lote")
+
+                    if st.button("✅ Aplicar a todos os blocos elétricos deste tipo", use_container_width=True):
+                        dict_map_elet[bloco_el_alvo] = {
+                            "tipo_bim": tipo_el_alvo, "equip": eq_el_alvo,
+                            "amp": amp_el_alvo, "tensao": int(tens_el_alvo), "z_rel": float(z_el_alvo)
+                        }
+                        st.session_state["mapa_blocos_elet"] = dict_map_elet
+                        base_e = str(bloco_el_alvo).split("(")[0].strip()
+                        mask_e = (df_be['Nome_Bloco'] == bloco_el_alvo) | (df_be['Nome_Bloco'].apply(lambda x: str(x).split("(")[0].strip() == base_e))
+                        df_be.loc[mask_e, 'Tipo_BIM'] = tipo_el_alvo
+                        df_be.loc[mask_e, 'Equipamento_Associado'] = eq_el_alvo
+                        df_be.loc[mask_e, 'Amperagem_Tomadas'] = amp_el_alvo
+                        df_be.loc[mask_e, 'Tensao_V'] = int(tens_el_alvo)
+                        df_be.loc[mask_e, 'z_relativo'] = float(z_el_alvo)
+                        salvar_edicoes_na_memoria(df_be, pd.DataFrame(st.session_state.get("memoria_edicoes_hidro", [])))
+                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+                        st.rerun()
 
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
-                        "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=["Quadro Geral", "Luminária", "Caixa 4x2", "Caixa 4x4"]),
+                        "Tipo_BIM": st.column_config.SelectboxColumn("Tipo Físico", options=opcoes_tipo_fisico_el),
                         "Equipamento_Associado": st.column_config.SelectboxColumn("Carga (Biblioteca)", options=opcoes_eq_elet),
                         "Amperagem_Tomadas": st.column_config.SelectboxColumn("Amperagem", options=["10A", "20A"]),
                         "Tensao_V": st.column_config.SelectboxColumn("Tensão (V)", options=[127, 220]),
@@ -3399,9 +3582,14 @@ with tab_bim:
                 st.markdown("**🔗 Painel de Comandos (Interruptores Simples, Paralelos Three-Way e Four-Way)**")
                 opcoes_luminarias = df_editado_elet[df_editado_elet['Tipo_BIM'] == 'Luminária']['ID_CAD'].tolist()
                 for idx, row in df_editado_elet.iterrows():
-                    if 'Caixa' in row['Tipo_BIM'] and row['Qtd_Interruptores'] > 0:
+                    if 'Caixa' in str(row['Tipo_BIM']) and int(row.get('Qtd_Interruptores', 0)) > 0:
                         selecionadas = st.multiselect(f"🔌 Caixa {row['ID_CAD']} controla:", options=opcoes_luminarias, key=f"ms_{row['ID_CAD']}")
                         df_editado_elet.at[idx, 'Luminarias_Controladas'] = ",".join(selecionadas)
+
+                salvar_edicoes_na_memoria(
+                    df_editado_elet,
+                    df_editado_hidro if 'df_editado_hidro' in locals() else pd.DataFrame(st.session_state.get("memoria_edicoes_hidro", []))
+                )
             else:
                 st.warning("Nenhum bloco elétrico detectado nas layers selecionadas.")
                 df_editado_elet = pd.DataFrame()
@@ -3610,8 +3798,8 @@ with tab_bim:
                 novos_circuitos = []
                 grupos_agrupados = {}
                 for b_el in ctx['df_eletrica']:
-                    if b_el['Tipo_BIM'] == 'Quadro Geral':
-                        continue
+                    if b_el['Tipo_BIM'] in ['Quadro Geral', 'Caixa de Passagem', 'Conexão / Eletroduto'] or int(b_el.get('Qtd_Tomadas', 0)) == 0 and b_el['Tipo_BIM'] != 'Luminária':
+    continue
                     eq_nome = b_el.get('Equipamento_Associado', 'Tomada Uso Geral (TUG)')
                     filtro_el = st.session_state.bib_eletrica['Equipamento'] == eq_nome
                     if filtro_el.any():
