@@ -1456,7 +1456,18 @@ def rotear_hidro(df_bh, ctx):
             pts_2d_af = rota_a_star_2d(no_a, alvo_af, permitir_diagonal=False)
             z_orig = no_a['z_base'] + float(no_a.get('z_relativo', h_af))
             z_dest = alvo_af['z_base'] + float(alvo_af.get('z_relativo', h_af))
-            z_cam = no_a['z_base'] + h_af
+
+            # Se a origem ou o destino for uma Conexão AF (Curva, Joelho, Tê, Registro) ou estiverem na mesma cota,
+            # a tubulação corre na altura real do bloco editado em vez de cair para 0.20m!
+            if abs(z_orig - z_dest) <= 0.25:
+                z_cam = z_orig
+            elif no_a['Tipo_BIM'] == 'Conexões Hidráulicas AF':
+                z_cam = z_orig
+            elif alvo_af['Tipo_BIM'] == 'Conexões Hidráulicas AF':
+                z_cam = z_dest
+            else:
+                z_cam = no_a['z_base'] + h_af
+
             linha_af = [(no_a['x'], no_a['y'], z_orig), (no_a['x'], no_a['y'], z_cam)]
             for px, py in pts_2d_af:
                 linha_af.append((px, py, z_cam))
@@ -4868,12 +4879,18 @@ with tab_bim:
                     name='🧱 Pilares / Vigas (3D)', legendgroup='pilares'
                 ))
 
+            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM LEGENDA AGRUPADA E CLIQUE INTERATIVO 3D
             grupos_legenda_usados = set()
+
+            # Lê sempre os dados mais recentes das tabelas editadas para refletir mudanças de Z instantaneamente
+            df_el_ctx = df_editado_elet.to_dict('records') if not df_editado_elet.empty else st.session_state.contexto_bim.get('df_eletrica', [])
+            df_h_proc = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else st.session_state.contexto_bim.get('df_hidro', [])
 
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Elétrica"]:
                 for linha in st.session_state.linhas_3d_master['eletrica']:
                     pts = linha['pontos']
                     fios_txt = linha.get('fios', 'F N T')
+                    id_ref_el = str(linha.get('id_origem', ''))
                     nome_grp = "⚡ Eletrodutos e Circuitos"
                     mostrar_leg = nome_grp not in grupos_legenda_usados
                     grupos_legenda_usados.add(nome_grp)
@@ -4882,8 +4899,9 @@ with tab_bim:
                             x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts],
                             mode='lines+markers', marker=dict(size=3),
                             line=dict(color=linha['cor'], width=5),
+                            customdata=[id_ref_el for _ in pts],
                             name=nome_grp, legendgroup='rede_eletrica', showlegend=mostrar_leg,
-                            hovertext=f"Elétrica ({fios_txt}) - L={linha.get('comprimento_m',0)}m", hoverinfo="text"
+                            hovertext=f"Elétrica ({fios_txt}) | Origem: {id_ref_el} | L={linha.get('comprimento_m',0)}m", hoverinfo="text"
                         ))
                     if mostrar_fios and len(pts) >= 2:
                         p_mid = pts[len(pts) // 2]
@@ -4891,7 +4909,7 @@ with tab_bim:
                             x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2] + 0.15],
                             mode='text', text=[fios_txt], textposition="top center",
                             textfont=dict(color="black", size=11, family="Arial Black"),
-                            legendgroup='rede_eletrica', showlegend=False
+                            legendgroup='rede_eletrica', showlegend=False, hoverinfo='skip'
                         ))
 
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Hidrossanitário"]:
@@ -4899,6 +4917,7 @@ with tab_bim:
                     pts = linha['pontos']
                     tipo_raw = str(linha.get('tipo', 'Hidro'))
                     dn_val = linha.get('diametro', 25)
+                    id_ref_hd = str(linha.get('id_ap', ''))
                     if 'Água Fria' in tipo_raw or 'AF' in tipo_raw or 'Barrilete' in tipo_raw:
                         grp_id, nome_grp = 'hidro_af', '💧 Água Fria (Tubulação)'
                     elif 'Água Quente' in tipo_raw or 'AQ' in tipo_raw:
@@ -4915,38 +4934,66 @@ with tab_bim:
                             x=[p[0] for p in pts], y=[p[1] for p in pts], z=[p[2] for p in pts],
                             mode='lines+markers', marker=dict(size=3),
                             line=dict(color=linha['cor'], width=6),
+                            customdata=[id_ref_hd for _ in pts],
                             name=nome_grp, legendgroup=grp_id, showlegend=mostrar_leg,
-                            hovertext=f"{tipo_raw} (DN {dn_val}mm)", hoverinfo="text"
+                            hovertext=f"{tipo_raw} (DN {dn_val}mm) | Bloco: {id_ref_hd}", hoverinfo="text"
                         ))
 
             if df_el_ctx:
                 fig.add_trace(go.Scatter3d(
-                    x=[b['x'] for b in df_el_ctx], y=[b['y'] for b in df_el_ctx], z=[b['z_base'] + b.get('z_relativo', 1.3) for b in df_el_ctx],
+                    x=[b['x'] for b in df_el_ctx],
+                    y=[b['y'] for b in df_el_ctx],
+                    z=[b['z_base'] + float(b.get('z_relativo', 1.3)) for b in df_el_ctx],
                     mode='markers',
-                    hovertext=[f"{b['ID_CAD']} ({b.get('Nome_Bloco','')} | z: {b['z_base']+b.get('z_relativo',1.3):.2f}m)" for b in df_el_ctx],
+                    customdata=[str(b['ID_CAD']) for b in df_el_ctx],
+                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b.get('Nome_Bloco','')}<br>Altura z_relativo: {float(b.get('z_relativo',1.3)):.2f}m (Clique p/ Editar)" for b in df_el_ctx],
                     hoverinfo="text",
-                    marker=dict(size=6, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
-                    name="🔌 Pontos Elétricos"
+                    marker=dict(size=7, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
+                    name="🔌 Pontos Elétricos (Clique p/ Editar Z)"
                 ))
 
-            df_h_proc = st.session_state.contexto_bim.get('df_hidro', [])
             if df_h_proc:
                 fig.add_trace(go.Scatter3d(
-                    x=[b['x'] for b in df_h_proc], y=[b['y'] for b in df_h_proc], z=[b['z_base'] + b.get('z_relativo', 0.5) for b in df_h_proc],
+                    x=[b['x'] for b in df_h_proc],
+                    y=[b['y'] for b in df_h_proc],
+                    z=[b['z_base'] + float(b.get('z_relativo', 0.5)) for b in df_h_proc],
                     mode='markers',
-                    hovertext=[f"{b['Nome_Bloco']} -> {b['Equipamento']} ({b['Tipo_BIM']})" for b in df_h_proc],
+                    customdata=[str(b['ID_CAD']) for b in df_h_proc],
+                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']} ({b['Tipo_BIM']})<br>Altura z_relativo: {float(b.get('z_relativo',0.5)):.2f}m (Clique p/ Editar)" for b in df_h_proc],
                     hoverinfo="text",
-                    marker=dict(size=5, color='#0ea5e9', symbol='circle'),
-                    name="🚰 Pontos Hidrossanitários"
+                    marker=dict(size=6, color='#0ea5e9', symbol='circle'),
+                    name="🚰 Pontos Hidrossanitários (Clique p/ Editar Z)"
                 ))
+
             cx_box = next((b for b in df_h_proc if b['Tipo_BIM'] == 'Caixa d\'Água'), None)
             if cx_box:
                 fig.add_trace(go.Scatter3d(
-                    x=[cx_box['x']], y=[cx_box['y']], z=[cx_box['z_base'] + st.session_state.contexto_bim.get('altura_caixa', 1.5)],
-                    mode='markers', marker=dict(size=18, color='#1d4ed8', symbol='square'), name='🟦 Caixa d\'Água Superior'
+                    x=[cx_box['x']], y=[cx_box['y']],
+                    z=[cx_box['z_base'] + float(cx_box.get('z_relativo', st.session_state.contexto_bim.get('altura_caixa', 1.5)))],
+                    mode='markers',
+                    customdata=[str(cx_box['ID_CAD'])],
+                    marker=dict(size=18, color='#1d4ed8', symbol='square'),
+                    name='🟦 Caixa d\'Água Superior'
+                ))
+
+            # Destaca com um marcador vermelho/dourado no 3D o bloco atualmente selecionado para edição de altura
+            id_foco_3d = st.session_state.get("no_selecionado_bim")
+            bloco_foco_3d = next((b for b in (df_el_ctx + df_h_proc) if str(b.get('ID_CAD')) == str(id_foco_3d)), None)
+            if bloco_foco_3d:
+                zf_3d = float(bloco_foco_3d.get('z_base', 0.0)) + float(bloco_foco_3d.get('z_relativo', 0.5))
+                fig.add_trace(go.Scatter3d(
+                    x=[bloco_foco_3d['x']], y=[bloco_foco_3d['y']], z=[zf_3d],
+                    mode='markers+text',
+                    text=[f"🎯 {bloco_foco_3d['ID_CAD']} (z={float(bloco_foco_3d.get('z_relativo',0.5)):.2f}m)"],
+                    textposition="top center",
+                    textfont=dict(size=12, color="#dc2626", family="Arial Black"),
+                    marker=dict(size=12, color='#dc2626', symbol='diamond', line=dict(width=3, color='yellow')),
+                    name='🎯 Bloco em Edição (3D)',
+                    hoverinfo='skip'
                 ))
 
             fig.update_layout(
+                clickmode='event+select',
                 scene=dict(
                     aspectmode='data',
                     bgcolor='#f8fafc',
@@ -4965,7 +5012,167 @@ with tab_bim:
                 ),
                 height=780, margin=dict(l=0, r=0, b=0, t=0)
             )
-            st.plotly_chart(fig, use_container_width=True)
+
+            evento_3d = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="points",
+                key="grafico_3d_interativo_bim"
+            )
+
+            # Captura o clique no Gráfico 3D (seja na esfera do ponto ou no vértice da tubulação)
+            todos_blocos_3d = df_el_ctx + df_h_proc
+            ids_todos_3d = [str(b['ID_CAD']) for b in todos_blocos_3d]
+
+            if evento_3d and hasattr(evento_3d, "selection") and evento_3d.selection.get("points"):
+                pts_3d_sel = evento_3d.selection["points"]
+                if pts_3d_sel:
+                    pt3 = pts_3d_sel[-1]
+                    id_3d_det = None
+                    cd3 = pt3.get("customdata")
+                    if cd3 is not None:
+                        cand3 = str(cd3[0]) if isinstance(cd3, (list, tuple)) and len(cd3) > 0 else str(cd3)
+                        if cand3 in ids_todos_3d:
+                            id_3d_det = cand3
+                    if id_3d_det is None and "x" in pt3 and "y" in pt3:
+                        px3, py3 = float(pt3["x"]), float(pt3["y"])
+                        pz3 = float(pt3.get("z", 0.0))
+                        b_prox3 = min(
+                            todos_blocos_3d,
+                            key=lambda b: math.hypot(b["x"] - px3, b["y"] - py3) + abs((b.get("z_base", 0.0) + float(b.get("z_relativo", 0.5))) - pz3) * 0.5
+                        )
+                        if math.hypot(b_prox3["x"] - px3, b_prox3["y"] - py3) <= 1.20:
+                            id_3d_det = str(b_prox3["ID_CAD"])
+
+                    ass_3d = f"3D_{id_3d_det}_{pt3.get('x')}_{pt3.get('y')}_{pt3.get('z')}"
+                    if id_3d_det and st.session_state.get("ultimo_clique_3d_ass") != ass_3d:
+                        st.session_state["ultimo_clique_3d_ass"] = ass_3d
+                        st.session_state["no_selecionado_bim"] = id_3d_det
+                        st.session_state["sel_insp_no"] = id_3d_det
+                        st.session_state["sel_editor_z_3d"] = id_3d_det
+
+            # =========================================================================
+            # CAIXA RÁPIDA DE EDIÇÃO DE ALTURA 3D (ATUALIZA INDIVIDUAL OU GLOBAL EM TODO O PROJETO)
+            # =========================================================================
+            if todos_blocos_3d:
+                if st.session_state.get("sel_editor_z_3d") not in ids_todos_3d:
+                    id_ini_3d = st.session_state.get("no_selecionado_bim", ids_todos_3d[0])
+                    st.session_state["sel_editor_z_3d"] = id_ini_3d if id_ini_3d in ids_todos_3d else ids_todos_3d[0]
+
+                with st.container(border=True):
+                    st.markdown("#### 📏 Caixa de Edição de Altura 3D — Individual ou Global em Todo o Projeto")
+                    st.caption("Clique em um ponto/tubo na maquete 3D acima (ou selecione abaixo) para alterar sua altura `z_relativo` e propagar automaticamente para as Tabelas, Gráfico 2D e Maquete 3D:")
+
+                    cz1, cz2, cz3 = st.columns([1.8, 1.1, 1.8])
+                    id_z_sel = cz1.selectbox(
+                        "🎯 Bloco Selecionado (Clique no 3D ou pesquise):",
+                        ids_todos_3d,
+                        format_func=lambda x: f"{x} — {next((b.get('Nome_Bloco','') for b in todos_blocos_3d if str(b['ID_CAD'])==x), '')} (z={next((float(b.get('z_relativo',0)) for b in todos_blocos_3d if str(b['ID_CAD'])==x), 0):.2f}m)",
+                        key="sel_editor_z_3d"
+                    )
+                    # Mantém sincronizado com o Inspetor 2D
+                    if st.session_state.get("no_selecionado_bim") != id_z_sel:
+                        st.session_state["no_selecionado_bim"] = id_z_sel
+                        st.session_state["sel_insp_no"] = id_z_sel
+
+                    bloco_z_atual = next(b for b in todos_blocos_3d if str(b['ID_CAD']) == id_z_sel)
+                    nome_blk_atual = str(bloco_z_atual.get('Nome_Bloco', ''))
+                    equip_blk_atual = str(bloco_z_atual.get('Equipamento', bloco_z_atual.get('Equipamento_Associado', '')))
+                    z_atual_val = float(bloco_z_atual.get('z_relativo', 0.50))
+
+                    qtd_mesmo_nome = sum(1 for b in todos_blocos_3d if str(b.get('Nome_Bloco', '')) == nome_blk_atual)
+                    qtd_mesmo_equip = sum(1 for b in todos_blocos_3d if str(b.get('Equipamento', b.get('Equipamento_Associado', ''))) == equip_blk_atual)
+
+                    novo_z_3d = cz2.number_input(
+                        "📏 Nova Altura z_relativo (m):",
+                        min_value=-1.50, max_value=6.00, value=z_atual_val, step=0.05,
+                        key=f"num_z3d_{id_z_sel}_{z_atual_val}"
+                    )
+
+                    escopo_z = cz3.radio(
+                        "Onde aplicar esta nova altura?",
+                        [
+                            f"📍 Apenas neste ponto ({id_z_sel})",
+                            f"🧩 Em todos os blocos '{nome_blk_atual}' ({qtd_mesmo_nome} locais)",
+                            f"🚰 Em todos c/ equipamento '{equip_blk_atual}' ({qtd_mesmo_equip} locais)"
+                        ],
+                        key=f"rad_escopo_z_{id_z_sel}"
+                    )
+
+                    if st.button("🚀 Aplicar Nova Altura e Atualizar Tabelas + Gráfico 3D + Gráfico 2D", type="primary", use_container_width=True, key="btn_aplicar_z_3d"):
+                        # Identifica todos os ID_CAD que devem ser atualizados conforme o escopo escolhido
+                        if escopo_z.startswith("📍"):
+                            ids_alvo_z = {id_z_sel}
+                        elif escopo_z.startswith("🧩"):
+                            ids_alvo_z = {str(b['ID_CAD']) for b in todos_blocos_3d if str(b.get('Nome_Bloco', '')) == nome_blk_atual}
+                        else:
+                            ids_alvo_z = {str(b['ID_CAD']) for b in todos_blocos_3d if str(b.get('Equipamento', b.get('Equipamento_Associado', ''))) == equip_blk_atual}
+
+                        # 1. Atualiza DataFrames da Aba 1 (Elétrica e Hidrossanitário)
+                        if not df_editado_elet.empty:
+                            mask_el_z = df_editado_elet['ID_CAD'].astype(str).isin(ids_alvo_z)
+                            if mask_el_z.any():
+                                df_editado_elet.loc[mask_el_z, 'z_relativo'] = float(novo_z_3d)
+                        if not df_editado_hidro.empty:
+                            mask_hd_z = df_editado_hidro['ID_CAD'].astype(str).isin(ids_alvo_z)
+                            if mask_hd_z.any():
+                                df_editado_hidro.loc[mask_hd_z, 'z_relativo'] = float(novo_z_3d)
+
+                        # 2. Atualiza a Memória Smart Sync por coordenada (para a tabela da Aba 1 não reverter no rerun!)
+                        salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
+
+                        # 3. Atualiza os Overrides do Gráfico 2D e limpa chaves de input antigas do Inspetor 2D
+                        ov_dict = st.session_state.get("overrides_topologia_bim", {})
+                        for id_at in ids_alvo_z:
+                            if id_at not in ov_dict:
+                                ov_dict[id_at] = {"Conectado_A": "Automático (Menor Rota ABNT)", "Conexao_No": "Joelho 90° Soldável / Tê", "DN_Manual_mm": 0}
+                            ov_dict[id_at]["z_relativo"] = float(novo_z_3d)
+                            if f"insp_z_{id_at}" in st.session_state:
+                                st.session_state[f"insp_z_{id_at}"] = float(novo_z_3d)
+                        st.session_state["overrides_topologia_bim"] = ov_dict
+                        st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+
+                        # 4. Se alterou todos os blocos do mesmo Nome_Bloco Elétrico, atualiza também o mapa em lote
+                        if escopo_z.startswith("🧩") and nome_blk_atual in st.session_state.get("mapa_blocos_elet", {}):
+                            st.session_state["mapa_blocos_elet"][nome_blk_atual]["z_rel"] = float(novo_z_3d)
+
+                        # 5. Atualiza contexto_bim e reprocessa IMEDIATAMENTE as rotas 3D/2D e a Tabela de Pressões (Aba 4)
+                        ctx_at = st.session_state.contexto_bim
+                        ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+                        ctx_at['df_eletrica'] = ctx_at['df_elet']
+                        ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+
+                        if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
+                            novas_linhas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at) if modo_visualizacao != "Apenas Elétrica" else []
+                            novas_linhas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at) if modo_visualizacao != "Apenas Hidrossanitário" else []
+                            st.session_state.linhas_3d_master['hidro'] = novas_linhas_hd
+                            st.session_state.linhas_3d_master['eletrica'] = novas_linhas_el
+                            st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                                novas_linhas_el, novas_linhas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                            )
+
+                        # Atualiza também o eixo 'z' e a pressão estática/disponível na tabela de pontos_hidro (Aba 4)
+                        if st.session_state.get("pontos_hidro"):
+                            z_res_mca = float(ctx_at.get("max_z_cobertura", 3.0)) + float(ctx_at.get("altura_caixa", 1.5))
+                            for pt_h_row in st.session_state.pontos_hidro:
+                                if str(pt_h_row.get("ID")) in ids_alvo_z:
+                                    b_ref = next((b for b in ctx_at['df_hidro'] if str(b['ID_CAD']) == str(pt_h_row.get("ID"))), None)
+                                    z_b = float(b_ref.get('z_base', 0.0)) if b_ref else 0.0
+                                    novo_z_abs = round(z_b + float(novo_z_3d), 2)
+                                    pt_h_row["z"] = novo_z_abs
+                                    if float(pt_h_row.get("Peso (NBR 5626)", 0.0)) > 0:
+                                        p_est = max(1.5, z_res_mca - novo_z_abs)
+                                        perda = float(pt_h_row.get("Perda Carga (m.c.a.)", 0.0))
+                                        p_disp_kpa = round(max(0.0, p_est - perda) * 9.81, 1)
+                                        pt_h_row["Pressão Estática (m.c.a.)"] = round(p_est, 1)
+                                        pt_h_row["Pressão Disp. (kPa)"] = p_disp_kpa
+
+                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+                        st.cache_data.clear()
+                        st.toast(f"✅ Altura z={novo_z_3d:.2f}m aplicada com sucesso em {len(ids_alvo_z)} ponto(s) (Tabelas, 3D e 2D atualizados)!", icon="📏")
+                        st.rerun()
+
             st.divider()
             renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet, df_editado_hidro, st.session_state.contexto_bim)
     else:
