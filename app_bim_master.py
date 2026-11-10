@@ -2890,10 +2890,8 @@ import ezdxf.path
 
 def extrair_segmentos_entidade_dxf(ent, modo="parede"):
     """
-    Extrai segmentos 2D [((x1, y1), (x2, y2)), ...] de qualquer entidade geométrica do AutoCAD:
+    Extrai segmentos 2D [((x1, y1), (x2, y2)), ...] de entidades do AutoCAD:
     Suporta LINE, LWPOLYLINE (aberta/fechada), POLYLINE (2D/3D), MLINE, ARC, CIRCLE, ELLIPSE e SPLINE.
-    - Se modo='esquadria': em MLINE extrai o eixo central entre os dois batentes do vão.
-    - Se modo='parede': em MLINE extrai todas as linhas paralelas das faces da parede.
     """
     segs = []
     if ent is None:
@@ -2901,14 +2899,12 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
     dxft = ent.dxftype()
 
     try:
-        # 1. LINHA SIMPLES (LINE)
         if dxft == 'LINE':
             p1 = (float(ent.dxf.start.x), float(ent.dxf.start.y))
             p2 = (float(ent.dxf.end.x), float(ent.dxf.end.y))
             if dist_2d(p1, p2) > 1e-4:
                 segs.append((p1, p2))
 
-        # 2. MULTILINHA (MLINE - Muito usada em janelas e paredes duplas)
         elif dxft == 'MLINE':
             pts_ml = []
             try:
@@ -2923,15 +2919,11 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                 for i in range(len(pts_ml) - 1):
                     if dist_2d(pts_ml[i], pts_ml[i + 1]) > 1e-4:
                         segs.append((pts_ml[i], pts_ml[i + 1]))
-                if getattr(ent, 'is_closed', False) and len(pts_ml) > 2:
-                    segs.append((pts_ml[-1], pts_ml[0]))
             else:
-                # Extrai as linhas virtuais paralelas da MLINE (ou usa o eixo no modo esquadria se não houver vertices)
                 segs_virt = []
                 for ve in ent.virtual_entities():
                     segs_virt.extend(extrair_segmentos_entidade_dxf(ve, modo="parede"))
                 if modo == "esquadria" and segs_virt:
-                    # No modo esquadria, se veio por virtual_entities, pega o maior segmento (comprimento do vão)
                     maior_s = max(segs_virt, key=lambda s: dist_2d(s[0], s[1]))
                     segs.append(maior_s)
                 elif segs_virt:
@@ -2940,7 +2932,6 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                     for i in range(len(pts_ml) - 1):
                         segs.append((pts_ml[i], pts_ml[i + 1]))
 
-        # 3. POLILINHA LEVE (LWPOLYLINE - Inclui fechamento automático se closed=True e arcos internos)
         elif dxft == 'LWPOLYLINE':
             pontos = list(ent.get_points(format='xy'))
             if len(pontos) >= 2:
@@ -2955,7 +2946,6 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                     if dist_2d(p_ult, p_pri) > 1e-4:
                         segs.append((p_ult, p_pri))
 
-        # 4. POLILINHA CLÁSSICA 2D/3D (POLYLINE)
         elif dxft == 'POLYLINE':
             pts_pl = []
             for v in ent.vertices:
@@ -2969,8 +2959,7 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                     if dist_2d(pts_pl[-1], pts_pl[0]) > 1e-4:
                         segs.append((pts_pl[-1], pts_pl[0]))
 
-        # 5. ARCO (ARC)
-        elif dxft == 'ARC':
+        elif dxft == 'ARC' and modo == "parede":
             cx, cy = float(ent.dxf.center.x), float(ent.dxf.center.y)
             r = float(ent.dxf.radius)
             if r > 1e-3:
@@ -2987,8 +2976,7 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                 for i in range(len(pts_arc) - 1):
                     segs.append((pts_arc[i], pts_arc[i + 1]))
 
-        # 6. CIRCUNFERÊNCIA (CIRCLE)
-        elif dxft == 'CIRCLE':
+        elif dxft == 'CIRCLE' and modo == "parede":
             cx, cy = float(ent.dxf.center.x), float(ent.dxf.center.y)
             r = float(ent.dxf.radius)
             if r > 1e-3:
@@ -3001,15 +2989,13 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
                 for i in range(len(pts_cir) - 1):
                     segs.append((pts_cir[i], pts_cir[i + 1]))
 
-        # 7. ELIPSE E SPLINE (ELLIPSE / SPLINE)
-        elif dxft in ('ELLIPSE', 'SPLINE'):
+        elif dxft in ('ELLIPSE', 'SPLINE') and modo == "parede":
             caminho_p = ezdxf.path.make_path(ent)
             pts_fl = [(float(v.x), float(v.y)) for v in caminho_p.flattening(0.08)]
             for i in range(len(pts_fl) - 1):
                 if dist_2d(pts_fl[i], pts_fl[i + 1]) > 1e-4:
                     segs.append((pts_fl[i], pts_fl[i + 1]))
 
-        # 8. BLOCO INSERIDO EM LAYER DE PAREDE (INSERT)
         elif dxft == 'INSERT' and modo == "parede":
             for ve in ent.virtual_entities():
                 segs.extend(extrair_segmentos_entidade_dxf(ve, modo="parede"))
@@ -3019,123 +3005,181 @@ def extrair_segmentos_entidade_dxf(ent, modo="parede"):
     return segs
 
 
-def alinhar_vao_na_parede_real(cx_ins, cy_ins, cx_box, cy_box, larg_Sugerida, eh_porta, z_base, paredes_lista, p1_hint=None, p2_hint=None):
+def verificar_parede_continua_no_trecho(pa, pb, z_base, paredes_lista):
     """
-    Encaixa o vão da Porta ou Janela exatamente dentro da parede real (layer_arq):
-    1. Se vier de uma MLINE/LINE de esquadria com p1_hint e p2_hint explícitos, alinha ao centro das duas faces da parede;
-    2. Procura o par de batentes (bonecas da parede de 8cm a 35cm) que delimita a abertura no CAD;
-    3. Caso a parede não tenha linhas de batente fechadas, projeta sobre o eixo das faces paralelas da parede;
-    4. Se não existir nenhuma parede real passando pelo ponto, retorna tem_parede_real=False (nunca cria parede fantasma).
+    Retorna True se houver uma parede sólida contínua (layer_arq) bloqueando o meio do segmento (pa, pb).
+    Isso impede que uma porta ou janela seja criada sobre uma parede cega onde a folha da porta encosta!
     """
-    if not paredes_lista:
-        return None, None, larg_Sugerida, (0.0, 0.075), False
+    vx, vy = pb[0] - pa[0], pb[1] - pa[1]
+    comp = math.hypot(vx, vy)
+    if comp < 0.20:
+        return False
+    ux, uy = vx / comp, vy / comp
+    nx, ny = -uy, ux
+    mx, my = (pa[0] + pb[0]) / 2.0, (pa[1] + pb[1]) / 2.0
 
-    rx, ry = (cx_ins, cy_ins) if eh_porta else (cx_box, cy_box)
-
-    # 1. Busca batentes (segmentos curtos transversais da alvenaria entre 8cm e 35cm) próximos ao vão
-    batentes_prox = []
-    for p1, p2 in paredes_lista:
-        if abs(p1[2] - z_base) > 0.6:
+    linhas_paralelas_no_meio = 0
+    for w1, w2 in paredes_lista:
+        if abs(w1[2] - z_base) > 0.6:
             continue
-        comp = dist_2d(p1, p2)
-        if 0.08 <= comp <= 0.35:
-            mx, my = (p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0
-            if math.hypot(mx - rx, my - ry) <= 2.60 or math.hypot(mx - cx_box, my - cy_box) <= 2.60:
-                dx, dy = (p2[0] - p1[0]) / comp, (p2[1] - p1[1]) / comp
-                batentes_prox.append({
-                    "mx": mx, "my": my, "dx": dx, "dy": dy, "esp": comp,
-                    "ox": (p2[0] - p1[0]) / 2.0, "oy": (p2[1] - p1[1]) / 2.0
-                })
-
-    melhor_par = None
-    menor_erro = 999.0
-    for i in range(len(batentes_prox)):
-        b1 = batentes_prox[i]
-        for j in range(i + 1, len(batentes_prox)):
-            b2 = batentes_prox[j]
-            if abs(b1["dx"] * b2["dx"] + b1["dy"] * b2["dy"]) >= 0.88:
-                vx, vy = b2["mx"] - b1["mx"], b2["my"] - b1["my"]
-                dist_v = math.hypot(vx, vy)
-                if 0.45 <= dist_v <= 3.60:
-                    perp = abs((vx / dist_v) * b1["dx"] + (vy / dist_v) * b1["dy"])
-                    if perp <= 0.22:
-                        tem_parede_ligada = False
-                        ux_v, uy_v = vx / dist_v, vy / dist_v
-                        for wp1, wp2 in paredes_lista:
-                            if abs(wp1[2] - z_base) > 0.6:
-                                continue
-                            w_len = dist_2d(wp1, wp2)
-                            if w_len >= 0.30:
-                                wux, wuy = (wp2[0] - wp1[0]) / w_len, (wp2[1] - wp1[1]) / w_len
-                                if abs(ux_v * wux + uy_v * wuy) >= 0.88:
-                                    if (
-                                        distancia_ponto_segmento_2d(b1["mx"], b1["my"], wp1[0], wp1[1], wp2[0], wp2[1]) <= 0.25
-                                        or distancia_ponto_segmento_2d(b2["mx"], b2["my"], wp1[0], wp1[1], wp2[0], wp2[1]) <= 0.25
-                                    ):
-                                        tem_parede_ligada = True
-                                        break
-                        if not tem_parede_ligada:
-                            continue
-
-                        d_ins = distancia_ponto_segmento_2d(cx_ins, cy_ins, b1["mx"], b1["my"], b2["mx"], b2["my"])
-                        d_box = distancia_ponto_segmento_2d(cx_box, cy_box, b1["mx"], b1["my"], b2["mx"], b2["my"])
-                        erro = min(d_ins, d_box) + abs(dist_v - larg_Sugerida) * 0.35
-                        if min(d_ins, d_box) <= 0.60 and erro < menor_erro:
-                            menor_erro = erro
-                            melhor_par = (b1, b2, dist_v)
-
-    if melhor_par is not None:
-        b1, b2, larg_exata = melhor_par
-        return (b1["mx"], b1["my"]), (b2["mx"], b2["my"]), round(larg_exata, 3), (b1["ox"], b1["oy"]), True
-
-    # 2. Se veio de MLINE/LINE explícita com p1_hint e p2_hint, verifica a parede colinear mais próxima e centraliza na espessura
-    if p1_hint is not None and p2_hint is not None:
-        comp_h = dist_2d(p1_hint, p2_hint)
-        if comp_h >= 0.40:
-            ux_h, uy_h = (p2_hint[0] - p1_hint[0]) / comp_h, (p2_hint[1] - p1_hint[1]) / comp_h
-            nx_h, ny_h = -uy_h, ux_h
-            # Procura batente próximo para descobrir o centro e a espessura exata da parede
-            for b_cand in batentes_prox:
-                if abs(b_cand["dx"] * nx_h + b_cand["dy"] * ny_h) >= 0.85:
-                    if min(math.hypot(b_cand["mx"] - p1_hint[0], b_cand["my"] - p1_hint[1]), math.hypot(b_cand["mx"] - p2_hint[0], b_cand["my"] - p2_hint[1])) <= 0.35:
-                        desloc_n = (b_cand["mx"] - p1_hint[0]) * nx_h + (b_cand["my"] - p1_hint[1]) * ny_h
-                        p1_c = (p1_hint[0] + desloc_n * nx_h, p1_hint[1] + desloc_n * ny_h)
-                        p2_c = (p2_hint[0] + desloc_n * nx_h, p2_hint[1] + desloc_n * ny_h)
-                        return p1_c, p2_c, round(comp_h, 3), (b_cand["ox"], b_cand["oy"]), True
-
-    # 3. Fallback: projeta na face de parede longa mais próxima (<= 0.38m)
-    melhor_seg = None
-    menor_dist_w = 0.38
-    for wp1, wp2 in paredes_lista:
-        if abs(wp1[2] - z_base) > 0.6:
+        w_len = dist_2d(w1, w2)
+        if w_len < comp * 0.65:
             continue
-        w_len = dist_2d(wp1, wp2)
-        if w_len >= 0.35:
-            d_w = min(
-                distancia_ponto_segmento_2d(cx_ins, cy_ins, wp1[0], wp1[1], wp2[0], wp2[1]),
-                distancia_ponto_segmento_2d(cx_box, cy_box, wp1[0], wp1[1], wp2[0], wp2[1])
+        wux, wuy = (w2[0] - w1[0]) / w_len, (w2[1] - w1[1]) / w_len
+        if abs(ux * wux + uy * wuy) >= 0.90:
+            dist_perp = abs((w1[0] - mx) * nx + (w1[1] - my) * ny)
+            if dist_perp <= 0.22:
+                s1 = (w1[0] - pa[0]) * ux + (w1[1] - pa[1]) * uy
+                s2 = (w2[0] - pa[0]) * ux + (w2[1] - pa[1]) * uy
+                s_min, s_max = min(s1, s2), max(s1, s2)
+                # Verifica se a linha de parede atravessa o terço central do vão [0.25*comp, 0.75*comp]
+                if s_min <= comp * 0.25 and s_max >= comp * 0.75:
+                    linhas_paralelas_no_meio += 1
+
+    # Se as 2 faces da alvenaria atravessam continuamente o trecho, é parede cega (não é vão!)
+    return linhas_paralelas_no_meio >= 2
+
+
+def centralizar_segmento_na_espessura_da_parede(p1_in, p2_in, z_base, paredes_lista, exigir_abertura=False):
+    """
+    Mantém o comprimento e orientação exatos do segmento (p1_in, p2_in),
+    ajustando apenas poucos centímetros na normal para centralizar no eixo da parede real (layer_arq).
+    Retorna (p1_central, p2_central, larg_exata, offset_norm, ok_parede).
+    """
+    vx, vy = p2_in[0] - p1_in[0], p2_in[1] - p1_in[1]
+    comp = math.hypot(vx, vy)
+    if comp < 0.38 or comp > 3.80 or not paredes_lista:
+        return None, None, comp, (0.0, 0.075), False
+
+    ux, uy = vx / comp, vy / comp
+    nx, ny = -uy, ux
+
+    if exigir_abertura and verificar_parede_continua_no_trecho(p1_in, p2_in, z_base, paredes_lista):
+        return None, None, comp, (0.0, 0.075), False
+
+    # 1. Procura batentes transversais (bonecas de 8cm a 30cm) nas extremidades p1_in ou p2_in
+    deslocamentos_n = []
+    espessuras = []
+    tem_apoio_esq = False
+    tem_apoio_dir = False
+
+    for w1, w2 in paredes_lista:
+        if abs(w1[2] - z_base) > 0.6:
+            continue
+        w_len = dist_2d(w1, w2)
+        if w_len < 0.06:
+            continue
+        wux, wuy = (w2[0] - w1[0]) / w_len, (w2[1] - w1[1]) / w_len
+        alinhamento = abs(ux * wux + uy * wuy)
+
+        # Batente perpendicular ao vão na ponta p1_in ou p2_in
+        if alinhamento <= 0.25 and 0.08 <= w_len <= 0.32:
+            bmx, bmy = (w1[0] + w2[0]) / 2.0, (w1[1] + w2[1]) / 2.0
+            d1 = math.hypot(bmx - p1_in[0], bmy - p1_in[1])
+            d2 = math.hypot(bmx - p2_in[0], bmy - p2_in[1])
+            if d1 <= 0.24:
+                tem_apoio_esq = True
+                deslocamentos_n.append((bmx - p1_in[0]) * nx + (bmy - p1_in[1]) * ny)
+                espessuras.append(w_len)
+            if d2 <= 0.24:
+                tem_apoio_dir = True
+                deslocamentos_n.append((bmx - p2_in[0]) * nx + (bmy - p2_in[1]) * ny)
+                espessuras.append(w_len)
+
+        # Parede colinear que chega até p1_in ou p2_in
+        elif alinhamento >= 0.88:
+            dist_n = ((w1[0] - p1_in[0]) * nx + (w1[1] - p1_in[1]) * ny)
+            if abs(dist_n) <= 0.24:
+                s1 = (w1[0] - p1_in[0]) * ux + (w1[1] - p1_in[1]) * uy
+                s2 = (w2[0] - p1_in[0]) * ux + (w2[1] - p1_in[1]) * uy
+                s_min, s_max = min(s1, s2), max(s1, s2)
+                if s_max >= -0.15 and s_min <= 0.15:
+                    tem_apoio_esq = True
+                    deslocamentos_n.append(dist_n)
+                if s_min <= comp + 0.15 and s_max >= comp - 0.15:
+                    tem_apoio_dir = True
+                    deslocamentos_n.append(dist_n)
+
+    # Só valida como vão se houver parede real apoiando os lados do vão!
+    if not (tem_apoio_esq and tem_apoio_dir):
+        return None, None, comp, (0.0, 0.075), False
+
+    if deslocamentos_n:
+        d_medio = (min(deslocamentos_n) + max(deslocamentos_n)) / 2.0
+        if abs(d_medio) > 0.18:
+            d_medio = 0.0
+    else:
+        d_medio = 0.0
+
+    esp_uso = sum(espessuras) / len(espessuras) if espessuras else 0.15
+    esp_uso = max(0.12, min(0.25, esp_uso))
+    p1_c = (p1_in[0] + d_medio * nx, p1_in[1] + d_medio * ny)
+    p2_c = (p2_in[0] + d_medio * nx, p2_in[1] + d_medio * ny)
+    offset_norm = (nx * (esp_uso / 2.0), ny * (esp_uso / 2.0))
+    return p1_c, p2_c, round(comp, 3), offset_norm, True
+
+
+def extrair_vao_porta_por_arco_dxf(arc_ent, z_base, paredes_lista, segs_folhas_porta):
+    """
+    A partir de um arco de giro de porta (ARC de ~90°), identifica qual dos dois raios perpendiculares
+    (C -> E1 ou C -> E2) é o VÃO REAL na parede e qual é apenas a folha da porta aberta.
+    """
+    try:
+        cx, cy = float(arc_ent.dxf.center.x), float(arc_ent.dxf.center.y)
+        r = float(arc_ent.dxf.radius)
+        if not (0.50 <= r <= 1.30):
+            return None
+        ang1 = float(arc_ent.dxf.start_angle)
+        ang2 = float(arc_ent.dxf.end_angle)
+        span = (ang2 - ang1) % 360.0
+        if not (55.0 <= span <= 115.0):
+            return None
+
+        e1 = (cx + r * math.cos(math.radians(ang1)), cy + r * math.sin(math.radians(ang1)))
+        e2 = (cx + r * math.cos(math.radians(ang2)), cy + r * math.sin(math.radians(ang2)))
+        candidatos = [((cx, cy), e1), ((cx, cy), e2)]
+
+        melhor_cand = None
+        melhor_score = -999.0
+
+        for p_ini, p_fim in candidatos:
+            # Verifica se este raio coincide com as linhas da folha da porta aberta
+            vx, vy = p_fim[0] - p_ini[0], p_fim[1] - p_ini[1]
+            comp_c = math.hypot(vx, vy)
+            ux, uy = vx / comp_c, vy / comp_c
+            mx, my = (p_ini[0] + p_fim[0]) / 2.0, (p_ini[1] + p_fim[1]) / 2.0
+
+            tem_folha_em_cima = False
+            for f1, f2 in segs_folhas_porta:
+                f_len = dist_2d(f1, f2)
+                if 0.45 <= f_len <= 1.35:
+                    fux, fuy = (f2[0] - f1[0]) / f_len, (f2[1] - f1[1]) / f_len
+                    if abs(ux * fux + uy * fuy) >= 0.90:
+                        if distancia_ponto_segmento_2d(mx, my, f1[0], f1[1], f2[0], f2[1]) <= 0.14:
+                            tem_folha_em_cima = True
+                            break
+
+            # O vão real da porta NÃO tem a folha desenhada sobre ele e precisa estar aberto na parede!
+            p1_c, p2_c, larg_c, off_c, ok_w = centralizar_segmento_na_espessura_da_parede(
+                p_ini, p_fim, z_base, paredes_lista, exigir_abertura=True
             )
-            if d_w < menor_dist_w:
-                menor_dist_w = d_w
-                melhor_seg = (wp1, wp2, w_len)
+            if not ok_w:
+                continue
 
-    if melhor_seg is not None:
-        wp1, wp2, w_len = melhor_seg
-        ux, uy = (wp2[0] - wp1[0]) / w_len, (wp2[1] - wp1[1]) / w_len
-        nx, ny = -uy, ux
-        t_proj = ((rx - wp1[0]) * ux + (ry - wp1[1]) * uy)
-        px_c, py_c = wp1[0] + t_proj * ux, wp1[1] + t_proj * uy
-        p1_v = (px_c - (larg_Sugerida / 2.0) * ux, py_c - (larg_Sugerida / 2.0) * uy)
-        p2_v = (px_c + (larg_Sugerida / 2.0) * ux, py_c + (larg_Sugerida / 2.0) * uy)
-        return p1_v, p2_v, round(larg_Sugerida, 3), (nx * 0.075, ny * 0.075), True
+            score = 100.0 - (80.0 if tem_folha_em_cima else 0.0)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_cand = (p1_c, p2_c, larg_c, off_c)
 
-    return None, None, larg_Sugerida, (0.0, 0.075), False
+        return melhor_cand
+    except Exception:
+        return None
 
 
 def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max_ext=0.30, offset_padrao=(0.0, 0.075)):
     """
     Calcula o avanço real da Verga e Contraverga para cada lado do vão (máximo de 30cm para cada lado),
-    respeitando estritamente o comprimento da parede adjacente e parando antes se a parede acabar ou tiver quina.
+    medindo exclusivamente o segmento de parede que encosta no batente e parando na quina se < 30cm.
     """
     vx, vy = p2_vao[0] - p1_vao[0], p2_vao[1] - p1_vao[1]
     comp_vao = math.hypot(vx, vy)
@@ -3144,6 +3188,11 @@ def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max
     ux, uy = vx / comp_vao, vy / comp_vao
     nx, ny = -uy, ux
 
+    esp_padrao = math.hypot(offset_padrao[0], offset_padrao[1])
+    if esp_padrao < 0.04 or esp_padrao > 0.15:
+        esp_padrao = 0.075
+    offset_correto = (nx * esp_padrao, ny * esp_padrao)
+
     avan_esq, avan_dir = 0.0, 0.0
     for seg in paredes_lista:
         w1, w2 = seg[0], seg[1]
@@ -3151,23 +3200,25 @@ def calcular_extensao_verga_na_parede(p1_vao, p2_vao, z_base, paredes_lista, max
             continue
         wx, wy = w2[0] - w1[0], w2[1] - w1[1]
         w_len = math.hypot(wx, wy)
-        if w_len < 0.10:
+        if w_len < 0.06:
             continue
         wux, wuy = wx / w_len, wy / w_len
-        if abs(ux * wux + uy * wuy) >= 0.88:
+        if abs(ux * wux + uy * wuy) >= 0.90:
             dist_perp = abs((w1[0] - p1_vao[0]) * nx + (w1[1] - p1_vao[1]) * ny)
-            if dist_perp <= 0.26:
+            if dist_perp <= 0.22:
                 s1 = (w1[0] - p1_vao[0]) * ux + (w1[1] - p1_vao[1]) * uy
                 s2 = (w2[0] - p1_vao[0]) * ux + (w2[1] - p1_vao[1]) * uy
                 s_min, s_max = min(s1, s2), max(s1, s2)
-                if s_max >= -0.08 and s_min < -0.01:
+                # Parede colada ao batente esquerdo (s = 0) indo para s < 0
+                if -0.06 <= s_max <= 0.08 and s_min < -0.02:
                     avan_esq = max(avan_esq, min(max_ext, abs(s_min)))
-                if s_min <= comp_vao + 0.08 and s_max > comp_vao + 0.01:
+                # Parede colada ao batente direito (s = comp_vao) indo para s > comp_vao
+                if (comp_vao - 0.08) <= s_min <= (comp_vao + 0.06) and s_max > (comp_vao + 0.02):
                     avan_dir = max(avan_dir, min(max_ext, s_max - comp_vao))
 
     p1_ext = (p1_vao[0] - ux * avan_esq, p1_vao[1] - uy * avan_esq)
     p2_ext = (p2_vao[0] + ux * avan_dir, p2_vao[1] + uy * avan_dir)
-    return p1_ext, p2_ext, round(avan_esq, 3), round(avan_dir, 3), offset_padrao
+    return p1_ext, p2_ext, round(avan_esq, 3), round(avan_dir, 3), offset_correto
 
 
 def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_direito, h_viga=0.40):
@@ -3175,7 +3226,7 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
     Desvia tubulações de Elétrica, Água Fria, Água Quente e Esgoto:
     - Passa por cima da Verga (Topo do Vão + 10cm de Verga) em Portas e Janelas;
     - Ou passa por baixo da Contraverga (Peitoril - 10cm de Contraverga) nas Janelas;
-    - Respeita os 30cm laterais de apoio da Verga e Contraverga na alvenaria.
+    - Respeita a extensão real (até +30cm para cada lado) da Verga e Contraverga.
     """
     if not elementos_arq or len(linha_3d) < 2:
         return linha_3d
@@ -3214,7 +3265,7 @@ def aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, z_base, pe_di
                     off_n = elem.get('offset_norm', (0.0, 0.075))
                     p1_ext, p2_ext, _, _, _ = calcular_extensao_verga_na_parede(p1_v, p2_v, z_base, paredes_ctx, max_ext=0.30, offset_padrao=off_n)
 
-                    if distancia_ponto_segmento_2d(px, py, p1_ext[0], p1_ext[1], p2_ext[0], p2_ext[1]) <= 0.24:
+                    if distancia_ponto_segmento_2d(px, py, p1_ext[0], p1_ext[1], p2_ext[0], p2_ext[1]) <= 0.22:
                         peitoril = float(elem.get('Peitoril', 0.0))
                         altura_vao = float(elem.get('Altura', 2.10))
                         eh_janela = (elem.get('Subtipo') == 'Janela')
@@ -3347,24 +3398,22 @@ with tab_bim:
         max_z_projeto = 0.0
         z_acumulado = 0.0
 
-        # MODO A: Se carregou apenas o .bim, recupera os dados e remove qualquer VAO_AUTO_ antigo indevido
+        # MODO A: Se carregou apenas o .bim, valida cada vão salvo para descartar vãos sobre paredes cegas ou folhas de porta
         if not arquivos_dxf:
             paredes_raw = ctx_mem.get("paredes", [])
-            elems_salvos = [
-                el for el in ctx_mem.get("elementos_arquitetonicos", [])
-                if not str(el.get("ID_CAD", "")).startswith("VAO_AUTO_")
-            ]
-            for el in elems_salvos:
+            for el in ctx_mem.get("elementos_arquitetonicos", []):
+                if str(el.get("ID_CAD", "")).startswith("VAO_AUTO_"):
+                    continue
                 if el.get("Tipo") == "Esquadria":
-                    p1_a, p2_a, larg_a, off_a, ok_w = alinhar_vao_na_parede_real(
-                        el.get("x", 0.0), el.get("y", 0.0), el.get("x", 0.0), el.get("y", 0.0),
-                        el.get("Largura", 0.90), el.get("Subtipo") == "Porta", el.get("z_base", 0.0),
-                        paredes_raw, p1_hint=el.get("p1_vao"), p2_hint=el.get("p2_vao")
-                    )
-                    if ok_w:
-                        el["p1_vao"], el["p2_vao"], el["Largura"], el["offset_norm"], el["tem_parede_real"] = p1_a, p2_a, larg_a, off_a, True
-                        el["x"], el["y"] = round((p1_a[0] + p2_a[0]) / 2.0, 4), round((p1_a[1] + p2_a[1]) / 2.0, 4)
-                        elementos_arquitetonicos.append(el)
+                    p1_h, p2_h = el.get("p1_vao"), el.get("p2_vao")
+                    if p1_h and p2_h:
+                        p1_a, p2_a, larg_a, off_a, ok_w = centralizar_segmento_na_espessura_da_parede(
+                            p1_h, p2_h, el.get("z_base", 0.0), paredes_raw, exigir_abertura=True
+                        )
+                        if ok_w:
+                            el["p1_vao"], el["p2_vao"], el["Largura"], el["offset_norm"], el["tem_parede_real"] = p1_a, p2_a, larg_a, off_a, True
+                            el["x"], el["y"] = round((p1_a[0] + p2_a[0]) / 2.0, 4), round((p1_a[1] + p2_a[1]) / 2.0, 4)
+                            elementos_arquitetonicos.append(el)
                 else:
                     elementos_arquitetonicos.append(el)
 
@@ -3372,7 +3421,7 @@ with tab_bim:
             blocos_hidro = st.session_state.get("memoria_edicoes_hidro", ctx_mem.get("df_hidro", []))
             max_z_projeto = max(0.0, float(ctx_mem.get("max_z_cobertura", 3.0)) - 3.0)
 
-        # MODO B: Leitura completa de .DXF / .IFC (Suportando LINE, LWPOLYLINE, POLYLINE, MLINE, ARC, CIRCLE, ELLIPSE, SPLINE)
+        # MODO B: Leitura de .DXF / .IFC com separação rigorosa entre Janelas (MLine/Line) e Portas (Arco 90° + Vão Aberto)
         for andar_idx, config in enumerate(config_andares):
             dxf_file = config["arquivo"]
             pe_direito_atual = config["pe_direito"]
@@ -3387,7 +3436,7 @@ with tab_bim:
                 doc = ezdxf.readfile(temp_path)
                 msp = doc.modelspace()
 
-                # 1º) Lê todas as PAREDES do andar (LINE, LWPOLYLINE fechada/aberta, POLYLINE, MLINE, ARC, CIRCLE, SPLINE)
+                # 1º) Lê todas as PAREDES do andar (layer_arq)
                 paredes_andar = []
                 for la in layer_arq:
                     for e_w in msp.query(f'*[layer=="{la}"]'):
@@ -3396,147 +3445,135 @@ with tab_bim:
                             paredes_andar.append(((x1, y1, z_base), (x2, y2, z_base + pe_direito_atual)))
                 paredes_raw.extend(paredes_andar)
 
-                # 2º) Lê todas as ESQUADRIAS (INSERT, MLINE, LWPOLYLINE, POLYLINE, LINE, ARC) e encaixa nas paredes reais
-                vaos_ja_registrados = []
+                # 2º) Coleta todos os segmentos e arcos das layers de Esquadrias
+                arcos_portas_dxf = []
+                segs_folhas_porta = []
+                candidatos_janela = []
+
                 for le in layer_esquadrias:
-                    # 2.A: Blocos INSERT na layer de Esquadrias
-                    for idx_esq, e in enumerate(msp.query(f'INSERT[layer=="{le}"]')):
-                        nome_bloco_u = extrair_nome_real_bloco_dxf(doc, e).upper()
-                        layer_u = le.upper()
-                        tem_arco = False
-                        xs_b, ys_b = [], []
-                        cx_ins, cy_ins = float(e.dxf.insert.x), float(e.dxf.insert.y)
-                        try:
-                            for ve in e.virtual_entities():
-                                if ve.dxftype() == 'ARC':
-                                    tem_arco = True
-                                for (vx1, vy1), (vx2, vy2) in extrair_segmentos_entidade_dxf(ve, modo="esquadria"):
-                                    if math.hypot(vx1 - cx_ins, vy1 - cy_ins) <= 2.8 and math.hypot(vx2 - cx_ins, vy2 - cy_ins) <= 2.8:
-                                        xs_b.extend([vx1, vx2])
-                                        ys_b.extend([vy1, vy2])
-                        except Exception:
-                            pass
+                    le_u = le.upper()
+                    eh_layer_porta = any(k in le_u for k in ["PORTA", "MADEIRA"]) and not any(k in le_u for k in ["JANELA", "JAN"])
+                    eh_layer_janela = any(k in le_u for k in ["JANELA", "JAN"])
 
-                        eh_porta = (
-                            tem_arco
-                            or any(k in nome_bloco_u for k in ["PORTA", "PT", "P1", "P2", "P3", "MADEIRA", "GIRO"])
-                            or any(k in layer_u for k in ["PORTA", "MADEIRA"])
-                        )
-                        if "JANELA" in nome_bloco_u or "JAN" in layer_u:
-                            eh_porta = False
+                    for idx_ent, ent in enumerate(msp.query(f'*[layer=="{le}"]')):
+                        dxft = ent.dxftype()
+                        if dxft == 'INSERT':
+                            nome_b = extrair_nome_real_bloco_dxf(doc, ent)
+                            nome_b_u = nome_b.upper()
+                            arcos_bloco = []
+                            segs_bloco = []
+                            try:
+                                for ve in ent.virtual_entities():
+                                    if ve.dxftype() == 'ARC':
+                                        arcos_bloco.append(ve)
+                                    else:
+                                        segs_bloco.extend(extrair_segmentos_entidade_dxf(ve, modo="esquadria"))
+                            except Exception:
+                                pass
 
-                        if xs_b and ys_b:
-                            x_min_e, x_max_e = min(xs_b), max(xs_b)
-                            y_min_e, y_max_e = min(ys_b), max(ys_b)
-                            dx_e, dy_e = x_max_e - x_min_e, y_max_e - y_min_e
-                            larg_sug = round(max(0.60, min(2.60, max(dx_e, dy_e))), 2)
-                            cx_box, cy_box = (x_min_e + x_max_e) / 2.0, (y_min_e + y_max_e) / 2.0
-                        else:
-                            larg_sug = 0.85 if eh_porta else 1.20
-                            cx_box, cy_box = cx_ins, cy_ins
+                            eh_p_bloco = bool(arcos_bloco) or eh_layer_porta or any(k in nome_b_u for k in ["PORTA", "PT", "MADEIRA", "GIRO"])
+                            if eh_layer_janela or "JANELA" in nome_b_u:
+                                eh_p_bloco = False
 
-                        p1_vao, p2_vao, larg_real, offset_norm, ok_parede = alinhar_vao_na_parede_real(
-                            cx_ins, cy_ins, cx_box, cy_box, larg_sug, eh_porta, z_base, paredes_andar
-                        )
-                        if not ok_parede:
-                            continue
+                            if eh_p_bloco:
+                                segs_folhas_porta.extend(segs_bloco)
+                                for arc_v in arcos_bloco:
+                                    arcos_portas_dxf.append((arc_v, nome_b, le))
+                            else:
+                                if segs_bloco:
+                                    maior_seg = max(segs_bloco, key=lambda s: dist_2d(s[0], s[1]))
+                                    candidatos_janela.append((maior_seg[0], maior_seg[1], nome_b, le))
+                        elif dxft == 'ARC':
+                            arcos_portas_dxf.append((ent, f"Porta ({le})", le))
+                        elif dxft == 'MLINE' and not eh_layer_porta:
+                            for s1, s2 in extrair_segmentos_entidade_dxf(ent, modo="esquadria"):
+                                candidatos_janela.append((s1, s2, f"Janela MLine ({le})", le))
+                        elif dxft in ('LINE', 'LWPOLYLINE', 'POLYLINE'):
+                            segs_e = extrair_segmentos_entidade_dxf(ent, modo="esquadria")
+                            if eh_layer_porta:
+                                # Na layer de porta, linhas retas são folhas da porta aberta ou batentes (nunca o vão!)
+                                segs_folhas_porta.extend(segs_e)
+                            else:
+                                for s1, s2 in segs_e:
+                                    candidatos_janela.append((s1, s2, f"Janela ({le})", le))
 
-                        cx_final, cy_final = round((p1_vao[0] + p2_vao[0]) / 2.0, 4), round((p1_vao[1] + p2_vao[1]) / 2.0, 4)
-                        if any(math.hypot(cx_final - vx, cy_final - vy) < 0.35 for vx, vy in vaos_ja_registrados):
-                            continue
-                        vaos_ja_registrados.append((cx_final, cy_final))
+                # Também busca arcos de 90° em outras layers (ex: arco cinza de porta) que toquem folhas de porta da layer_esquadrias
+                if segs_folhas_porta:
+                    for arc_geral in msp.query('ARC'):
+                        if arc_geral.dxf.layer not in layer_esquadrias:
+                            r_g = float(arc_geral.dxf.radius)
+                            if 0.50 <= r_g <= 1.30:
+                                c_gx, c_gy = float(arc_geral.dxf.center.x), float(arc_geral.dxf.center.y)
+                                if any(min(math.hypot(c_gx - f1[0], c_gy - f1[1]), math.hypot(c_gx - f2[0], c_gy - f2[1])) <= 0.20 for f1, f2 in segs_folhas_porta):
+                                    arcos_portas_dxf.append((arc_geral, "Porta", layer_esquadrias[0] if layer_esquadrias else arc_geral.dxf.layer))
 
-                        eh_bascula = any(k in nome_bloco_u for k in ["BASC", "BANH", "WC", "J_ALTA"])
-                        peit_ini = soleira_padrao_porta if eh_porta else (1.60 if eh_bascula else peitoril_padrao_janela)
-                        alt_ini = altura_padrao_porta if eh_porta else (0.60 if eh_bascula else altura_padrao_janela)
+                vaos_registrados = []
 
+                def vao_ja_existe(p1_n, p2_n):
+                    mx_n, my_n = (p1_n[0] + p2_n[0]) / 2.0, (p1_n[1] + p2_n[1]) / 2.0
+                    for v_p1, v_p2 in vaos_registrados:
+                        vmx, vmy = (v_p1[0] + v_p2[0]) / 2.0, (v_p1[1] + v_p2[1]) / 2.0
+                        if math.hypot(mx_n - vmx, my_n - vmy) <= 0.45:
+                            return True
+                        if distancia_ponto_segmento_2d(mx_n, my_n, v_p1[0], v_p1[1], v_p2[0], v_p2[1]) <= 0.25:
+                            return True
+                    return False
+
+                # 2.A: Processa todas as PORTAS a partir do arco de 90° e da abertura real na parede
+                for idx_p, (arc_e, nome_p, ly_p) in enumerate(arcos_portas_dxf):
+                    res_porta = extrair_vao_porta_por_arco_dxf(arc_e, z_base, paredes_andar, segs_folhas_porta)
+                    if res_porta is not None:
+                        p1_v, p2_v, larg_r, off_n = res_porta
+                        if not vao_ja_existe(p1_v, p2_v):
+                            vaos_registrados.append((p1_v, p2_v))
+                            cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
+                            elementos_arquitetonicos.append({
+                                "ID_CAD": f"PORTA_P{andar_idx}_{idx_p}",
+                                "Nome_Bloco": nome_p,
+                                "Layer_CAD": ly_p,
+                                "Andar": f"Pav {config['ordem']}",
+                                "Tipo": "Esquadria",
+                                "Subtipo": "Porta",
+                                "x": cx_f, "y": cy_f, "z_base": z_base,
+                                "pe_direito": pe_direito_atual,
+                                "p1_vao": p1_v, "p2_vao": p2_v,
+                                "offset_norm": off_n,
+                                "tem_parede_real": True,
+                                "Largura": larg_r,
+                                "Peitoril": soleira_padrao_porta,
+                                "Altura": altura_padrao_porta
+                            })
+
+                # 2.B: Processa todas as JANELAS mantendo o comprimento exato desenhado no CAD
+                # Ordena do maior para o menor segmento para priorizar a linha principal da janela e fundir linhas paralelas
+                candidatos_janela.sort(key=lambda item: dist_2d(item[0], item[1]), reverse=True)
+                for idx_j, (s1, s2, nome_j, ly_j) in enumerate(candidatos_janela):
+                    comp_j = dist_2d(s1, s2)
+                    if not (0.40 <= comp_j <= 3.20):
+                        continue
+                    p1_v, p2_v, larg_r, off_n, ok_w = centralizar_segmento_na_espessura_da_parede(
+                        s1, s2, z_base, paredes_andar, exigir_abertura=False
+                    )
+                    if ok_w and not vao_ja_existe(p1_v, p2_v):
+                        vaos_registrados.append((p1_v, p2_v))
+                        cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
+                        eh_bascula = any(k in nome_j.upper() for k in ["BASC", "BANH", "WC", "J_ALTA"])
                         elementos_arquitetonicos.append({
-                            "ID_CAD": f"{e.dxf.name}_P{andar_idx}_{idx_esq}",
-                            "Nome_Bloco": extrair_nome_real_bloco_dxf(doc, e),
-                            "Layer_CAD": le,
+                            "ID_CAD": f"JANELA_P{andar_idx}_{idx_j}",
+                            "Nome_Bloco": nome_j,
+                            "Layer_CAD": ly_j,
                             "Andar": f"Pav {config['ordem']}",
                             "Tipo": "Esquadria",
-                            "Subtipo": "Porta" if eh_porta else "Janela",
-                            "x": cx_final, "y": cy_final, "z_base": z_base,
+                            "Subtipo": "Janela",
+                            "x": cx_f, "y": cy_f, "z_base": z_base,
                             "pe_direito": pe_direito_atual,
-                            "p1_vao": p1_vao, "p2_vao": p2_vao,
-                            "offset_norm": offset_norm,
+                            "p1_vao": p1_v, "p2_vao": p2_v,
+                            "offset_norm": off_n,
                             "tem_parede_real": True,
-                            "Largura": larg_real,
-                            "Peitoril": peit_ini,
-                            "Altura": alt_ini
+                            "Largura": larg_r,
+                            "Peitoril": 1.60 if eh_bascula else peitoril_padrao_janela,
+                            "Altura": 0.60 if eh_bascula else altura_padrao_janela
                         })
-
-                    # 2.B: Entidades geométricas na layer de Esquadrias (MLINE, LWPOLYLINE, POLYLINE, LINE, ARC)
-                    for idx_lin, e_lin in enumerate(msp.query(f'*[layer=="{le}"]')):
-                        dxft_l = e_lin.dxftype()
-                        if dxft_l == 'INSERT':
-                            continue
-                        eh_p_l = any(k in le.upper() for k in ["PORTA", "MADEIRA"])
-                        if "JANELA" in le.upper() or "JAN" in le.upper():
-                            eh_p_l = False
-
-                        # Se for um ARC de giro de porta solto (explodido), o centro do arco é a dobradiça e o raio é a largura da porta!
-                        if dxft_l == 'ARC':
-                            r_arc = float(e_lin.dxf.radius)
-                            if 0.50 <= r_arc <= 1.30:
-                                cx_a, cy_a = float(e_lin.dxf.center.x), float(e_lin.dxf.center.y)
-                                p1_v, p2_v, larg_r, off_n, ok_w = alinhar_vao_na_parede_real(
-                                    cx_a, cy_a, cx_a, cy_a, r_arc, True, z_base, paredes_andar
-                                )
-                                if ok_w:
-                                    cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
-                                    if not any(math.hypot(cx_f - vx, cy_f - vy) < 0.45 for vx, vy in vaos_ja_registrados):
-                                        vaos_ja_registrados.append((cx_f, cy_f))
-                                        elementos_arquitetonicos.append({
-                                            "ID_CAD": f"PORTA_ARC_P{andar_idx}_{idx_lin}",
-                                            "Nome_Bloco": f"Porta ({le})",
-                                            "Layer_CAD": le,
-                                            "Andar": f"Pav {config['ordem']}",
-                                            "Tipo": "Esquadria",
-                                            "Subtipo": "Porta",
-                                            "x": cx_f, "y": cy_f, "z_base": z_base,
-                                            "pe_direito": pe_direito_atual,
-                                            "p1_vao": p1_v, "p2_vao": p2_v,
-                                            "offset_norm": off_n,
-                                            "tem_parede_real": True,
-                                            "Largura": larg_r,
-                                            "Peitoril": soleira_padrao_porta,
-                                            "Altura": altura_padrao_porta
-                                        })
-                            continue
-
-                        segs_l = extrair_segmentos_entidade_dxf(e_lin, modo="esquadria")
-                        for s_p1, s_p2 in segs_l:
-                            comp_s = dist_2d(s_p1, s_p2)
-                            if 0.45 <= comp_s <= 3.50:
-                                mx_s, my_s = (s_p1[0] + s_p2[0]) / 2.0, (s_p1[1] + s_p2[1]) / 2.0
-                                if any(math.hypot(mx_s - vx, my_s - vy) < 0.40 for vx, vy in vaos_ja_registrados):
-                                    continue
-                                p1_v, p2_v, larg_r, off_n, ok_w = alinhar_vao_na_parede_real(
-                                    mx_s, my_s, mx_s, my_s, comp_s, eh_p_l, z_base, paredes_andar, p1_hint=s_p1, p2_hint=s_p2
-                                )
-                                if ok_w:
-                                    cx_f, cy_f = round((p1_v[0] + p2_v[0]) / 2.0, 4), round((p1_v[1] + p2_v[1]) / 2.0, 4)
-                                    if any(math.hypot(cx_f - vx, cy_f - vy) < 0.40 for vx, vy in vaos_ja_registrados):
-                                        continue
-                                    vaos_ja_registrados.append((cx_f, cy_f))
-                                    elementos_arquitetonicos.append({
-                                        "ID_CAD": f"ESQ_{dxft_l}_P{andar_idx}_{idx_lin}",
-                                        "Nome_Bloco": f"{'Porta' if eh_p_l else 'Janela'} {dxft_l} ({le})",
-                                        "Layer_CAD": le,
-                                        "Andar": f"Pav {config['ordem']}",
-                                        "Tipo": "Esquadria",
-                                        "Subtipo": "Porta" if eh_p_l else "Janela",
-                                        "x": cx_f, "y": cy_f, "z_base": z_base,
-                                        "pe_direito": pe_direito_atual,
-                                        "p1_vao": p1_v, "p2_vao": p2_v,
-                                        "offset_norm": off_n,
-                                        "tem_parede_real": True,
-                                        "Largura": larg_r,
-                                        "Peitoril": soleira_padrao_porta if eh_p_l else peitoril_padrao_janela,
-                                        "Altura": altura_padrao_porta if eh_p_l else altura_padrao_janela
-                                    })
 
                 for le in layer_estrutural:
                     for e in msp.query(f'INSERT[layer=="{le}"]'):
@@ -3577,7 +3614,6 @@ with tab_bim:
 
             z_acumulado += pe_direito_atual + espessura_laje
 
-        # Detecta se o usuário alterou algum dos 4 controles globais (Soleira, Altura Porta, Peitoril Janela, Altura Janela)
         assinatura_padroes = f"{soleira_padrao_porta}_{altura_padrao_porta}_{peitoril_padrao_janela}_{altura_padrao_janela}"
         padroes_mudaram = (st.session_state.get("assinatura_padroes_esq", "") != assinatura_padroes)
         st.session_state["assinatura_padroes_esq"] = assinatura_padroes
@@ -3585,9 +3621,9 @@ with tab_bim:
         esquadrias_lista = [el for el in elementos_arquitetonicos if el.get("Tipo") == "Esquadria" and el.get("tem_parede_real", True)]
         if esquadrias_lista:
             with st.expander(f"🚪🪟 Editar Peitoril, Soleira, Vergas e Alturas de Portas e Janelas ({len(esquadrias_lista)} vãos reais nas paredes)", expanded=False):
-                st.caption("Vergas e Contravergas de 10cm de altura (+30cm para cada lado, limitadas pelas quinas da parede) são geradas exclusivamente sobre as paredes reais:")
+                st.caption("Vergas e Contravergas de 10cm de altura (+30cm para cada lado, limitadas pelas quinas da parede) são geradas exclusivamente sobre os vãos reais:")
                 df_esq_raw = pd.DataFrame(esquadrias_lista)
-                mem_esq = st.session_state.get("memoria_edicoes_esq", {})
+                mem_esq = st.session_state.get("memoria_edicoes_esq_v2", {})
 
                 for idx_e, r_e in df_esq_raw.iterrows():
                     chave_pos = f"{r_e.get('Andar','')}_{round(float(r_e['x']),2)}_{round(float(r_e['y']),2)}"
@@ -3612,7 +3648,7 @@ with tab_bim:
                     },
                     use_container_width=True,
                     hide_index=True,
-                    key=f"editor_esq_v{st.session_state.get('sync_version', 0)}_{assinatura_padroes}"
+                    key=f"editor_esq_v2_{st.session_state.get('sync_version', 0)}_{assinatura_padroes}"
                 )
 
                 novo_mem_esq = {}
@@ -3626,7 +3662,7 @@ with tab_bim:
                         "Largura": float(r_ed["Largura"])
                     }
                     map_esq_atualizado[r_ed["ID_CAD"]] = novo_mem_esq[chave_pos]
-                st.session_state["memoria_edicoes_esq"] = novo_mem_esq
+                st.session_state["memoria_edicoes_esq_v2"] = novo_mem_esq
 
                 for el_arq in elementos_arquitetonicos:
                     if el_arq.get("Tipo") == "Esquadria" and el_arq["ID_CAD"] in map_esq_atualizado:
