@@ -120,8 +120,8 @@ COMPRIMENTO_EQUIVALENTE_CONEXOES = {
     "Joelho 90°":          {20: 1.1, 22: 1.1, 25: 1.2, 32: 1.5, 40: 2.0, 50: 3.2, 60: 3.5},
     "Joelho 45°":          {20: 0.4, 22: 0.4, 25: 0.5, 32: 0.7, 40: 1.0, 50: 1.3, 60: 1.5},
     "Curva 90°":           {20: 0.4, 22: 0.4, 25: 0.5, 32: 0.6, 40: 0.8, 50: 1.2, 60: 1.4},
-    "Tê 90° (Direta)":     {20: 0.7, 22: 0.7, 25: 0.8, 32: 0.9, 40: 1.5, 50: 2.2, 60: 2.5},
-    "Tê 90° (Saída Lat.)": {20: 2.3, 22: 2.3, 25: 2.4, 32: 3.1, 40: 4.6, 50: 7.3, 60: 8.0},
+    "Tê (Direta)":     {20: 0.7, 22: 0.7, 25: 0.8, 32: 0.9, 40: 1.5, 50: 2.2, 60: 2.5},
+    "Tê (Saída Lat.)": {20: 2.3, 22: 2.3, 25: 2.4, 32: 3.1, 40: 4.6, 50: 7.3, 60: 8.0},
     "Registro de Gaveta":  {20: 0.2, 22: 0.2, 25: 0.3, 32: 0.4, 40: 0.7, 50: 0.8, 60: 0.9},
     "Registro de Pressão": {20: 5.4, 22: 5.4, 25: 7.4, 32: 9.5, 40: 11.0, 50: 14.0, 60: 16.0},
     "Saída de Canalização":{20: 0.8, 22: 0.8, 25: 0.9, 32: 1.3, 40: 1.5, 50: 2.0, 60: 2.2},
@@ -380,9 +380,9 @@ DADOS_BIB_HIDRO_PADRAO = [
     {"Equipamento": "Joelho 45° 22mm", "Vazao_Ls": 0.00, "Peso": 0.4, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
     {"Equipamento": "Joelho 45° 25mm", "Vazao_Ls": 0.00, "Peso": 0.5, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
     {"Equipamento": "Joelho 45° 32mm", "Vazao_Ls": 0.00, "Peso": 0.7, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° (Passagem Direta) 22mm", "Vazao_Ls": 0.00, "Peso": 0.7, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° (Passagem Direta) 25mm", "Vazao_Ls": 0.00, "Peso": 0.8, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° (Passagem Direta) 32mm", "Vazao_Ls": 0.00, "Peso": 0.9, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+    {"Equipamento": "Tê (Passagem Direta) 22mm", "Vazao_Ls": 0.00, "Peso": 0.7, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+    {"Equipamento": "Tê (Passagem Direta) 25mm", "Vazao_Ls": 0.00, "Peso": 0.8, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+    {"Equipamento": "Tê (Passagem Direta) 32mm", "Vazao_Ls": 0.00, "Peso": 0.9, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
     {"Equipamento": "Junção Y 22mm", "Vazao_Ls": 0.00, "Peso": 0.5, "Agua_mm": 22, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
     {"Equipamento": "Junção Y 25mm", "Vazao_Ls": 0.00, "Peso": 0.6, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
     {"Equipamento": "Junção Y 32mm", "Vazao_Ls": 0.00, "Peso": 0.8, "Agua_mm": 32, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
@@ -419,10 +419,10 @@ DADOS_BIB_HIDRO_PADRAO = [
     {"Equipamento": "Joelho 45° Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 0},
     {"Equipamento": "Joelho 45° Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 75, "Vent_mm": 0},
     {"Equipamento": "Joelho 45° Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 40, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 75, "Vent_mm": 0},
-    {"Equipamento": "Tê 90° Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
+    {"Equipamento": "Tê Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 40, "Vent_mm": 0},
+    {"Equipamento": "Tê Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 0},
+    {"Equipamento": "Tê Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 75, "Vent_mm": 0},
+    {"Equipamento": "Tê Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 100, "Vent_mm": 0},
     {"Equipamento": "Junção Y Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 40, "Vent_mm": 0},
     {"Equipamento": "Junção Y Esgoto 50mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 50, "Vent_mm": 0},
     {"Equipamento": "Junção Y Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 75, "Vent_mm": 0},
@@ -805,7 +805,7 @@ def calcular_perda_carga_nbr5626(soma_pesos, diam_mm, comp_real_m, qtd_joelhos90
     d_ref = min(COMPRIMENTO_EQUIVALENTE_CONEXOES["Joelho 90°"].keys(), key=lambda k: abs(k - diam_mm))
     comp_eq = (
         qtd_joelhos90 * COMPRIMENTO_EQUIVALENTE_CONEXOES["Joelho 90°"][d_ref] +
-        qtd_tes * COMPRIMENTO_EQUIVALENTE_CONEXOES["Tê 90° (Saída Lat.)"][d_ref] +
+        qtd_tes * COMPRIMENTO_EQUIVALENTE_CONEXOES["Tê (Saída Lat.)"][d_ref] +
         qtd_registros * COMPRIMENTO_EQUIVALENTE_CONEXOES["Registro de Pressão"][d_ref] +
         COMPRIMENTO_EQUIVALENTE_CONEXOES["Saída de Canalização"][d_ref]
     )
@@ -1878,7 +1878,7 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
             add_item(bom_af, f"Tubo PVC Soldável Marrom DN {dn}mm", "m", round(comp_m * 1.05, 1))
             if joelhos_90 > 0: add_item(bom_af, f"Joelho 90° Soldável {dn}mm", "un", joelhos_90)
             if joelhos_45 > 0: add_item(bom_af, f"Joelho 45° Soldável {dn}mm", "un", joelhos_45)
-            add_item(bom_af, f"Tê 90° Soldável {dn}mm", "un", 1)
+            add_item(bom_af, f"Tê Soldável {dn}mm", "un", 1)
             add_item(bom_af, f"Luva Soldável {dn}mm", "un", luvas)
             if 'Barrilete' not in tipo:
                 add_item(bom_af, f"Joelho 90° c/ Bucha de Latão {dn}mm x 1/2\"", "un", 1)
@@ -1888,7 +1888,7 @@ def gerar_quantitativos_totais_bim(linhas_elet, linhas_hidro, df_circuitos, df_b
             add_item(bom_aq, f"Tubo {mat_nome} DN {dn}mm", "m", round(comp_m * 1.05, 1))
             if joelhos_90 > 0: add_item(bom_aq, f"Joelho 90° {mat_nome} {dn}mm", "un", joelhos_90)
             if joelhos_45 > 0: add_item(bom_aq, f"Joelho 45° {mat_nome} {dn}mm", "un", joelhos_45)
-            add_item(bom_aq, f"Tê 90° {mat_nome} {dn}mm", "un", 1)
+            add_item(bom_aq, f"Tê {mat_nome} {dn}mm", "un", 1)
             add_item(bom_aq, f"Misturador / Válvula Esfera {dn}mm", "un", 1)
         else:
             suf_esg = "Pluvial (NBR 10844)" if "Pluviais" in tipo else "Esgoto Série Normal"
@@ -1959,7 +1959,7 @@ CATALOGO_PECAS_CAD = [
     "Joelho 45° Soldável / Roscável (Corte Técnico)",
     "Curva 90° Longa de Água / Esgoto (Raio Suave)",
     "Curva de Transposição (Desvio de Tubulação na Parede)",
-    "Tê 90° de Passagem Direta / Derivação",
+    "Tê de Passagem Direta / Derivação",
     "Tê de Redução 90° Soldável",
     "Tê com Bucha de Latão Central (Misturador/Chuveiro)",
     "Luva Simples / Luva de Correr com Anéis O-Ring",
@@ -2417,12 +2417,12 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
     if eh_te:
         if eh_esg:
             dn_uso = dn_explicito if dn_explicito in ["40", "50", "75", "100"] else "50"
-            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Tê 90° Esgoto {dn_uso}mm"), 0.0
+            return "Conexões Tubulação Esgoto", buscar_na_bib(f"Tê Esgoto {dn_uso}mm"), 0.0
         elif eh_aq:
-            return "Conexões Hidráulicas AQ", buscar_na_bib("Tê 90° (Passagem Direta) 22mm"), 0.6
+            return "Conexões Hidráulicas AQ", buscar_na_bib("Tê (Passagem Direta) 22mm"), 0.6
         else:
             dn_uso = dn_explicito if dn_explicito in ["22", "25", "32"] else "25"
-            return "Conexões Hidráulicas AF", buscar_na_bib(f"Tê 90° (Passagem Direta) {dn_uso}mm"), 0.6
+            return "Conexões Hidráulicas AF", buscar_na_bib(f"Tê (Passagem Direta) {dn_uso}mm"), 0.6
 
     if eh_curva:
         if eh_esg:
@@ -2763,14 +2763,9 @@ with st.sidebar:
         st.session_state.pontos_hidro = dados_bim.get("pontos_hidro", [])
         st.session_state.linhas_3d_master = dados_bim.get("linhas_3d_master", {'eletrica': [], 'hidro': []})
         st.session_state.contexto_bim = dados_bim.get("contexto_bim", {})
-        # Remove qualquer VAO_AUTO_ antigo salvo em arquivos .bim anteriores
-        if "elementos_arquitetonicos" in st.session_state.contexto_bim:
-            st.session_state.contexto_bim["elementos_arquitetonicos"] = [
-                el for el in st.session_state.contexto_bim["elementos_arquitetonicos"]
-                if not str(el.get("ID_CAD", "")).startswith("VAO_AUTO_")
-            ]
         if "bib_eletrica" in dados_bim:
             st.session_state.bib_eletrica = pd.DataFrame(dados_bim["bib_eletrica"])
+            garantir_itens_extras_na_bib_eletrica()
         if "bib_hidro" in dados_bim:
             st.session_state.bib_hidro = pd.DataFrame(dados_bim["bib_hidro"])
             garantir_tubos_queda_subida_na_biblioteca()
@@ -2781,14 +2776,24 @@ with st.sidebar:
             st.session_state.quantitativos_master = {k: pd.DataFrame(v) for k, v in qm.items()}
 
         ctx_salvo = st.session_state.contexto_bim
-        st.session_state["memoria_edicoes_elet"] = dados_bim.get("memoria_edicoes_elet", ctx_salvo.get("df_elet", []))
+        st.session_state["memoria_edicoes_elet"] = dados_bim.get("memoria_edicoes_elet", ctx_salvo.get("df_elet", ctx_salvo.get("df_eletrica", [])))
         st.session_state["memoria_edicoes_hidro"] = dados_bim.get("memoria_edicoes_hidro", ctx_salvo.get("df_hidro", []))
-        st.session_state["memoria_edicoes_esq"] = dados_bim.get("memoria_edicoes_esq", {})
+        st.session_state["memoria_edicoes_esq_v2"] = dados_bim.get("memoria_edicoes_esq_v2", dados_bim.get("memoria_edicoes_esq", {}))
         st.session_state["mapa_blocos_hidro"] = dados_bim.get("mapa_blocos_hidro", {})
+        st.session_state["mapa_blocos_elet"] = dados_bim.get("mapa_blocos_elet", {})
         st.session_state["altura_caixa_3d"] = float(dados_bim.get("altura_caixa_3d", ctx_salvo.get("altura_caixa", 1.50)))
+
+        # Restaura as layers salvas no arquivo .bim e força a atualização visual dos 5 multiselects
+        layers_do_bim = dados_bim.get("layers_selecionadas", ctx_salvo.get("layers_selecionadas", {}))
+        if layers_do_bim:
+            st.session_state["layers_selecionadas_mem"] = layers_do_bim
+            st.session_state.contexto_bim["layers_selecionadas"] = layers_do_bim
+
         st.session_state["projeto_bim_ativo"] = True
         st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
-        st.success("✅ Projeto .BIM restaurado com sucesso!")
+        st.session_state["versao_widgets_layer"] = st.session_state.get("versao_widgets_layer", 0) + 1
+        st.cache_data.clear()
+        st.success("✅ Projeto .BIM e seleção de layers restaurados com sucesso!")
         st.rerun()
 
     pacote_bim = {
@@ -2802,9 +2807,11 @@ with st.sidebar:
         "quantitativos_master": {k: v.to_dict(orient="records") for k, v in st.session_state.quantitativos_master.items()},
         "memoria_edicoes_elet": st.session_state.get("memoria_edicoes_elet", []),
         "memoria_edicoes_hidro": st.session_state.get("memoria_edicoes_hidro", []),
-        "memoria_edicoes_esq": st.session_state.get("memoria_edicoes_esq", {}),
+        "memoria_edicoes_esq_v2": st.session_state.get("memoria_edicoes_esq_v2", {}),
         "mapa_blocos_hidro": st.session_state.get("mapa_blocos_hidro", {}),
-        "altura_caixa_3d": st.session_state.get("altura_caixa_3d", 1.50)
+        "mapa_blocos_elet": st.session_state.get("mapa_blocos_elet", {}),
+        "altura_caixa_3d": st.session_state.get("altura_caixa_3d", 1.50),
+        "layers_selecionadas": st.session_state.get("layers_selecionadas_mem", st.session_state.contexto_bim.get("layers_selecionadas", {}))
     }
     st.download_button(
         "💾 Salvar Projeto Atual (.bim)",
@@ -2815,34 +2822,50 @@ with st.sidebar:
         use_container_width=True
     )
     st.divider()
+
     st.header("🏢 Arquitetura e Pavimentos (DXF / IFC)")
-    import hashlib
     arquivos_dxf = st.file_uploader(
         "Upload Plantas ou Maquetes (.dxf ou .ifc)",
         type=["dxf", "ifc"],
         accept_multiple_files=True,
-        help="Após salvar alterações no AutoCAD/Blender, clique no 'X' do arquivo antigo acima e solte o arquivo recém-salvo aqui. Suas edições na tabela serão preservadas!"
+        help="Suba um ou mais arquivos DXF/IFC. Ao substituir o arquivo por uma versão editada, as layers e blocos serão relidos automaticamente."
     )
-
+    config_andares = []
     if arquivos_dxf:
-        hash_atual = hashlib.md5(b"".join([f.getvalue() for f in arquivos_dxf])).hexdigest()[:8]
-        hash_anterior = st.session_state.get("hash_arquivo_cad", "")
+        bytes_concat = b"".join([f.getvalue() for f in arquivos_dxf])
+        hash_atual = hashlib.md5(bytes_concat).hexdigest()[:8]
+        kb_total = len(bytes_concat) / 1024.0
+        st.caption(f"📄 Versão carregada na memória: `{hash_atual}` ({kb_total:.1f} KB)")
 
-        if hash_anterior and hash_atual != hash_anterior:
+        # Se o conteúdo binário do DXF mudou no upload, força automaticamente a releitura das layers!
+        if st.session_state.get("ultimo_hash_sidebar") != hash_atual:
+            st.session_state["ultimo_hash_sidebar"] = hash_atual
+            st.session_state["forcar_releitura_layers_dxf"] = True
+            st.session_state["versao_widgets_layer"] = st.session_state.get("versao_widgets_layer", 0) + 1
             st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
             st.session_state["disparou_sync"] = True
-            st.toast("✨ Novo arquivo modificado detectado! Sincronizando alterações...", icon="🔄")
-        st.session_state["hash_arquivo_cad"] = hash_atual
+            st.cache_data.clear()
 
-        st.caption(f"📄 Versão carregada na memória: `{hash_atual}` ({sum(len(f.getvalue()) for f in arquivos_dxf)/1024:.1f} KB)")
-
-        if st.button("🔄 Atualizar Projeto Atual (DXF/IFC)", use_container_width=True, help="Reprocessa o arquivo atual preservando todas as edições feitas na tabela."):
+        if st.button("🔄 Atualizar Projeto Atual (DXF/IFC)", use_container_width=True):
+            st.session_state["forcar_releitura_layers_dxf"] = True
+            st.session_state["layers_conhecidas_dxf"] = set()
+            st.session_state["versao_widgets_layer"] = st.session_state.get("versao_widgets_layer", 0) + 1
             st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
             st.session_state["disparou_sync"] = True
+            st.cache_data.clear()
+            st.toast("🔄 Layers e blocos relidos diretamente do arquivo DXF/IFC!", icon="✅")
             st.rerun()
 
         if st.session_state.get("resumo_ultimo_sync"):
-            st.success(st.session_state["resumo_ultimo_sync"])
+            st.caption(st.session_state["resumo_ultimo_sync"])
+
+        st.markdown("**Configuração de Pavimentos:**")
+        for idx, arq in enumerate(arquivos_dxf):
+            with st.expander(f"Pavimento {idx}: {arq.name}", expanded=(idx == 0)):
+                ordem_pav = st.number_input(f"Ordem do Andar ({arq.name})", value=idx, step=1, key=f"ord_{idx}")
+                pd_pav = st.number_input(f"Pé-Direito (m) ({arq.name})", value=3.00, step=0.10, key=f"pd_{idx}")
+                config_andares.append({"ordem": ordem_pav, "pe_direito": pd_pav, "arquivo": arq})
+        config_andares = sorted(config_andares, key=lambda x: x["ordem"])
             
     st.divider()
     st.subheader("Configurações Globais & Roteamento")
@@ -3321,10 +3344,17 @@ with tab_bim:
     )
 
     if arquivos_dxf or tem_projeto_bim:
+        ctx_mem = st.session_state.contexto_bim
+        layers_salvas_bim = ctx_mem.get("layers_selecionadas", st.session_state.get("layers_selecionadas_mem", {}))
+
         if arquivos_dxf:
             todas_layers_set = set()
             layers_com_blocos = set()
             dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
+
+            # Calcula assinatura única (MD5) do conteúdo real dos arquivos DXF para detectar edições no mesmo arquivo
+            hash_dxf_atual = hashlib.md5(b"".join([f.getvalue() for f in arquivos_dxf])).hexdigest()
+            hash_dxf_anterior = st.session_state.get("hash_dxf_anterior", "")
 
             if dxf_files_only:
                 for dxf_f in dxf_files_only:
@@ -3346,39 +3376,109 @@ with tab_bim:
                 todas_layers = ["IFC_WALLS", "IFC_DOORS_WINDOWS", "IFC_STRUCTURE", "IFC_ELECTRICAL", "IFC_PLUMBING"]
 
             layers_conhecidas = st.session_state.get("layers_conhecidas_dxf", set())
-            layers_novas_detectadas = set(todas_layers) - layers_conhecidas if layers_conhecidas else set()
+            layers_novas_detectadas = (set(todas_layers) - layers_conhecidas) if (layers_conhecidas and hash_dxf_atual != hash_dxf_anterior) else set()
             st.session_state["layers_conhecidas_dxf"] = set(todas_layers)
+            st.session_state["hash_dxf_anterior"] = hash_dxf_atual
 
             if layers_novas_detectadas:
-                st.info(f"✨ **Novas layers detectadas no arquivo atualizado:** `{', '.join(sorted(layers_novas_detectadas))}`")
+                st.info(f"✨ **Arquivo DXF atualizado! Novas layers detectadas:** `{', '.join(sorted(layers_novas_detectadas))}`")
 
-            def sugerir_layers(palavras, padrao_vazio=False):
-                sug = [ly for ly in todas_layers if any(p in normalizar_texto_bim(ly) for p in palavras)]
+            def sugerir_layers(palavras_inc, palavras_exc=None, padrao_vazio=False):
+                palavras_exc = palavras_exc or []
+                sug = []
+                for ly in todas_layers:
+                    ly_n = normalizar_texto_bim(ly)
+                    if any(p in ly_n for p in palavras_inc) and not any(ex in ly_n for ex in palavras_exc):
+                        sug.append(ly)
                 if not sug and not padrao_vazio and todas_layers:
                     return [todas_layers[0]]
                 return sug
 
-            default_arq = sugerir_layers(["ALVENARIA", "PAREDE", "ARQ", "MURO"], padrao_vazio=False)
-            default_esq = sugerir_layers(["ESQUADRIA", "PORTA", "JANELA"], padrao_vazio=True)
-            default_est = sugerir_layers(["VIGA", "PILAR", "ESTRUTURA", "CONCRETO"], padrao_vazio=True)
-            default_elet = sugerir_layers(["ELETRICA", "ELET", "LUZ", "TOMADA", "ILUM"], padrao_vazio=True)
-            default_hidro = sugerir_layers(["HIDR", "AGUA", "ESGOTO", "SANIT", "TUBULACAO", "PLUVIAL", "GAS"], padrao_vazio=True)
+            # Sugestões limpas (Exclui ARQ_ESQUADRIA de Paredes e exclui COTA/TEXTO dos blocos MEP)
+            sug_arq = sugerir_layers(
+                ["ALVENARIA", "PAREDE", "MURO", "ARQ"],
+                palavras_exc=["ESQUADRIA", "PORTA", "JANELA", "COTA", "TEXT", "PISO", "FORRO", "TELHA", "PROJ", "MOBIL", " VEGET"],
+                padrao_vazio=False
+            )
+            sug_esq = sugerir_layers(
+                ["ESQUADRIA", "PORTA", "JANELA"],
+                palavras_exc=["COTA", "TEXT"],
+                padrao_vazio=True
+            )
+            sug_est = sugerir_layers(
+                ["VIGA", "PILAR", "ESTRUTURA", "CONCRETO"],
+                palavras_exc=["COTA", "TEXT"],
+                padrao_vazio=True
+            )
+            sug_elet = sugerir_layers(
+                ["ELETRICA", "ELET", "LUZ", "TOMADA", "ILUM", "QUADRO"],
+                palavras_exc=["COTA", "TEXT", "DIM", "LEGENDA"],
+                padrao_vazio=True
+            )
+            sug_hidro = sugerir_layers(
+                ["HIDR", "AGUA", "ESGOTO", "SANIT", "TUBULACAO", "PLUVIAL", "GAS", "EQUIPAMENTOS HIDRICOS", "CONEXOES"],
+                palavras_exc=["COTA", "TEXT", "DIM", "LEGENDA"],
+                padrao_vazio=True
+            )
 
-            for ly_b in layers_com_blocos:
-                if ly_b not in default_esq and ly_b not in default_est and ly_b not in default_elet and ly_b not in default_hidro:
-                    if any(k in normalizar_texto_bim(ly_b) for k in ["ELET", "LUZ", "TOM"]):
-                        default_elet.append(ly_b)
-                    elif ly_b in layers_novas_detectadas:
-                        default_hidro.append(ly_b)
+            # Se houver escolhas salvas pelo usuário (no .bim ou na sessão), respeita-as e adiciona apenas layers novas do DXF!
+            forcar_releitura = st.session_state.get("forcar_releitura_layers_dxf", False)
 
+            def mesclar_salvas_com_novas(chave_cat, sugestao_base):
+                # Filtra apenas layers que realmente existem no DXF recém-carregado
+                salvas = [ly for ly in layers_salvas_bim.get(chave_cat, []) if ly in todas_layers]
+                # Remove automaticamente ARQ_ESQUADRIA de Paredes e COTA de Hidro caso estivessem gravadas de sessões antigas
+                if chave_cat == "arq":
+                    salvas = [ly for ly in salvas if not any(ex in normalizar_texto_bim(ly) for ex in ["ESQUADRIA", "PORTA", "JANELA", "COTA"])]
+                elif chave_cat in ("hidro", "elet"):
+                    salvas = [ly for ly in salvas if not any(ex in normalizar_texto_bim(ly) for ex in ["COTA", "TEXT", "DIM"])]
+
+                if forcar_releitura:
+                    # Quando clicou em Atualizar Projeto Atual (DXF/IFC), incorpora todas as layers válidas detectadas no DXF
+                    return sorted(list(set(salvas + sugestao_base)))
+                if chave_cat in layers_salvas_bim and salvas:
+                    novas_da_cat = [ly for ly in layers_novas_detectadas if ly in sugestao_base and ly not in salvas]
+                    return sorted(list(set(salvas + novas_da_cat)))
+                return sugestao_base
+
+            default_arq = mesclar_salvas_com_novas("arq", sug_arq)
+            default_esq = mesclar_salvas_com_novas("esq", sug_esq)
+            default_est = mesclar_salvas_com_novas("est", sug_est)
+            default_elet = mesclar_salvas_com_novas("elet", sug_elet)
+            default_hidro = mesclar_salvas_com_novas("hidro", sug_hidro)
+
+            if forcar_releitura:
+                st.session_state["forcar_releitura_layers_dxf"] = False
+
+            col_ly_info, col_ly_btn = st.columns([4, 1.2])
+            if col_ly_btn.button("🔄 Resetar Layers p/ Sugestão Limpa", use_container_width=True):
+                st.session_state["layers_selecionadas_mem"] = {
+                    "arq": sug_arq, "esq": sug_esq, "est": sug_est, "elet": sug_elet, "hidro": sug_hidro
+                }
+                st.session_state.contexto_bim["layers_selecionadas"] = st.session_state["layers_selecionadas_mem"]
+                st.session_state["versao_widgets_layer"] = st.session_state.get("versao_widgets_layer", 0) + 1
+                st.rerun()
+
+            v_ly = st.session_state.get("versao_widgets_layer", 0)
             c1, c2, c3, c4, c5 = st.columns(5)
-            layer_arq = c1.multiselect("Paredes:", todas_layers, default=default_arq)
-            layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=default_esq)
-            layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=default_est)
-            layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=default_elet)
-            layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=sorted(list(set(default_hidro))))
+            layer_arq = c1.multiselect("Paredes:", todas_layers, default=default_arq, key=f"ms_ly_arq_{v_ly}")
+            layer_esquadrias = c2.multiselect("Esquadrias (Portas/Janelas):", todas_layers, default=default_esq, key=f"ms_ly_esq_{v_ly}")
+            layer_estrutural = c3.multiselect("Vigas/Pilares:", todas_layers, default=default_est, key=f"ms_ly_est_{v_ly}")
+            layer_elet = c4.multiselect("Blocos Elétricos:", todas_layers, default=default_elet, key=f"ms_ly_elet_{v_ly}")
+            layer_hidro = c5.multiselect("Blocos Hidro/Gás/Bomba:", todas_layers, default=default_hidro, key=f"ms_ly_hidro_{v_ly}")
+
+            # Salva imediatamente as escolhas atuais do usuário na sessão e no contexto_bim (para o arquivo .bim)
+            escolhas_atuais_ly = {
+                "arq": layer_arq,
+                "esq": layer_esquadrias,
+                "est": layer_estrutural,
+                "elet": layer_elet,
+                "hidro": layer_hidro
+            }
+            st.session_state["layers_selecionadas_mem"] = escolhas_atuais_ly
+            st.session_state.contexto_bim["layers_selecionadas"] = escolhas_atuais_ly
         else:
-            st.success("📂 **Projeto carregado do arquivo `.bim`!** Todas as tabelas, paredes e tubulações 3D estão ativas abaixo. *(Se desejar atualizar a geometria do CAD depois, basta subir o arquivo `.dxf` na barra lateral).*")
+            st.success("📂 **Projeto carregado do arquivo `.bim`!** Todas as layers, tabelas, paredes e tubulações 3D estão ativas abaixo. *(Quando subir o arquivo `.dxf`, suas layers salvas no `.bim` serão mantidas automaticamente).*")
 
         st.divider()
         st.subheader("Configuração de Alturas (Tubulações, Portas e Janelas) e Escopo")
@@ -3962,7 +4062,8 @@ with tab_bim:
                     'grid_w': grid_w, 'grid_h': grid_h, 'pe_direito': ultimo_pe_direito,
                     'max_z_cobertura': z_cobertura, 'altura_caixa': altura_caixa, 'num_barriletes': num_barriletes,
                     'h_agua_fria': h_agua_fria, 'h_agua_quente': h_agua_quente, 'altura_viga': altura_viga,
-                    'incluir_shaft': incluir_shaft, 'rotear_em_cascata': rotear_em_cascata
+                    'incluir_shaft': incluir_shaft, 'rotear_em_cascata': rotear_em_cascata,
+                    'layers_selecionadas': st.session_state.get("layers_selecionadas_mem", {})
                 }
 
                 ctx = st.session_state.contexto_bim
