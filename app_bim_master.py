@@ -4312,6 +4312,10 @@ with tab_bim:
                         st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
                         st.rerun()
 
+                for idx_el_z, r_el_z in df_be.iterrows():
+                    id_ez = str(r_el_z['ID_CAD'])
+                    if id_ez in st.session_state.get("overrides_topologia_bim", {}) and "z_relativo" in st.session_state["overrides_topologia_bim"][id_ez]:
+                        df_be.at[idx_el_z, 'z_relativo'] = float(st.session_state["overrides_topologia_bim"][id_ez]["z_relativo"])
                 df_editado_elet = st.data_editor(
                     df_be,
                     column_config={
@@ -4378,20 +4382,33 @@ with tab_bim:
 
                 df_bh, stats_hd = mesclar_blocos_com_memoria(df_bh, disciplina="hidro")
 
+                # 2. Auto-correção de função BIM (sem sobrescrever alturas z_relativo já editadas pelo usuário!)
+                ov_z_mem = st.session_state.get("overrides_topologia_bim", {})
+                z_lote_bloco = st.session_state.get("z_global_por_bloco", {})
+                z_lote_equip = st.session_state.get("z_global_por_equip", {})
+
                 for idx_fix, r_fix in df_bh.iterrows():
-                    nb_norm = normalizar_texto_bim(f"{r_fix.get('Nome_Bloco', '')} {r_fix.get('Equipamento', '')}")
+                    id_f = str(r_fix.get('ID_CAD', ''))
+                    nb_raw = str(r_fix.get('Nome_Bloco', ''))
+                    nb_norm = normalizar_texto_bim(f"{nb_raw} {r_fix.get('Equipamento', '')}")
                     if "GORDURA" in nb_norm or "[CG]" in nb_norm:
                         df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa de Gordura"
                         if "GORDURA" not in normalizar_texto_bim(r_fix.get('Equipamento', '')):
                             df_bh.at[idx_fix, 'Equipamento'] = "Caixa de Gordura"
-                        df_bh.at[idx_fix, 'z_relativo'] = -0.30
                     elif "SIFONAD" in nb_norm:
                         df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa Sifonada / Ralo Sifonado"
-                        df_bh.at[idx_fix, 'z_relativo'] = 0.00
                     elif ("INSPECAO" in nb_norm or "[CI]" in nb_norm) and r_fix.get('Tipo_BIM') != "Caixa de Inspeção / Destino Esgoto":
                         df_bh.at[idx_fix, 'Tipo_BIM'] = "Caixa de Inspeção / Destino Esgoto"
                         df_bh.at[idx_fix, 'Equipamento'] = "Caixa de Inspeção"
-                        df_bh.at[idx_fix, 'z_relativo'] = -0.50
+
+                    # Aplica alturas Z salvas globalmente (por Equipamento ou Nome_Bloco) ou individualmente no 3D/2D
+                    eq_atual_f = str(df_bh.at[idx_fix, 'Equipamento'])
+                    if eq_atual_f in z_lote_equip:
+                        df_bh.at[idx_fix, 'z_relativo'] = float(z_lote_equip[eq_atual_f])
+                    if nb_raw in z_lote_bloco:
+                        df_bh.at[idx_fix, 'z_relativo'] = float(z_lote_bloco[nb_raw])
+                    if id_f in ov_z_mem and "z_relativo" in ov_z_mem[id_f]:
+                        df_bh.at[idx_fix, 'z_relativo'] = float(ov_z_mem[id_f]["z_relativo"])
 
                 dict_map_lote = st.session_state.get("mapa_blocos_hidro", {})
                 for blk_k, (fn_v, eq_v) in dict_map_lote.items():
@@ -4879,10 +4896,98 @@ with tab_bim:
                     name='🧱 Pilares / Vigas (3D)', legendgroup='pilares'
                 ))
 
-            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM LEGENDA AGRUPADA E CLIQUE INTERATIVO 3D
-            grupos_legenda_usados = set()
+            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM CLIQUE ESQUERDO (POPUP EIXO Z) E SCROLL CENTRAL (ORBITAR)
+            import streamlit.components.v1 as components
 
-            # Lê sempre os dados mais recentes das tabelas editadas para refletir mudanças de Z instantaneamente
+            # Processa imediatamente qualquer alteração de Altura Z enviada pelo Popup Flutuante 3D
+            cmd_z3d = st.session_state.get("bridge_z3d_input", "")
+            if cmd_z3d and cmd_z3d != st.session_state.get("ultimo_cmd_z3d_proc", ""):
+                st.session_state["ultimo_cmd_z3d_proc"] = cmd_z3d
+                partes_cmd = str(cmd_z3d).split("|")
+                if len(partes_cmd) >= 3:
+                    id_alvo_cmd = partes_cmd[0].strip()
+                    try:
+                        novo_z_cmd = round(float(partes_cmd[1].replace(",", ".")), 3)
+                    except Exception:
+                        novo_z_cmd = 0.50
+                    escopo_cmd = partes_cmd[2].strip()  # 'PONTO', 'BLOCO' ou 'EQUIP'
+
+                    todos_tmp = (df_editado_elet.to_dict('records') if not df_editado_elet.empty else []) + (df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else [])
+                    blk_ref_cmd = next((b for b in todos_tmp if str(b.get('ID_CAD')) == id_alvo_cmd), None)
+
+                    if blk_ref_cmd is not None:
+                        nome_b_cmd = str(blk_ref_cmd.get('Nome_Bloco', ''))
+                        eq_b_cmd = str(blk_ref_cmd.get('Equipamento', blk_ref_cmd.get('Equipamento_Associado', '')))
+
+                        if escopo_cmd == "BLOCO":
+                            ids_afetar = {str(b['ID_CAD']) for b in todos_tmp if str(b.get('Nome_Bloco', '')) == nome_b_cmd}
+                            st.session_state.setdefault("z_global_por_bloco", {})[nome_b_cmd] = novo_z_cmd
+                        elif escopo_cmd == "EQUIP":
+                            ids_afetar = {str(b['ID_CAD']) for b in todos_tmp if str(b.get('Equipamento', b.get('Equipamento_Associado', ''))) == eq_b_cmd}
+                            st.session_state.setdefault("z_global_por_equip", {})[eq_b_cmd] = novo_z_cmd
+                        else:
+                            ids_afetar = {id_alvo_cmd}
+
+                        # 1. Atualiza DataFrames da Aba 1
+                        if not df_editado_elet.empty:
+                            m_el = df_editado_elet['ID_CAD'].astype(str).isin(ids_afetar)
+                            if m_el.any():
+                                df_editado_elet.loc[m_el, 'z_relativo'] = novo_z_cmd
+                        if not df_editado_hidro.empty:
+                            m_hd = df_editado_hidro['ID_CAD'].astype(str).isin(ids_afetar)
+                            if m_hd.any():
+                                df_editado_hidro.loc[m_hd, 'z_relativo'] = novo_z_cmd
+
+                        # 2. Atualiza Memória Smart Sync por coordenada
+                        salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
+
+                        # 3. Atualiza Overrides Topológicos (Gráfico 2D e Inspetor 2D)
+                        ov_dict = st.session_state.get("overrides_topologia_bim", {})
+                        for id_af in ids_afetar:
+                            if id_af not in ov_dict:
+                                ov_dict[id_af] = {"Conectado_A": "Automático (Menor Rota ABNT)", "Conexao_No": "Joelho 90° Soldável / Tê", "DN_Manual_mm": 0}
+                            ov_dict[id_af]["z_relativo"] = novo_z_cmd
+                            st.session_state[f"insp_z_{id_af}"] = novo_z_cmd
+                        st.session_state["overrides_topologia_bim"] = ov_dict
+                        st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+                        st.session_state["no_selecionado_bim"] = id_alvo_cmd
+                        st.session_state["sel_insp_no"] = id_alvo_cmd
+
+                        # 4. Reprocessa Rotas 3D e 2D imediatamente com a nova altura
+                        ctx_at = st.session_state.contexto_bim
+                        ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+                        ctx_at['df_eletrica'] = ctx_at['df_elet']
+                        ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                        if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
+                            novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at) if modo_visualizacao != "Apenas Elétrica" else []
+                            novas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at) if modo_visualizacao != "Apenas Hidrossanitário" else []
+                            st.session_state.linhas_3d_master['hidro'] = novas_hd
+                            st.session_state.linhas_3d_master['eletrica'] = novas_el
+                            st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                                novas_el, novas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                            )
+
+                        # 5. Atualiza Tabela de Pressões Hidráulicas (Aba 4)
+                        if st.session_state.get("pontos_hidro"):
+                            z_res_mca = float(ctx_at.get("max_z_cobertura", 3.0)) + float(ctx_at.get("altura_caixa", 1.5))
+                            for pt_h_row in st.session_state.pontos_hidro:
+                                if str(pt_h_row.get("ID")) in ids_afetar:
+                                    b_ref = next((b for b in ctx_at['df_hidro'] if str(b['ID_CAD']) == str(pt_h_row.get("ID"))), None)
+                                    z_b = float(b_ref.get('z_base', 0.0)) if b_ref else 0.0
+                                    novo_z_abs = round(z_b + novo_z_cmd, 2)
+                                    pt_h_row["z"] = novo_z_abs
+                                    if float(pt_h_row.get("Peso (NBR 5626)", 0.0)) > 0:
+                                        p_est = max(1.5, z_res_mca - novo_z_abs)
+                                        perda = float(pt_h_row.get("Perda Carga (m.c.a.)", 0.0))
+                                        pt_h_row["Pressão Estática (m.c.a.)"] = round(p_est, 1)
+                                        pt_h_row["Pressão Disp. (kPa)"] = round(max(0.0, p_est - perda) * 9.81, 1)
+
+                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
+                        st.cache_data.clear()
+                        st.toast(f"✅ Altura Z = {novo_z_cmd:.2f}m aplicada em {len(ids_afetar)} ponto(s) em todo o projeto!", icon="📏")
+                        st.rerun()
+
+            grupos_legenda_usados = set()
             df_el_ctx = df_editado_elet.to_dict('records') if not df_editado_elet.empty else st.session_state.contexto_bim.get('df_eletrica', [])
             df_h_proc = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else st.session_state.contexto_bim.get('df_hidro', [])
 
@@ -4901,7 +5006,7 @@ with tab_bim:
                             line=dict(color=linha['cor'], width=5),
                             customdata=[id_ref_el for _ in pts],
                             name=nome_grp, legendgroup='rede_eletrica', showlegend=mostrar_leg,
-                            hovertext=f"Elétrica ({fios_txt}) | Origem: {id_ref_el} | L={linha.get('comprimento_m',0)}m", hoverinfo="text"
+                            hovertext=f"Elétrica ({fios_txt}) | Bloco: {id_ref_el} | L={linha.get('comprimento_m',0)}m", hoverinfo="text"
                         ))
                     if mostrar_fios and len(pts) >= 2:
                         p_mid = pts[len(pts) // 2]
@@ -4946,10 +5051,10 @@ with tab_bim:
                     z=[b['z_base'] + float(b.get('z_relativo', 1.3)) for b in df_el_ctx],
                     mode='markers',
                     customdata=[str(b['ID_CAD']) for b in df_el_ctx],
-                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b.get('Nome_Bloco','')}<br>Altura z_relativo: {float(b.get('z_relativo',1.3)):.2f}m (Clique p/ Editar)" for b in df_el_ctx],
+                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b.get('Nome_Bloco','')}<br>Altura z_relativo: {float(b.get('z_relativo',1.3)):.2f}m<br>🖱️ Clique Esquerdo: Editar Altura Z" for b in df_el_ctx],
                     hoverinfo="text",
                     marker=dict(size=7, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
-                    name="🔌 Pontos Elétricos (Clique p/ Editar Z)"
+                    name="🔌 Pontos Elétricos (Clique Esq. = Editar Z)"
                 ))
 
             if df_h_proc:
@@ -4959,10 +5064,10 @@ with tab_bim:
                     z=[b['z_base'] + float(b.get('z_relativo', 0.5)) for b in df_h_proc],
                     mode='markers',
                     customdata=[str(b['ID_CAD']) for b in df_h_proc],
-                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']} ({b['Tipo_BIM']})<br>Altura z_relativo: {float(b.get('z_relativo',0.5)):.2f}m (Clique p/ Editar)" for b in df_h_proc],
+                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']} ({b['Tipo_BIM']})<br>Altura z_relativo: {float(b.get('z_relativo',0.5)):.2f}m<br>🖱️ Clique Esquerdo: Editar Altura Z" for b in df_h_proc],
                     hoverinfo="text",
                     marker=dict(size=6, color='#0ea5e9', symbol='circle'),
-                    name="🚰 Pontos Hidrossanitários (Clique p/ Editar Z)"
+                    name="🚰 Pontos Hidrossanitários (Clique Esq. = Editar Z)"
                 ))
 
             cx_box = next((b for b in df_h_proc if b['Tipo_BIM'] == 'Caixa d\'Água'), None)
@@ -4976,25 +5081,9 @@ with tab_bim:
                     name='🟦 Caixa d\'Água Superior'
                 ))
 
-            # Destaca com um marcador vermelho/dourado no 3D o bloco atualmente selecionado para edição de altura
-            id_foco_3d = st.session_state.get("no_selecionado_bim")
-            bloco_foco_3d = next((b for b in (df_el_ctx + df_h_proc) if str(b.get('ID_CAD')) == str(id_foco_3d)), None)
-            if bloco_foco_3d:
-                zf_3d = float(bloco_foco_3d.get('z_base', 0.0)) + float(bloco_foco_3d.get('z_relativo', 0.5))
-                fig.add_trace(go.Scatter3d(
-                    x=[bloco_foco_3d['x']], y=[bloco_foco_3d['y']], z=[zf_3d],
-                    mode='markers+text',
-                    text=[f"🎯 {bloco_foco_3d['ID_CAD']} (z={float(bloco_foco_3d.get('z_relativo',0.5)):.2f}m)"],
-                    textposition="top center",
-                    textfont=dict(size=12, color="#dc2626", family="Arial Black"),
-                    marker=dict(size=12, color='#dc2626', symbol='diamond', line=dict(width=3, color='yellow')),
-                    name='🎯 Bloco em Edição (3D)',
-                    hoverinfo='skip'
-                ))
-
             fig.update_layout(
-                clickmode='event+select',
                 scene=dict(
+                    dragmode='turntable',
                     aspectmode='data',
                     bgcolor='#f8fafc',
                     xaxis=dict(title='X (m)', backgroundcolor='#f1f5f9', gridcolor='#cbd5e1'),
@@ -5013,165 +5102,320 @@ with tab_bim:
                 height=780, margin=dict(l=0, r=0, b=0, t=0)
             )
 
-            evento_3d = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                on_select="rerun",
-                selection_mode="points",
-                key="grafico_3d_interativo_bim"
+            st.caption("🖱️ **Controles do Mouse no 3D:** **Botão Central (Clique no Scroll + Arrastar)** = Orbitar Maquete | **Botão Direito + Arrastar** = Pan (Mover) | **Roda do Scroll** = Zoom | **Clique Esquerdo sobre um Bloco/Tubo** = Abre Caixa Flutuante de Edição do Eixo Z")
+            st.plotly_chart(fig, use_container_width=True, key="grafico_3d_interativo_bim")
+
+            # Ponte invisível de comunicação instantânea entre o Popup Flutuante 3D e o Python
+            st.markdown(
+                """
+                <style>
+                div[data-testid="stTextInput"]:has(input[aria-label="BRIDGE_Z3D_INPUT"]) {
+                    opacity: 0.01 !important;
+                    height: 1px !important;
+                    width: 1px !important;
+                    overflow: hidden !important;
+                    position: fixed !important;
+                    bottom: 0px !important;
+                    right: 0px !important;
+                    pointer-events: none !important;
+                    z-index: -10 !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
             )
+            st.text_input("BRIDGE_Z3D_INPUT", key="bridge_z3d_input", label_visibility="collapsed")
 
-            # Captura o clique no Gráfico 3D (seja na esfera do ponto ou no vértice da tubulação)
-            todos_blocos_3d = df_el_ctx + df_h_proc
-            ids_todos_3d = [str(b['ID_CAD']) for b in todos_blocos_3d]
+            # Empacota metadados de todos os blocos 3D para o Popup Flutuante exibir Nome, Equipamento, Contagens e Altura Z atual
+            mapa_meta_3d = {}
+            todos_b3d = df_el_ctx + df_h_proc
+            for b in todos_b3d:
+                id_b = str(b['ID_CAD'])
+                nb_b = str(b.get('Nome_Bloco', id_b))
+                eq_b = str(b.get('Equipamento', b.get('Equipamento_Associado', '')))
+                mapa_meta_3d[id_b] = {
+                    "id": id_b,
+                    "nome": nb_b,
+                    "equip": eq_b,
+                    "funcao": str(b.get('Tipo_BIM', '')),
+                    "x": round(float(b.get('x', 0.0)), 3),
+                    "y": round(float(b.get('y', 0.0)), 3),
+                    "z_base": round(float(b.get('z_base', 0.0)), 3),
+                    "z_rel": round(float(b.get('z_relativo', 0.50)), 3),
+                    "qtd_bloco": sum(1 for item in todos_b3d if str(item.get('Nome_Bloco', '')) == nb_b),
+                    "qtd_equip": sum(1 for item in todos_b3d if str(item.get('Equipamento', item.get('Equipamento_Associado', ''))) == eq_b)
+                }
 
-            if evento_3d and hasattr(evento_3d, "selection") and evento_3d.selection.get("points"):
-                pts_3d_sel = evento_3d.selection["points"]
-                if pts_3d_sel:
-                    pt3 = pts_3d_sel[-1]
-                    id_3d_det = None
-                    cd3 = pt3.get("customdata")
-                    if cd3 is not None:
-                        cand3 = str(cd3[0]) if isinstance(cd3, (list, tuple)) and len(cd3) > 0 else str(cd3)
-                        if cand3 in ids_todos_3d:
-                            id_3d_det = cand3
-                    if id_3d_det is None and "x" in pt3 and "y" in pt3:
-                        px3, py3 = float(pt3["x"]), float(pt3["y"])
-                        pz3 = float(pt3.get("z", 0.0))
-                        b_prox3 = min(
-                            todos_blocos_3d,
-                            key=lambda b: math.hypot(b["x"] - px3, b["y"] - py3) + abs((b.get("z_base", 0.0) + float(b.get("z_relativo", 0.5))) - pz3) * 0.5
-                        )
-                        if math.hypot(b_prox3["x"] - px3, b_prox3["y"] - py3) <= 1.20:
-                            id_3d_det = str(b_prox3["ID_CAD"])
+            json_meta_3d = json.dumps(mapa_meta_3d)
 
-                    ass_3d = f"3D_{id_3d_det}_{pt3.get('x')}_{pt3.get('y')}_{pt3.get('z')}"
-                    if id_3d_det and st.session_state.get("ultimo_clique_3d_ass") != ass_3d:
-                        st.session_state["ultimo_clique_3d_ass"] = ass_3d
-                        st.session_state["no_selecionado_bim"] = id_3d_det
-                        st.session_state["sel_insp_no"] = id_3d_det
-                        st.session_state["sel_editor_z_3d"] = id_3d_det
+            # Injeção do Controlador 3D: Botão do Meio (Scroll) = Orbitar | Clique Esquerdo = Abre Modal Flutuante de Altura Z
+            components.html(
+                f"""
+                <script>
+                (function() {{
+                    const parentWin = window.parent;
+                    const parentDoc = parentWin.document;
+                    const blocosMeta = {json_meta_3d};
+                    parentWin.__blocosMeta3D = blocosMeta;
 
-            # =========================================================================
-            # CAIXA RÁPIDA DE EDIÇÃO DE ALTURA 3D (ATUALIZA INDIVIDUAL OU GLOBAL EM TODO O PROJETO)
-            # =========================================================================
-            if todos_blocos_3d:
-                if st.session_state.get("sel_editor_z_3d") not in ids_todos_3d:
-                    id_ini_3d = st.session_state.get("no_selecionado_bim", ids_todos_3d[0])
-                    st.session_state["sel_editor_z_3d"] = id_ini_3d if id_ini_3d in ids_todos_3d else ids_todos_3d[0]
+                    // 1. Cria o Modal Flutuante de Edição de Altura (Eixo Z) sobre a tela 3D
+                    let modalZ = parentDoc.getElementById('bim-modal-z3d');
+                    if (!modalZ) {{
+                        modalZ = parentDoc.createElement('div');
+                        modalZ.id = 'bim-modal-z3d';
+                        modalZ.style.cssText = 'display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); width:420px; background:#0f172a; color:#f8fafc; border:2px solid #38bdf8; border-radius:12px; padding:20px; z-index:999999; box-shadow:0 20px 50px rgba(0,0,0,0.75); font-family:sans-serif;';
+                        parentDoc.body.appendChild(modalZ);
+                    }}
 
-                with st.container(border=True):
-                    st.markdown("#### 📏 Caixa de Edição de Altura 3D — Individual ou Global em Todo o Projeto")
-                    st.caption("Clique em um ponto/tubo na maquete 3D acima (ou selecione abaixo) para alterar sua altura `z_relativo` e propagar automaticamente para as Tabelas, Gráfico 2D e Maquete 3D:")
+                    parentWin.__fecharModalZ3D = function() {{
+                        modalZ.style.display = 'none';
+                    }};
 
-                    cz1, cz2, cz3 = st.columns([1.8, 1.1, 1.8])
-                    id_z_sel = cz1.selectbox(
-                        "🎯 Bloco Selecionado (Clique no 3D ou pesquise):",
-                        ids_todos_3d,
-                        format_func=lambda x: f"{x} — {next((b.get('Nome_Bloco','') for b in todos_blocos_3d if str(b['ID_CAD'])==x), '')} (z={next((float(b.get('z_relativo',0)) for b in todos_blocos_3d if str(b['ID_CAD'])==x), 0):.2f}m)",
-                        key="sel_editor_z_3d"
-                    )
-                    # Mantém sincronizado com o Inspetor 2D
-                    if st.session_state.get("no_selecionado_bim") != id_z_sel:
-                        st.session_state["no_selecionado_bim"] = id_z_sel
-                        st.session_state["sel_insp_no"] = id_z_sel
+                    parentWin.__aplicarModalZ3D = function(idAlvo) {{
+                        const valZ = parentDoc.getElementById('bim-input-z-val').value;
+                        const radios = parentDoc.getElementsByName('bim_escopo_z3d');
+                        let escopo = 'PONTO';
+                        for (const r of radios) {{
+                            if (r.checked) {{ escopo = r.value; break; }}
+                        }}
+                        const payload = idAlvo + '|' + valZ + '|' + escopo + '|' + Date.now();
+                        const inputBridge = parentDoc.querySelector('input[aria-label="BRIDGE_Z3D_INPUT"]');
+                        if (inputBridge) {{
+                            const setter = Object.getOwnPropertyDescriptor(parentWin.HTMLInputElement.prototype, 'value').set;
+                            inputBridge.focus();
+                            setter.call(inputBridge, payload);
+                            inputBridge.dispatchEvent(new parentWin.Event('input', {{ bubbles: true }}));
+                            inputBridge.dispatchEvent(new parentWin.Event('change', {{ bubbles: true }}));
+                            inputBridge.dispatchEvent(new parentWin.KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+                            inputBridge.blur();
+                        }}
+                        modalZ.style.display = 'none';
+                    }};
 
-                    bloco_z_atual = next(b for b in todos_blocos_3d if str(b['ID_CAD']) == id_z_sel)
-                    nome_blk_atual = str(bloco_z_atual.get('Nome_Bloco', ''))
-                    equip_blk_atual = str(bloco_z_atual.get('Equipamento', bloco_z_atual.get('Equipamento_Associado', '')))
-                    z_atual_val = float(bloco_z_atual.get('z_relativo', 0.50))
+                    function abrirModalZ3D(idCad) {{
+                        const info = parentWin.__blocosMeta3D[idCad];
+                        if (!info) return;
+                        modalZ.innerHTML = `
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:10px; margin-bottom:12px;">
+                                <span style="font-size:16px; font-weight:bold; color:#38bdf8;">📏 Editar Altura do Bloco (Eixo Z)</span>
+                                <button onclick="window.__fecharModalZ3D()" style="background:transparent; border:none; color:#94a3b8; font-size:20px; cursor:pointer;">✖</button>
+                            </div>
+                            <div style="background:#1e293b; padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:14px; line-height:1.5;">
+                                <div><b>ID no Projeto:</b> <code style="color:#fde047;">${{info.id}}</code></div>
+                                <div><b>Bloco CAD:</b> ${{info.nome}}</div>
+                                <div><b>Equipamento:</b> ${{info.equip}} (${{info.funcao}})</div>
+                            </div>
+                            <div style="margin-bottom:14px;">
+                                <label style="display:block; font-size:13px; font-weight:bold; margin-bottom:6px; color:#e2e8f0;">Nova Altura Relativa ao Piso — Eixo Z (m):</label>
+                                <div style="display:flex; gap:8px;">
+                                    <button onclick="const el=document.getElementById('bim-input-z-val'); el.value=(parseFloat(el.value||0)-0.05).toFixed(2);" style="background:#334155; color:white; border:none; border-radius:6px; padding:8px 14px; cursor:pointer; font-weight:bold;">-0.05m</button>
+                                    <input id="bim-input-z-val" type="number" step="0.05" value="${{info.z_rel}}" style="flex:1; background:#020617; color:#ffffff; border:1px solid #38bdf8; border-radius:6px; padding:8px 12px; font-size:16px; font-weight:bold; text-align:center;" />
+                                    <button onclick="const el=document.getElementById('bim-input-z-val'); el.value=(parseFloat(el.value||0)+0.05).toFixed(2);" style="background:#334155; color:white; border:none; border-radius:6px; padding:8px 14px; cursor:pointer; font-weight:bold;">+0.05m</button>
+                                </div>
+                            </div>
+                            <div style="margin-bottom:16px; font-size:13px; background:#1e293b; padding:10px 12px; border-radius:8px;">
+                                <div style="font-weight:bold; margin-bottom:6px; color:#cbd5e1;">Aplicar esta altura em:</div>
+                                <label style="display:block; margin-bottom:5px; cursor:pointer;">
+                                    <input type="radio" name="bim_escopo_z3d" value="PONTO" checked /> 📍 Apenas neste ponto (<b>${{info.id}}</b>)
+                                </label>
+                                <label style="display:block; margin-bottom:5px; cursor:pointer;">
+                                    <input type="radio" name="bim_escopo_z3d" value="BLOCO" /> 🧩 Todos os blocos <b>${{info.nome}}</b> (${{info.qtd_bloco}} locais)
+                                </label>
+                                <label style="display:block; cursor:pointer;">
+                                    <input type="radio" name="bim_escopo_z3d" value="EQUIP" /> 🚰 Todos c/ equipamento <b>${{info.equip}}</b> (${{info.qtd_equip}} locais)
+                                </label>
+                            </div>
+                            <div style="display:flex; gap:10px;">
+                                <button onclick="window.__aplicarModalZ3D('${{info.id}}')" style="flex:2; background:#0284c7; color:white; border:none; border-radius:8px; padding:11px; font-size:14px; font-weight:bold; cursor:pointer;">💾 Salvar e Atualizar Tudo (3D, 2D e Tabelas)</button>
+                                <button onclick="window.__fecharModalZ3D()" style="flex:0.8; background:#475569; color:white; border:none; border-radius:8px; padding:11px; font-size:13px; cursor:pointer;">Cancelar</button>
+                            </div>
+                        `;
+                        modalZ.style.display = 'block';
+                        setTimeout(() => {{
+                            const inp = parentDoc.getElementById('bim-input-z-val');
+                            if (inp) {{ inp.focus(); inp.select(); }}
+                        }}, 40);
+                    }}
 
-                    qtd_mesmo_nome = sum(1 for b in todos_blocos_3d if str(b.get('Nome_Bloco', '')) == nome_blk_atual)
-                    qtd_mesmo_equip = sum(1 for b in todos_blocos_3d if str(b.get('Equipamento', b.get('Equipamento_Associado', ''))) == equip_blk_atual)
+                    // 2. Localiza o gráfico 3D do Plotly e configura:
+                    //    - Botão do Meio (Scroll Click, button===1) => Orbitar
+                    //    - Botão Esquerdo (button===0) => Não orbita; clica no ponto e abre o Modal de Eixo Z!
+                    function configurarMouse3D() {{
+                        const plots = parentDoc.querySelectorAll('.js-plotly-plot');
+                        let plot3d = null;
+                        for (const p of plots) {{
+                            if (p.querySelector('.gl-container canvas')) {{
+                                plot3d = p;
+                                break;
+                            }}
+                        }}
+                        if (!plot3d) {{
+                            setTimeout(configurarMouse3D, 350);
+                            return;
+                        }}
+                        if (plot3d.__mouse3dConfigurado) return;
+                        plot3d.__mouse3dConfigurado = true;
 
-                    novo_z_3d = cz2.number_input(
-                        "📏 Nova Altura z_relativo (m):",
-                        min_value=-1.50, max_value=6.00, value=z_atual_val, step=0.05,
-                        key=f"num_z3d_{id_z_sel}_{z_atual_val}"
-                    )
+                        const glContainer = plot3d.querySelector('.gl-container');
+                        let ultimoHoverId = null;
+                        let isMmbOrbiting = false;
+                        let mmbCanvas = null;
+                        let lmbDownPos = null;
 
-                    escopo_z = cz3.radio(
-                        "Onde aplicar esta nova altura?",
-                        [
-                            f"📍 Apenas neste ponto ({id_z_sel})",
-                            f"🧩 Em todos os blocos '{nome_blk_atual}' ({qtd_mesmo_nome} locais)",
-                            f"🚰 Em todos c/ equipamento '{equip_blk_atual}' ({qtd_mesmo_equip} locais)"
-                        ],
-                        key=f"rad_escopo_z_{id_z_sel}"
-                    )
+                        function resolverIdDoPontoPlotly(pt) {{
+                            if (!pt) return null;
+                            if (pt.customdata) {{
+                                const cd = Array.isArray(pt.customdata) ? String(pt.customdata[0]) : String(pt.customdata);
+                                if (parentWin.__blocosMeta3D[cd]) return cd;
+                            }}
+                            if (typeof pt.x === 'number' && typeof pt.y === 'number') {{
+                                let melhorId = null;
+                                let menorDist = 1.5;
+                                for (const [k, b] of Object.entries(parentWin.__blocosMeta3D)) {{
+                                    const d = Math.hypot(b.x - pt.x, b.y - pt.y) + Math.abs((b.z_base + b.z_rel) - (pt.z || 0)) * 0.4;
+                                    if (d < menorDist) {{
+                                        menorDist = d;
+                                        melhorId = k;
+                                    }}
+                                }}
+                                return melhorId;
+                            }}
+                            return null;
+                        }}
 
-                    if st.button("🚀 Aplicar Nova Altura e Atualizar Tabelas + Gráfico 3D + Gráfico 2D", type="primary", use_container_width=True, key="btn_aplicar_z_3d"):
-                        # Identifica todos os ID_CAD que devem ser atualizados conforme o escopo escolhido
-                        if escopo_z.startswith("📍"):
-                            ids_alvo_z = {id_z_sel}
-                        elif escopo_z.startswith("🧩"):
-                            ids_alvo_z = {str(b['ID_CAD']) for b in todos_blocos_3d if str(b.get('Nome_Bloco', '')) == nome_blk_atual}
-                        else:
-                            ids_alvo_z = {str(b['ID_CAD']) for b in todos_blocos_3d if str(b.get('Equipamento', b.get('Equipamento_Associado', ''))) == equip_blk_atual}
+                        if (typeof plot3d.on === 'function') {{
+                            plot3d.on('plotly_hover', function(data) {{
+                                if (data && data.points && data.points.length > 0) {{
+                                    const idH = resolverIdDoPontoPlotly(data.points[0]);
+                                    if (idH) ultimoHoverId = idH;
+                                }}
+                            }});
+                            plot3d.on('plotly_click', function(data) {{
+                                if (isMmbOrbiting) return;
+                                if (data && data.points && data.points.length > 0) {{
+                                    const idC = resolverIdDoPontoPlotly(data.points[0]) || ultimoHoverId;
+                                    if (idC) abrirModalZ3D(idC);
+                                }}
+                            }});
+                        }}
 
-                        # 1. Atualiza DataFrames da Aba 1 (Elétrica e Hidrossanitário)
-                        if not df_editado_elet.empty:
-                            mask_el_z = df_editado_elet['ID_CAD'].astype(str).isin(ids_alvo_z)
-                            if mask_el_z.any():
-                                df_editado_elet.loc[mask_el_z, 'z_relativo'] = float(novo_z_3d)
-                        if not df_editado_hidro.empty:
-                            mask_hd_z = df_editado_hidro['ID_CAD'].astype(str).isin(ids_alvo_z)
-                            if mask_hd_z.any():
-                                df_editado_hidro.loc[mask_hd_z, 'z_relativo'] = float(novo_z_3d)
+                        // Intercepta Mousedown na cena 3D (Fase de Captura)
+                        glContainer.addEventListener('mousedown', function(e) {{
+                            if (e._isSyntheticMmb) return;
 
-                        # 2. Atualiza a Memória Smart Sync por coordenada (para a tabela da Aba 1 não reverter no rerun!)
-                        salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
+                            // BOTÃO CENTRAL DO MOUSE (Clique no Scroll, button === 1) => ORBITAR!
+                            if (e.button === 1) {{
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                isMmbOrbiting = true;
+                                mmbCanvas = e.target;
+                                if (plot3d._fullLayout && plot3d._fullLayout.scene && plot3d._fullLayout.scene._scene) {{
+                                    plot3d._fullLayout.scene._scene.dragmode = 'turntable';
+                                }}
+                                const synDown = new parentWin.MouseEvent('mousedown', {{
+                                    bubbles: true, cancelable: true, view: parentWin,
+                                    clientX: e.clientX, clientY: e.clientY,
+                                    screenX: e.screenX, screenY: e.screenY,
+                                    button: 0, buttons: 1
+                                }});
+                                synDown._isSyntheticMmb = true;
+                                mmbCanvas.dispatchEvent(synDown);
+                                return;
+                            }}
 
-                        # 3. Atualiza os Overrides do Gráfico 2D e limpa chaves de input antigas do Inspetor 2D
-                        ov_dict = st.session_state.get("overrides_topologia_bim", {})
-                        for id_at in ids_alvo_z:
-                            if id_at not in ov_dict:
-                                ov_dict[id_at] = {"Conectado_A": "Automático (Menor Rota ABNT)", "Conexao_No": "Joelho 90° Soldável / Tê", "DN_Manual_mm": 0}
-                            ov_dict[id_at]["z_relativo"] = float(novo_z_3d)
-                            if f"insp_z_{id_at}" in st.session_state:
-                                st.session_state[f"insp_z_{id_at}"] = float(novo_z_3d)
-                        st.session_state["overrides_topologia_bim"] = ov_dict
-                        st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+                            // BOTÃO ESQUERDO DO MOUSE (button === 0) => APENAS SELECIONAR BLOCO (Não orbitar)
+                            if (e.button === 0) {{
+                                lmbDownPos = {{ x: e.clientX, y: e.clientY, t: Date.now() }};
+                            }}
+                        }}, true);
 
-                        # 4. Se alterou todos os blocos do mesmo Nome_Bloco Elétrico, atualiza também o mapa em lote
-                        if escopo_z.startswith("🧩") and nome_blk_atual in st.session_state.get("mapa_blocos_elet", {}):
-                            st.session_state["mapa_blocos_elet"][nome_blk_atual]["z_rel"] = float(novo_z_3d)
+                        // Intercepta Mousemove na janela para converter arrasto do Botão Central em Orbit e bloquear Orbit no Botão Esquerdo
+                        parentWin.addEventListener('mousemove', function(e) {{
+                            if (e._isSyntheticMmb) return;
 
-                        # 5. Atualiza contexto_bim e reprocessa IMEDIATAMENTE as rotas 3D/2D e a Tabela de Pressões (Aba 4)
-                        ctx_at = st.session_state.contexto_bim
-                        ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
-                        ctx_at['df_eletrica'] = ctx_at['df_elet']
-                        ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                            if (isMmbOrbiting && mmbCanvas) {{
+                                if ((e.buttons & 4) === 0) {{
+                                    isMmbOrbiting = false;
+                                    const synUp = new parentWin.MouseEvent('mouseup', {{
+                                        bubbles: true, cancelable: true, view: parentWin,
+                                        clientX: e.clientX, clientY: e.clientY,
+                                        button: 0, buttons: 0
+                                    }});
+                                    synUp._isSyntheticMmb = true;
+                                    mmbCanvas.dispatchEvent(synUp);
+                                    return;
+                                }}
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                const synMove = new parentWin.MouseEvent('mousemove', {{
+                                    bubbles: true, cancelable: true, view: parentWin,
+                                    clientX: e.clientX, clientY: e.clientY,
+                                    screenX: e.screenX, screenY: e.screenY,
+                                    button: 0, buttons: 1
+                                }});
+                                synMove._isSyntheticMmb = true;
+                                mmbCanvas.dispatchEvent(synMove);
+                                return;
+                            }}
 
-                        if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
-                            novas_linhas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at) if modo_visualizacao != "Apenas Elétrica" else []
-                            novas_linhas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at) if modo_visualizacao != "Apenas Hidrossanitário" else []
-                            st.session_state.linhas_3d_master['hidro'] = novas_linhas_hd
-                            st.session_state.linhas_3d_master['eletrica'] = novas_linhas_el
-                            st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
-                                novas_linhas_el, novas_linhas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
-                            )
+                            // Se o usuário estiver segurando o botão esquerdo na maquete 3D, impede que ela orbite
+                            if (lmbDownPos && (e.buttons & 1) === 1) {{
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                            }}
+                        }}, true);
 
-                        # Atualiza também o eixo 'z' e a pressão estática/disponível na tabela de pontos_hidro (Aba 4)
-                        if st.session_state.get("pontos_hidro"):
-                            z_res_mca = float(ctx_at.get("max_z_cobertura", 3.0)) + float(ctx_at.get("altura_caixa", 1.5))
-                            for pt_h_row in st.session_state.pontos_hidro:
-                                if str(pt_h_row.get("ID")) in ids_alvo_z:
-                                    b_ref = next((b for b in ctx_at['df_hidro'] if str(b['ID_CAD']) == str(pt_h_row.get("ID"))), None)
-                                    z_b = float(b_ref.get('z_base', 0.0)) if b_ref else 0.0
-                                    novo_z_abs = round(z_b + float(novo_z_3d), 2)
-                                    pt_h_row["z"] = novo_z_abs
-                                    if float(pt_h_row.get("Peso (NBR 5626)", 0.0)) > 0:
-                                        p_est = max(1.5, z_res_mca - novo_z_abs)
-                                        perda = float(pt_h_row.get("Perda Carga (m.c.a.)", 0.0))
-                                        p_disp_kpa = round(max(0.0, p_est - perda) * 9.81, 1)
-                                        pt_h_row["Pressão Estática (m.c.a.)"] = round(p_est, 1)
-                                        pt_h_row["Pressão Disp. (kPa)"] = p_disp_kpa
+                        parentWin.addEventListener('mouseup', function(e) {{
+                            if (e._isSyntheticMmb) return;
 
-                        st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
-                        st.cache_data.clear()
-                        st.toast(f"✅ Altura z={novo_z_3d:.2f}m aplicada com sucesso em {len(ids_alvo_z)} ponto(s) (Tabelas, 3D e 2D atualizados)!", icon="📏")
-                        st.rerun()
+                            if (isMmbOrbiting && e.button === 1) {{
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                isMmbOrbiting = false;
+                                if (mmbCanvas) {{
+                                    const synUp = new parentWin.MouseEvent('mouseup', {{
+                                        bubbles: true, cancelable: true, view: parentWin,
+                                        clientX: e.clientX, clientY: e.clientY,
+                                        button: 0, buttons: 0
+                                    }});
+                                    synUp._isSyntheticMmb = true;
+                                    mmbCanvas.dispatchEvent(synUp);
+                                }}
+                                return;
+                            }}
+
+                            if (e.button === 0 && lmbDownPos) {{
+                                const distClique = Math.hypot(e.clientX - lmbDownPos.x, e.clientY - lmbDownPos.y);
+                                lmbDownPos = null;
+                                // Fallback: se clicou com botão esquerdo sobre um ponto/tubo com tooltip ativo, abre o Modal Z!
+                                if (distClique < 8 && ultimoHoverId) {{
+                                    setTimeout(() => {{
+                                        if (modalZ.style.display !== 'block' && ultimoHoverId) {{
+                                            abrirModalZ3D(ultimoHoverId);
+                                        }}
+                                    }}, 60);
+                                }}
+                            }}
+                        }}, true);
+
+                        // Impede o ícone de auto-rolagem do navegador ao clicar com o scroll no 3D
+                        glContainer.addEventListener('auxclick', function(e) {{
+                            if (e.button === 1) {{
+                                e.preventDefault();
+                                e.stopPropagation();
+                            }}
+                        }}, true);
+                    }}
+
+                    configurarMouse3D();
+                }})();
+                </script>
+                """,
+                height=0
+            )
 
             st.divider()
             renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet, df_editado_hidro, st.session_state.contexto_bim)
