@@ -1207,6 +1207,98 @@ def contar_conexoes_na_rota(pontos):
             j45 += 1
     return j90, j45
 
+def dimensionar_tubo_agua_fria(soma_pesos):
+    """Dimensiona o diâmetro comercial de Água Fria (mm) pela ABNT NBR 5626 (Q = 0.3 * sqrt(Peso))."""
+    p = max(0.1, float(soma_pesos))
+    vazao_ls = 0.30 * math.sqrt(p)
+    # Diâmetros comerciais soldáveis (mm) e vazão máxima recomendada (L/s) respeitando V <= 3,0 m/s
+    tabela_af = [
+        (20, 0.35),
+        (25, 0.65),
+        (32, 1.15),
+        (40, 1.80),
+        (50, 3.00),
+        (60, 4.50),
+        (75, 7.50),
+        (85, 10.50),
+        (110, 18.00)
+    ]
+    for dn, q_max in tabela_af:
+        if vazao_ls <= q_max:
+            return dn
+    return 110
+
+
+def dimensionar_tubo_esgoto(soma_uhc):
+    """Dimensiona o diâmetro nominal de Esgoto (mm) pela ABNT NBR 8160 com base nas UHCs acumuladas."""
+    u = float(soma_uhc)
+    if u <= 2.0:
+        return 40
+    elif u <= 6.0:
+        return 50
+    elif u <= 20.0:
+        return 75
+    elif u <= 160.0:
+        return 100
+    return 150
+
+
+def contar_conexoes_na_rota(pontos_3d):
+    """Conta automaticamente joelhos de 90°, joelhos de 45° e tês ao longo dos vértices de uma rota 3D."""
+    if not pontos_3d or len(pontos_3d) < 3:
+        return 1, 0, 1
+    j90, j45 = 0, 0
+    for i in range(1, len(pontos_3d) - 1):
+        p0, p1, p2 = pontos_3d[i - 1], pontos_3d[i], pontos_3d[i + 1]
+        v1 = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])
+        v2 = (p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])
+        n1 = math.sqrt(v1[0]**2 + v1[1]**2 + v1[2]**2)
+        n2 = math.sqrt(v2[0]**2 + v2[1]**2 + v2[2]**2)
+        if n1 > 1e-3 and n2 > 1e-3:
+            cos_ang = (v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2]) / (n1 * n2)
+            cos_ang = max(-1.0, min(1.0, cos_ang))
+            ang_graus = math.degrees(math.acos(cos_ang))
+            if ang_graus >= 65.0:
+                j90 += 1
+            elif ang_graus >= 20.0:
+                j45 += 1
+    return max(1, j90), j45, 1
+
+
+def liberar_caixa(matriz, cx, cy, grid_w, grid_h, raio=2):
+    """Desbloqueia a vizinhança de um ponto na matriz 2D do A* para permitir saída/chegada na parede."""
+    for dy in range(-raio, raio + 1):
+        for dx in range(-raio, raio + 1):
+            nx, ny = cx + dx, cy + dy
+            if 0 <= ny < grid_h and 0 <= nx < grid_w:
+                matriz[ny][nx] = 1
+
+
+def bloquear_caixa_estrutural(matriz, cx, cy, grid_w, grid_h, raio=2):
+    """Bloqueia a área de um pilar estrutural na matriz 2D para que a tubulação contorne o pilar."""
+    for dy in range(-raio, raio + 1):
+        for dx in range(-raio, raio + 1):
+            nx, ny = cx + dx, cy + dy
+            if 0 <= ny < grid_h and 0 <= nx < grid_w:
+                matriz[ny][nx] = 0
+
+
+def liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx):
+    """Libera os vãos de portas e janelas na matriz 2D para que os tubos atravessem desviando da verga/contraverga no 3D."""
+    if not elementos_arq:
+        return
+    for elem in elementos_arq:
+        if elem.get('Tipo') == 'Esquadria' and elem.get('tem_parede_real', True):
+            larg = float(elem.get('Largura', 0.90))
+            p1_v = elem.get('p1_vao', (elem['x'] - larg / 2.0, elem['y']))
+            p2_v = elem.get('p2_vao', (elem['x'] + larg / 2.0, elem['y']))
+            x0 = escalar_coord(p1_v[0] - ctx['min_x'] + ctx['offset'])
+            y0 = escalar_coord(p1_v[1] - ctx['min_y'] + ctx['offset'])
+            x1 = escalar_coord(p2_v[0] - ctx['min_x'] + ctx['offset'])
+            y1 = escalar_coord(p2_v[1] - ctx['min_y'] + ctx['offset'])
+            for px, py in algoritmo_bresenham(x0, y0, x1, y1):
+                liberar_caixa(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=1)
+
 def obter_override_topologico_ponto(id_cad, todos_blocos, diam_padrao):
     """
     Retorna (bloco_alvo_manual, diametro_final, nome_conexao_manual, tem_link_manual)
