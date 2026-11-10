@@ -2977,17 +2977,16 @@ import ezdxf.path
 
 def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet, df_editado_hidro, ctx):
     """
-    Tela Gráfica 2D Interativa (Clique Nativo on_select='rerun') + Inspetor de Eixo Z,
-    Vínculo Manual (Ponto A -> Ponto B), Peça de Conexão e Diâmetro (DN mm) desde a Entrada da Rua.
+    Tela Gráfica 2D Interativa com Anti-Sobreposição de Textos, Ligação Rápida em Sequência (2 Cliques)
+    e Sincronização Direta com o Inspetor.
     """
     st.subheader("🕸️ Topologia Ramificada 2D Interativa & Inspetor de Conexões / Eixo Z (Clique no Ponto)")
-    st.caption("Clique diretamente sobre qualquer ponto no gráfico 2D abaixo (ou escolha na caixa ao lado) para editar sua altura Z, definir manualmente a qual ponto ele se conecta, ajustar a conexão e forçar o diâmetro da tubulação/eletroduto.")
+    st.caption("Clique em um bloco na planta 2D para selecioná-lo. Para ligar dois pontos rapidamente, ative o 'Modo Ligação Rápida' abaixo e clique no ponto de origem e depois no destino.")
 
     if "overrides_topologia_bim" not in st.session_state:
-        st.session_state["overrides_topologia_bim"] = {}
+        st.session_state["overrides_topologia_bim"] = ctx.get("overrides_topologia_bim", {})
     overrides = st.session_state["overrides_topologia_bim"]
 
-    # Parâmetros da Entrada da Rua (Elétrica, Água e Gás)
     with st.expander("⚡💧🔥 Configurar Pontos de Entrada da Rua (Medidor Concessionária, Hidrômetro e Abrigo de Gás)", expanded=False):
         ce_r1, ce_r2, ce_r3, ce_r4 = st.columns(4)
         x_rua = ce_r1.number_input("Coord. X Entrada da Rua (m)", value=float(ctx.get("min_x", 0.0)), step=0.5, key="x_ent_rua")
@@ -2995,7 +2994,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         dn_alim_agua = ce_r3.selectbox("Ramal Predial Água (Rua → Caixa/Cisterna)", [20, 25, 32, 40, 50], index=1, key="dn_rua_af")
         dn_alim_elet = ce_r4.selectbox("Eletroduto Entrada (Medidor Rua → QDG)", [25, 32, 40, 50, 60, 75], index=2, key="dn_rua_el")
 
-    # Consolida todos os nós (Elétrica + Hidráulica/Esgoto/Gás) para seleção e clique 2D
     todos_nos = []
     if not df_editado_elet.empty:
         for _, r in df_editado_elet.iterrows():
@@ -3030,6 +3028,22 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         st.info("Selecione as layers de blocos elétricos ou hidrossanitários acima para habilitar o mapa ramificado 2D.")
         return
 
+    ids_disponiveis = [n["ID_CAD"] for n in todos_nos]
+
+    # Ajuste dinâmico de posições dos textos para evitar sobreposição visual (Efeito Leque)
+    posicoes_calculadas = {}
+    ocupadas = []
+    for n in sorted(todos_nos, key=lambda item: (item["x"], item["y"])):
+        bx, by = n["x"], n["y"]
+        offset_y = 0.22
+        offset_x = 0.0
+        for ox, oy in ocupadas:
+            if abs(bx - ox) < 0.65 and abs(by - oy) < 0.35:
+                offset_y += 0.30
+                offset_x += 0.15
+        ocupadas.append((bx + offset_x, by + offset_y))
+        posicoes_calculadas[n["ID_CAD"]] = (bx + offset_x, by + offset_y)
+
     filtro_rede_2d = st.radio(
         "Filtrar Visualização na Planta Ramificada 2D:",
         ["Todas as Redes", "⚡ Apenas Elétrica (Rua → QDG → Circuitos)", "💧 Apenas Água Fria/Quente (Rua → Caixa → Pontos)", "🤎 Apenas Esgoto (Aparelhos → CS/CG → CI)", "🔥 Apenas Gás (GLP/GN)"],
@@ -3038,7 +3052,7 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
 
     fig_2d = go.Figure()
 
-    # 1. Desenha a Planta Baixa das Paredes em 2D
+    # 1. Paredes 2D
     wx_2d, wy_2d = [], []
     for p1, p2 in paredes_filtradas:
         wx_2d.extend([p1[0], p2[0], None])
@@ -3050,7 +3064,7 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             name="Paredes (Planta 2D)", hoverinfo="skip"
         ))
 
-    # 2. Desenha os Ramais de Entrada da Rua (Medidor -> QDG e Hidrômetro -> Caixa d'Água)
+    # 2. Ramais de Entrada
     qdgs = [n for n in todos_nos if n["Funcao"] == "Quadro Geral"]
     cxs_agua = [n for n in todos_nos if n["Funcao"] == "Caixa d'Água"]
     if qdgs and filtro_rede_2d in ["Todas as Redes", "⚡ Apenas Elétrica (Rua → QDG → Circuitos)"]:
@@ -3060,7 +3074,7 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             line=dict(color="#dc2626", width=3.5, dash="dashdot"),
             marker=dict(size=10, symbol="diamond", color="#dc2626"),
             text=["⚡ MEDIDOR RUA", f"QDG (Ø{dn_alim_elet}mm)"], textposition="top center",
-            name=f"Entrada Energia Rua (Ø{dn_alim_elet}mm)"
+            name=f"Entrada Energia Rua (Ø{dn_alim_elet}mm)", hoverinfo="skip"
         ))
     if cxs_agua and filtro_rede_2d in ["Todas as Redes", "💧 Apenas Água Fria/Quente (Rua → Caixa → Pontos)"]:
         c0 = cxs_agua[0]
@@ -3069,10 +3083,10 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             line=dict(color="#0284c7", width=3.5, dash="dot"),
             marker=dict(size=10, symbol="square", color="#0284c7"),
             text=["💧 HIDRÔMETRO RUA", f"Alimentador (Ø{dn_alim_agua}mm)"], textposition="bottom center",
-            name=f"Alimentador Predial Rua (Ø{dn_alim_agua}mm)"
+            name=f"Alimentador Predial Rua (Ø{dn_alim_agua}mm)", hoverinfo="skip"
         ))
 
-    # 3. Desenha as Ramificações Calculadas (Eletrodutos e Tubulações) com Diâmetros e Fios no Meio do Trecho
+    # 3. Tubulações Calculadas
     linhas_m = st.session_state.get("linhas_3d_master", {})
     if filtro_rede_2d in ["Todas as Redes", "⚡ Apenas Elétrica (Rua → QDG → Circuitos)"]:
         for l_el in linhas_m.get("eletrica", []):
@@ -3110,36 +3124,51 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                     showlegend=False, hoverinfo="skip"
                 ))
 
-    # 4. Camada Interativa de Nós Clicáveis (customdata carrega o ID_CAD exato para o clique!)
+            # 4. Nós Clicáveis + Textos Deslocados (Anti-Sobreposição)
     cores_nos = []
-    textos_nos = []
     hover_nos = []
+    textos_2d = []
+    tx_x, tx_y = [], []
     for n in todos_nos:
         cor_n = "#eab308" if n["Disciplina"] == "Elétrica" else ("#f97316" if n["Disciplina"] == "Gás" else ("#8b4513" if "Caixa" in n["Funcao"] or "Esgoto" in n["Funcao"] else "#0ea5e9"))
         cores_nos.append(cor_n)
-        textos_nos.append(f"{n['ID_CAD']}\n(z={n['z_relativo']:.2f}m)")
         hover_nos.append(
             f"<b>{n['ID_CAD']}</b> ({n['Nome']})<br>Função: {n['Funcao']}<br>Eq: {n['Equipamento']}"
             f"<br>Altura z_relativo: {n['z_relativo']:.2f}m<br>Ligado a: {n['Conectado_A']}"
             f"<br>Conexão: {n['Conexao_No']} | DN Manual: {n['DN_Manual_mm'] if n['DN_Manual_mm']>0 else 'Auto'}mm"
         )
+        px_t, py_t = posicoes_calculadas[n["ID_CAD"]]
+        tx_x.append(px_t)
+        tx_y.append(py_t)
+        textos_2d.append(n["ID_CAD"])
 
+    # Camada dos Pontos (Marcadores)
     fig_2d.add_trace(go.Scatter(
         x=[n["x"] for n in todos_nos],
         y=[n["y"] for n in todos_nos],
-        mode="markers+text",
-        text=[n["ID_CAD"] for n in todos_nos],
-        textposition="top center",
-        textfont=dict(size=9, color="#1e293b"),
+        mode="markers",
         customdata=[n["ID_CAD"] for n in todos_nos],
         hovertext=hover_nos,
         hoverinfo="text",
-        marker=dict(size=13, color=cores_nos, line=dict(width=2, color="#0f172a")),
-        name="🎯 Blocos Clicáveis (Clique p/ Editar)"
+        marker=dict(size=14, color=cores_nos, line=dict(width=2, color="#0f172a")),
+        selected=dict(marker=dict(size=18, color="#dc2626", opacity=1.0)),
+        unselected=dict(marker=dict(opacity=0.85)),
+        name="🎯 Blocos (Marcadores)"
+    ))
+
+    # Camada dos Textos Separados (Permite clicar no nome do bloco sem sobreposição)
+    fig_2d.add_trace(go.Scatter(
+        x=tx_x, y=tx_y,
+        mode="text",
+        text=textos_2d,
+        textfont=dict(size=10, color="#0f172a", family="Arial Black"),
+        customdata=[n["ID_CAD"] for n in todos_nos],
+        hoverinfo="skip",
+        name="📝 Rótulos"
     ))
 
     fig_2d.update_layout(
-        height=560,
+        height=580,
         plot_bgcolor="#f8fafc",
         xaxis=dict(title="X (m)", gridcolor="#e2e8f0", zeroline=False),
         yaxis=dict(title="Y (m)", gridcolor="#e2e8f0", zeroline=False, scaleanchor="x", scaleratio=1),
@@ -3158,22 +3187,83 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             key="grafico_2d_interativo_bim"
         )
 
-    # Identifica qual ponto foi clicado no gráfico 2D (ou selecionado manualmente)
-    ids_disponiveis = [n["ID_CAD"] for n in todos_nos]
-    id_clicado = st.session_state.get("no_selecionado_bim", ids_disponiveis[0])
+    # Captura infalível do ponto clicado no Gráfico 2D
     if evento_clique and hasattr(evento_clique, "selection") and evento_clique.selection.get("points"):
-        pt_sel = evento_clique.selection["points"][0]
-        cd = pt_sel.get("customdata")
-        if cd:
-            id_cand = cd[0] if isinstance(cd, list) else str(cd)
-            if id_cand in ids_disponiveis:
-                id_clicado = id_cand
-                st.session_state["no_selecionado_bim"] = id_clicado
+        pts_clicados = evento_clique.selection["points"]
+        if pts_clicados:
+            pt_sel = pts_clicados[-1]
+            id_detectado = None
+            cd = pt_sel.get("customdata")
+            if cd is not None:
+                id_cand = str(cd[0]) if isinstance(cd, (list, tuple)) and len(cd) > 0 else str(cd)
+                if id_cand in ids_disponiveis:
+                    id_detectado = id_cand
+
+            if id_detectado is None and "x" in pt_sel and "y" in pt_sel:
+                px_c, py_c = float(pt_sel["x"]), float(pt_sel["y"])
+                no_mais_prox = min(todos_nos, key=lambda n: math.hypot(n["x"] - px_c, n["y"] - py_c))
+                if math.hypot(no_mais_prox["x"] - px_c, no_mais_prox["y"] - py_c) <= 0.65:
+                    id_detectado = no_mais_prox["ID_CAD"]
+
+            if id_detectado and st.session_state.get("ultimo_clique_2d_assinatura") != f"{id_detectado}_{pt_sel.get('x')}_{pt_sel.get('y')}":
+                st.session_state["ultimo_clique_2d_assinatura"] = f"{id_detectado}_{pt_sel.get('x')}_{pt_sel.get('y')}"
+                
+                # Se o modo de ligação rápida estiver ativo, faz a ligação automática entre o ponto anterior e este!
+                if st.session_state.get("modo_ligacao_rapida_ativo", False):
+                    ponto_origem_ant = st.session_state.get("origem_ligacao_rapida")
+                    if ponto_origem_ant and ponto_origem_ant != id_detectado:
+                        overrides[ponto_origem_ant] = overrides.get(ponto_origem_ant, {})
+                        overrides[ponto_origem_ant]["Conectado_A"] = id_detectado
+                        st.session_state["overrides_topologia_bim"] = overrides
+                        st.session_state.contexto_bim["overrides_topologia_bim"] = overrides
+                        salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
+
+                        # Reprocessa rotas
+                        ctx_at = st.session_state.contexto_bim
+                        ctx_at['df_eletrica'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+                        ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                        if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
+                            novas_linhas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                            novas_linhas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at)
+                            st.session_state.linhas_3d_master['hidro'] = novas_linhas_hd
+                            st.session_state.linhas_3d_master['eletrica'] = novas_linhas_el
+                            st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                                novas_linhas_el, novas_linhas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                            )
+
+                        st.toast(f"🔗 Ligação rápida criada com sucesso: {ponto_origem_ant} ➔ {id_detectado}!", icon="⚡")
+                        st.session_state["modo_ligacao_rapida_ativo"] = False
+                        st.session_state["origem_ligacao_rapida"] = None
+                    else:
+                        st.session_state["origem_ligacao_rapida"] = id_detectado
+                        st.toast(f"📍 Ponto de origem definido: `{id_detectado}`. Agora clique no ponto de destino!", icon="🎯")
+
+                st.session_state["no_selecionado_bim"] = id_detectado
+                st.session_state["sel_insp_no"] = id_detectado
+
+    if st.session_state.get("sel_insp_no") not in ids_disponiveis:
+        id_ini = st.session_state.get("no_selecionado_bim", ids_disponiveis[0])
+        st.session_state["sel_insp_no"] = id_ini if id_ini in ids_disponiveis else ids_disponiveis[0]
 
     with col_insp:
         st.markdown("### 🛠️ Inspetor do Ponto Selecionado")
-        idx_sel = ids_disponiveis.index(id_clicado) if id_clicado in ids_disponiveis else 0
-        id_escolhido = st.selectbox("🎯 Bloco Ativo (Clique no 2D ou escolha):", ids_disponiveis, index=idx_sel, key="sel_insp_no")
+
+        # Botão de Ligação Rápida Sequencial (2 Cliques)
+        modo_rapido = st.toggle("🔗 Modo Ligação Rápida (1º Clique Origem, 2º Clique Destino)", value=st.session_state.get("modo_ligacao_rapida_ativo", False), key="toggle_ligacao_rapida")
+        st.session_state["modo_ligacao_rapida_ativo"] = modo_rapido
+        if modo_rapido:
+            orig_Atual = st.session_state.get("origem_ligacao_rapida")
+            if orig_Atual:
+                st.warning(f"📍 Origem ativa: **`{orig_Atual}`**. Clique no ponto de destino no mapa 2D.")
+            else:
+                st.info("ℹ️ Clique primeiro no ponto de **Origem** no mapa 2D e depois no ponto de **Destino**.")
+
+        id_escolhido = st.selectbox(
+            "🎯 Bloco Ativo (Clique no 2D ou escolha):",
+            ids_disponiveis,
+            key="sel_insp_no"
+        )
+        st.session_state["no_selecionado_bim"] = id_escolhido
         no_atual = next(n for n in todos_nos if n["ID_CAD"] == id_escolhido)
 
         st.info(f"**Bloco CAD:** `{no_atual['Nome']}`\n\n**Disciplina:** {no_atual['Disciplina']} | **Função:** {no_atual['Funcao']}\n\n**Coord. 2D:** X={no_atual['x']:.2f}m, Y={no_atual['y']:.2f}m")
@@ -3236,7 +3326,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
 
             salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
 
-            # Reprocessa IMEDIATAMENTE as rotas 3D/2D subordinando o automático às ligações manuais!
             ctx_at = st.session_state.contexto_bim
             ctx_at['df_eletrica'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
             ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
@@ -3259,7 +3348,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                 st.session_state["overrides_topologia_bim"] = overrides
                 st.rerun()
 
-        # Exibe resumo rápido de todas as ligações manuais ativas no projeto
         links_ativos = [
             f"• `{k}` ➔ `{v.get('Conectado_A')}` (Ø{v.get('DN_Manual_mm') if v.get('DN_Manual_mm',0)>0 else 'Auto'}mm | z={v.get('z_relativo',0):.2f}m)"
             for k, v in overrides.items()
