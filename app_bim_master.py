@@ -2832,6 +2832,7 @@ with st.sidebar:
     )
     config_andares = []
     if arquivos_dxf:
+        import hashlib
         bytes_concat = b"".join([f.getvalue() for f in arquivos_dxf])
         hash_atual = hashlib.md5(bytes_concat).hexdigest()[:8]
         kb_total = len(bytes_concat) / 1024.0
@@ -3353,6 +3354,7 @@ with tab_bim:
             dxf_files_only = [f for f in arquivos_dxf if f.name.lower().endswith(".dxf")]
 
             # Calcula assinatura única (MD5) do conteúdo real dos arquivos DXF para detectar edições no mesmo arquivo
+            import hashlib
             hash_dxf_atual = hashlib.md5(b"".join([f.getvalue() for f in arquivos_dxf])).hexdigest()
             hash_dxf_anterior = st.session_state.get("hash_dxf_anterior", "")
 
