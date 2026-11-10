@@ -2862,9 +2862,25 @@ with st.sidebar:
 
         st.markdown("**Configuração de Pavimentos:**")
         for idx, arq in enumerate(arquivos_dxf):
+            # Limpa caracteres especiais do nome do ficheiro para usar de forma segura na chave
+            safe_name = "".join([c if c.isalnum() else "_" for c in arq.name])
             with st.expander(f"Pavimento {idx}: {arq.name}", expanded=(idx == 0)):
-                ordem_pav = st.number_input(f"Ordem do Andar ({arq.name})", value=idx, step=1, key=f"ord_{idx}")
-                pd_pav = st.number_input(f"Pé-Direito (m) ({arq.name})", value=3.00, step=0.10, key=f"pd_{idx}")
+                ordem_pav = st.number_input(
+                    f"Andar (0=Térreo) ({arq.name})", 
+                    min_value=0, 
+                    max_value=30, 
+                    value=idx, 
+                    step=1, 
+                    key=f"ord_pav_{idx}_{safe_name}"
+                )
+                pd_pav = st.number_input(
+                    f"Pé-Direito (m) ({arq.name})", 
+                    min_value=2.0, 
+                    max_value=6.0, 
+                    value=3.00, 
+                    step=0.10, 
+                    key=f"pd_pav_{idx}_{safe_name}"
+                )
                 config_andares.append({"ordem": ordem_pav, "pe_direito": pd_pav, "arquivo": arq})
         config_andares = sorted(config_andares, key=lambda x: x["ordem"])
             
