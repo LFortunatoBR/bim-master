@@ -1209,494 +1209,34 @@ def contar_conexoes_na_rota(pontos):
 
 def obter_override_topologico_ponto(id_cad, todos_blocos, diam_padrao):
     """
-    Verifica se o usuário definiu manualmente no Inspetor 2D/3D:
-    1. O ponto exato de destino (Conectado_A);
-    2. O diâmetro forçado do tubo/eletroduto (DN_Manual_mm).
+    Retorna (bloco_alvo_manual, diametro_final, nome_conexao_manual, tem_link_manual)
+    dando prioridade absoluta ao que o usuário configurou no Inspetor 2D/3D.
     """
     ov = st.session_state.get("overrides_topologia_bim", {}).get(str(id_cad), {})
-    id_dest_manual = ov.get("Conectado_A", "Automático (Menor Rota ABNT)")
+    id_dest_manual = str(ov.get("Conectado_A", "Automático (Menor Rota ABNT)")).strip()
     bloco_alvo_manual = None
+    tem_link_manual = False
     if id_dest_manual and id_dest_manual != "Automático (Menor Rota ABNT)":
-        bloco_alvo_manual = next((b for b in todos_blocos if str(b.get("ID_CAD")) == str(id_dest_manual)), None)
+        bloco_alvo_manual = next((b for b in todos_blocos if str(b.get("ID_CAD")) == id_dest_manual), None)
+        if bloco_alvo_manual is not None and str(bloco_alvo_manual.get("ID_CAD")) != str(id_cad):
+            tem_link_manual = True
     dn_manual = int(ov.get("DN_Manual_mm", 0))
     diam_final = dn_manual if dn_manual > 0 else diam_padrao
-    return bloco_alvo_manual, diam_final, ov.get("Conexao_No", "")
+    return bloco_alvo_manual, diam_final, ov.get("Conexao_No", ""), tem_link_manual
+
 
 def rotear_hidro(df_bh, ctx):
-    """Motor Hidrossanitário 3D com Hierarquia Real NBR 5626 & NBR 8160."""
+    """
+    Motor Hidrossanitário 3D/2D (NBR 5626 e NBR 8160) Subordinado à Configuração Manual do Usuário:
+    1. Toda ligação manual definida no Inspetor 2D tem prioridade absoluta (inclusive entre Caixas de Inspeção, Conexões e Caixas);
+    2. O roteamento automático se readequa à árvore manual, evitando ciclos e acumulando Pesos e UHCs a jusante;
+    3. Garante fallback geométrico direto caso o A* encontre obstáculo externo, nunca deixando uma ligação manual sem tubo.
+    """
     linhas_processadas = []
     if not df_bh:
         return linhas_processadas
 
     matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-    
-    for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
-        x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
-        x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
-        for px, py in algoritmo_bresenham(x0, y0, x1, y1):
-            if 0 <= py < ctx['grid_h'] and 0 <= px < ctx['grid_w']:
-                matriz[py][px] = 0
-
-    elementos_arq = ctx.get('elementos_arquitetonicos', [])
-    for elem in elementos_arq:
-        if elem['Tipo'] == 'Pilar/Viga' and 'PILAR' in elem['ID_CAD'].upper():
-            px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
-            bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
-    liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
-
-    h_af = ctx.get('h_agua_fria', 2.2)
-    h_aq = ctx.get('h_agua_quente', 1.1)
-    h_viga = ctx.get('altura_viga', 0.40)
-    z_subsolo_af = ctx.get('z_subsolo_af', -0.40)
-
-    caixas_dagua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
-    quedas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Fria']
-    subidas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Fria']
-    prumadas_af = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Água Fria']
-
-    boilers_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Boiler / Aquecedor']
-    quedas_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Tubo de Queda Água Quente']
-    subidas_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Coluna de Subida Água Quente']
-
-    prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
-    caixas_inspecao = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Inspeção / Destino Esgoto']
-    ramais_descarga = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Descarga']
-    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
-
-    equips_af_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro['Agua_mm'] > 0]['Equipamento'].values)
-    equips_aq_validos = set(st.session_state.bib_hidro[st.session_state.bib_hidro.get('AQ_mm', pd.Series([0]*len(st.session_state.bib_hidro))) > 0]['Equipamento'].values)
-
-    def rota_a_star_2d(orig, dest, permitir_diagonal=False):
-        ox = escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])
-        oy = escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])
-        dx = escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])
-        dy = escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])
-        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'])
-        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'])
-        grid = Grid(matrix=matriz)
-        mov = DiagonalMovement.always if permitir_diagonal else DiagonalMovement.never
-        finder = AStarFinder(diagonal_movement=mov)
-        caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
-        return [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
-
-    peso_total_projeto = 0.0
-    aparelhos_com_af = []
-    for ap in df_bh:
-        if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_af_validos:
-            aparelhos_com_af.append(ap)
-            f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-            if f_eq.any():
-                peso_total_projeto += float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
-    dn_tronco_af = max(32, dimensionar_tubo_agua(peso_total_projeto))
-
-    historico_no_af = {}
-
-    alvos_descida_inicial = quedas_af if quedas_af else prumadas_af
-    if caixas_dagua and alvos_descida_inicial:
-        for tq_af in alvos_descida_inicial:
-            cx_sup = min(caixas_dagua, key=lambda c: dist_2d((tq_af['x'], tq_af['y']), (c['x'], c['y'])))
-            z_saida_cx = cx_sup['z_base'] + ctx.get('altura_caixa', 1.5)
-            z_barrilete = cx_sup['z_base'] + 0.20
-            z_fundo_queda = z_subsolo_af if subidas_af else 0.0
-
-            pts_queda = [
-                (cx_sup['x'], cx_sup['y'], z_saida_cx),
-                (cx_sup['x'], cx_sup['y'], z_barrilete),
-                (tq_af['x'], cx_sup['y'], z_barrilete),
-                (tq_af['x'], tq_af['y'], z_barrilete),
-                (tq_af['x'], tq_af['y'], z_fundo_queda)
-            ]
-            linhas_processadas.append({
-                'pontos': pts_queda, 'cor': '#003399',
-                'tipo': f"Tubo de Queda AF ({tq_af['ID_CAD']})", 'diametro': dn_tronco_af
-            })
-            j90_q, _ = contar_conexoes_na_rota(pts_queda)
-            historico_no_af[tq_af['ID_CAD']] = {'comp_m': calcular_comprimento_rota(pts_queda), 'j90': j90_q, 'tes': 1}
-
-    if subidas_af:
-        origens_subsolo = quedas_af if quedas_af else (prumadas_af if prumadas_af else caixas_dagua)
-        for col_sub in subidas_af:
-            z_topo_subida = col_sub['z_base'] + h_af
-            if origens_subsolo:
-                orig_q = min(origens_subsolo, key=lambda q: dist_2d((col_sub['x'], col_sub['y']), (q['x'], q['y'])))
-                pts_2d_sub = rota_a_star_2d(orig_q, col_sub, permitir_diagonal=False)
-                pts_subsolo_e_subida = [(orig_q['x'], orig_q['y'], z_subsolo_af)]
-                for px, py in pts_2d_sub:
-                    pts_subsolo_e_subida.append((px, py, z_subsolo_af))
-                pts_subsolo_e_subida.append((col_sub['x'], col_sub['y'], z_subsolo_af))
-                pts_subsolo_e_subida.append((col_sub['x'], col_sub['y'], z_topo_subida))
-
-                linhas_processadas.append({
-                    'pontos': pts_subsolo_e_subida, 'cor': '#0066cc',
-                    'tipo': f"Subsolo + Subida AF ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
-                })
-                hist_ant = historico_no_af.get(orig_q['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
-                j90_s, _ = contar_conexoes_na_rota(pts_subsolo_e_subida)
-                historico_no_af[col_sub['ID_CAD']] = {
-                    'comp_m': hist_ant['comp_m'] + calcular_comprimento_rota(pts_subsolo_e_subida),
-                    'j90': hist_ant['j90'] + j90_s, 'tes': hist_ant['tes'] + 1
-                }
-            else:
-                pts_sub_isolada = [(col_sub['x'], col_sub['y'], z_subsolo_af), (col_sub['x'], col_sub['y'], z_topo_subida)]
-                linhas_processadas.append({
-                    'pontos': pts_sub_isolada, 'cor': '#0066cc',
-                    'tipo': f"Coluna de Subida AF ({col_sub['ID_CAD']})", 'diametro': dn_tronco_af
-                })
-                historico_no_af[col_sub['ID_CAD']] = {'comp_m': calcular_comprimento_rota(pts_sub_isolada), 'j90': 2, 'tes': 1}
-
-    if subidas_af and prumadas_af:
-        for prum in prumadas_af:
-            sub_prox = min(subidas_af, key=lambda s: dist_2d((prum['x'], prum['y']), (s['x'], s['y'])))
-            z_travessia = max(prum['z_base'], sub_prox['z_base']) + h_af
-            pts_2d_p = rota_a_star_2d(sub_prox, prum, permitir_diagonal=False)
-            pts_lig = [(sub_prox['x'], sub_prox['y'], z_travessia)]
-            for px, py in pts_2d_p:
-                pts_lig.append((px, py, z_travessia))
-            pts_lig.append((prum['x'], prum['y'], z_travessia))
-            pts_lig = aplicar_desvios_estruturais_e_vaos_3d(pts_lig, elementos_arq, prum['z_base'], prum.get('pe_direito', 3.0), h_viga)
-            linhas_processadas.append({
-                'pontos': pts_lig, 'cor': '#0055aa',
-                'tipo': f"Distribuição AF ({prum['ID_CAD']})", 'diametro': 32
-            })
-            hist_s = historico_no_af.get(sub_prox['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
-            j90_p, _ = contar_conexoes_na_rota(pts_lig)
-            historico_no_af[prum['ID_CAD']] = {
-                'comp_m': hist_s['comp_m'] + calcular_comprimento_rota(pts_lig),
-                'j90': hist_s['j90'] + j90_p, 'tes': hist_s['tes'] + 1
-            }
-
-    fontes_distribuicao_af = prumadas_af if prumadas_af else (subidas_af if subidas_af else (quedas_af if quedas_af else caixas_dagua))
-    if not fontes_distribuicao_af and aparelhos_com_af:
-        fontes_distribuicao_af = [aparelhos_com_af[0]]
-
-    if fontes_distribuicao_af:
-        pesos_acum = {f['ID_CAD']: 0.0 for f in fontes_distribuicao_af}
-        for ap in aparelhos_com_af:
-            fonte_af = min(fontes_distribuicao_af, key=lambda f: abs(f['z_base'] - ap['z_base']) * 5 + dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
-            if fonte_af['ID_CAD'] == ap['ID_CAD'] and len(aparelhos_com_af) > 1:
-                continue
-            f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-            peso_ap = float(st.session_state.bib_hidro.loc[f_eq, 'Peso'].values[0])
-            dn_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0])
-            pesos_acum[fonte_af['ID_CAD']] += peso_ap
-            diametro_ramal = max(dn_ap, dimensionar_tubo_agua(pesos_acum[fonte_af['ID_CAD']]))
-
-            pts_2d_ap = rota_a_star_2d(ap, fonte_af, permitir_diagonal=False)
-            if pts_2d_ap:
-                z_ponto_consumo = ap['z_base'] + ap.get('z_relativo', 0.6)
-                z_ramal_parede = ap['z_base'] + h_af
-                linha_3d = [(ap['x'], ap['y'], z_ponto_consumo), (ap['x'], ap['y'], z_ramal_parede)]
-                for px, py in pts_2d_ap:
-                    linha_3d.append((px, py, z_ramal_parede))
-                linha_3d.append((fonte_af['x'], fonte_af['y'], z_ramal_parede))
-                linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
-
-                hist_f = historico_no_af.get(fonte_af['ID_CAD'], {'comp_m': 0.0, 'j90': 0, 'tes': 0})
-                comp_ramal = calcular_comprimento_rota(linha_3d)
-                j90_r, _ = contar_conexoes_na_rota(linha_3d)
-
-                linhas_processadas.append({
-                    'pontos': linha_3d, 'cor': 'blue',
-                    'tipo': 'Água Fria',
-                    'legenda_3d': f"Água Fria ({ap['Equipamento'][:18]})",
-                    'diametro': diametro_ramal, 'equipamento': ap['Equipamento'],
-                    'id_ap': ap['ID_CAD'], 'prumada_ref': fonte_af['ID_CAD'],
-                    'comp_acumulado_total_m': round(hist_f['comp_m'] + comp_ramal, 2),
-                    'j90_acumulados': hist_f['j90'] + j90_r,
-                    'tes_acumulados': hist_f['tes'] + 1
-                })
-
-    fontes_aq = subidas_aq if subidas_aq else (quedas_aq if quedas_aq else (boilers_aq if boilers_aq else fontes_distribuicao_af))
-    if quedas_aq and subidas_aq:
-        for sub_q in subidas_aq:
-            qd_q = min(quedas_aq, key=lambda q: dist_2d((sub_q['x'], sub_q['y']), (q['x'], q['y'])))
-            z_sub_aq = z_subsolo_af + 0.08
-            pts_2d_aq = rota_a_star_2d(qd_q, sub_q, permitir_diagonal=False)
-            linha_sub_aq = [(qd_q['x'], qd_q['y'], qd_q['z_base'] + h_aq), (qd_q['x'], qd_q['y'], z_sub_aq)]
-            for px, py in pts_2d_aq:
-                linha_sub_aq.append((px, py, z_sub_aq))
-            linha_sub_aq.extend([(sub_q['x'], sub_q['y'], z_sub_aq), (sub_q['x'], sub_q['y'], sub_q['z_base'] + h_aq)])
-            linhas_processadas.append({'pontos': linha_sub_aq, 'cor': '#cc0000', 'tipo': f"Queda + Subida AQ ({sub_q['ID_CAD']})", 'diametro': 28})
-
-    if fontes_aq:
-        for ap in df_bh:
-            if ap['Tipo_BIM'] == 'Aparelho Hidráulico' and ap['Equipamento'] in equips_aq_validos:
-                fonte_q = min(fontes_aq, key=lambda f: dist_2d((ap['x'], ap['y']), (f['x'], f['y'])))
-                if fonte_q['ID_CAD'] == ap['ID_CAD']:
-                    continue
-                pts_2d_q = rota_a_star_2d(ap, fonte_q, permitir_diagonal=False)
-                if pts_2d_q:
-                    z_pt_aq = ap['z_base'] + ap.get('z_relativo', 0.6)
-                    z_ram_aq = ap['z_base'] + h_aq
-                    linha_aq = [(ap['x'] + 0.10, ap['y'], z_pt_aq), (ap['x'] + 0.10, ap['y'], z_ram_aq)]
-                    for px, py in pts_2d_q:
-                        linha_aq.append((px + 0.08, py, z_ram_aq))
-                    linha_aq.append((fonte_q['x'] + 0.08, fonte_q['y'], z_ram_aq))
-                    linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, ap['z_base'], ap.get('pe_direito', 3.0), h_viga)
-                    linhas_processadas.append({
-                        'pontos': linha_aq, 'cor': 'red', 'tipo': 'Água Quente',
-                        'diametro': 22, 'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD']
-                    })
-
-    # =========================================================================
-    # ETAPA 5: HIERARQUIA NORMATIVA DE ESGOTO (ABNT NBR 8160)
-    # 1. Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro, Tanque) -> Caixa Sifonada / Ralo Sifonado (DN 40mm, i=2%)
-    # 2. Efluente Gorduroso (Pia de Cozinha, Lava-Louça) -> Caixa de Gordura (DN 50mm, i=2%)
-    # 3. Saída da Caixa Sifonada (Esgoto Primário DN 50/75mm) + Bacia Sanitária (DN 100mm) -> Ramal de Esgoto -> TQ / CI
-    # 4. Saída da Caixa de Gordura (DN 75/100mm) -> Direto p/ Caixa de Inspeção (CI) ou TQ Primário
-    # =========================================================================
-    alvos_finais_esg = prumadas_esg if prumadas_esg else caixas_inspecao
-
-    caixas_sifonadas = [
-        b for b in df_bh
-        if b.get('Tipo_BIM') == 'Caixa Sifonada / Ralo Sifonado'
-        or "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', ''))
-    ]
-    caixas_gordura = [
-        b for b in df_bh
-        if b.get('Tipo_BIM') == 'Caixa de Gordura'
-        or "GORDURA" in normalizar_texto_bim(b.get('Equipamento', ''))
-    ]
-    ids_cs = {c['ID_CAD'] for c in caixas_sifonadas}
-    ids_cg = {c['ID_CAD'] for c in caixas_gordura}
-
-    # 5.1. Tubos de Queda (TQ), Colunas de Ventilação e Subcoletores até Caixa de Inspeção
-    if prumadas_esg:
-        z_topo_vent = ctx.get('max_z_cobertura', 6.0) + 0.30
-        for prum_e in prumadas_esg:
-            linhas_processadas.append({
-                'pontos': [(prum_e['x'], prum_e['y'], z_topo_vent), (prum_e['x'], prum_e['y'], z_subsolo_af - 0.10)],
-                'cor': '#5c3a21', 'tipo': f"Tubo de Queda Esgoto ({prum_e['ID_CAD']})", 'diametro': 100
-            })
-            linhas_processadas.append({
-                'pontos': [(prum_e['x'] + 0.15, prum_e['y'], z_topo_vent), (prum_e['x'] + 0.15, prum_e['y'], 0.0)],
-                'cor': '#2ca02c', 'tipo': f"Coluna de Ventilação ({prum_e['ID_CAD']})", 'diametro': 50
-            })
-
-            if caixas_inspecao:
-                ci_prox = min(caixas_inspecao, key=lambda ci: dist_2d((prum_e['x'], prum_e['y']), (ci['x'], ci['y'])))
-                pts_2d_ci = rota_a_star_2d(prum_e, ci_prox, permitir_diagonal=True)
-                if pts_2d_ci:
-                    z_pe_tq = z_subsolo_af - 0.10
-                    linha_subcoletor = [(prum_e['x'], prum_e['y'], z_pe_tq)]
-                    d_ac = 0.0
-                    pt_a = (prum_e['x'], prum_e['y'])
-                    for px, py in pts_2d_ci:
-                        d_ac += dist_2d(pt_a, (px, py))
-                        linha_subcoletor.append((px, py, z_pe_tq - d_ac * 0.01))
-                        pt_a = (px, py)
-                    linha_subcoletor.append((ci_prox['x'], ci_prox['y'], z_pe_tq - d_ac * 0.01))
-                    linhas_processadas.append({
-                        'pontos': linha_subcoletor, 'cor': '#3d2514',
-                        'tipo': f"Subcoletor Esgoto -> {ci_prox['Nome_Bloco']}", 'diametro': 100, 'declividade_pct': 1.0
-                    })
-
-    # Dicionários para acumular as UHCs que chegam em cada Caixa Sifonada, Caixa de Gordura e Ramal de Esgoto
-    uhc_recebido_cs = {c['ID_CAD']: 0.0 for c in caixas_sifonadas}
-    uhc_recebido_cg = {c['ID_CAD']: 0.0 for c in caixas_gordura}
-    uhc_acumulado_ramal_esg = {re_b['ID_CAD']: 0.0 for re_b in ramais_esgoto}
-
-    # 5.2. Roteamento dos Aparelhos Sanitários e Ramais de Descarga (excluindo CS e CG, que são tratadas nas Etapas 5.3 e 5.4)
-    origens_aparelhos = [
-        b for b in df_bh
-        if b['Tipo_BIM'] in ['Aparelho Hidráulico', 'Ramal de Descarga', 'Conexões Tubulação Esgoto']
-        and b['ID_CAD'] not in ids_cs
-        and b['ID_CAD'] not in ids_cg
-    ]
-
-    for ap in origens_aparelhos:
-        f_eq = st.session_state.bib_hidro['Equipamento'] == ap['Equipamento']
-        if not f_eq.any():
-            continue
-        uhc_ap = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0])
-        esg_mm_ap = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0])
-        if esg_mm_ap <= 0 and ap['Tipo_BIM'] != 'Ramal de Descarga':
-            continue
-        if esg_mm_ap <= 0:
-            esg_mm_ap = 40
-            uhc_ap = max(2.0, uhc_ap)
-
-        eq_norm = normalizar_texto_bim(ap['Equipamento'])
-        eh_bacia = ("BACIA" in eq_norm or "VASO" in eq_norm or "SANITARIO" in eq_norm or esg_mm_ap >= 100)
-        eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA", "GOURMET"])
-
-        alvo_escolhido = None
-        cor_ramal = 'brown'
-
-        # REGRA A (NBR 8160 Item 5.1.5): Pias de Cozinha e Lava-Louças DEVEM ir exclusivamente para a Caixa de Gordura!
-        if eh_cozinha and caixas_gordura:
-            cg_cand = [cg for cg in caixas_gordura if abs(cg['z_base'] - ap['z_base']) < 0.8]
-            alvo_escolhido = min(cg_cand if cg_cand else caixas_gordura, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
-            uhc_recebido_cg[alvo_escolhido['ID_CAD']] += uhc_ap
-            esg_mm_ap = max(50, esg_mm_ap) # NBR 8160 exige DN mínimo 50mm para ramal de descarga de pia de cozinha
-            cor_ramal = '#b8860b'
-
-        # REGRA B (NBR 8160): Esgoto Secundário (Ralo Seco, Lavatório, Chuveiro, Tanque) -> Caixa Sifonada / Ralo Sifonado!
-        elif not eh_bacia and not eh_cozinha and caixas_sifonadas:
-            cs_cand = [
-                cs for cs in caixas_sifonadas
-                if abs(cs['z_base'] - ap['z_base']) < 0.5 and dist_2d((ap['x'], ap['y']), (cs['x'], cs['y'])) <= 6.5
-            ]
-            if cs_cand:
-                alvo_escolhido = min(cs_cand, key=lambda c: dist_2d((ap['x'], ap['y']), (c['x'], c['y'])))
-                uhc_recebido_cs[alvo_escolhido['ID_CAD']] += uhc_ap
-                cor_ramal = '#cd853f'
-
-        # REGRA C (NBR 8160): Bacia Sanitária (Esgoto Primário DN 100mm) -> Ramal de Esgoto -> TQ / Caixa de Inspeção (NUNCA passa por CS nem CG)
-        if alvo_escolhido is None:
-            ramais_esg_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - ap['z_base']) < 0.5]
-            opcoes_primario = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
-            if not opcoes_primario:
-                continue
-            alvo_escolhido = min(opcoes_primario, key=lambda p: dist_2d((ap['x'], ap['y']), (p['x'], p['y'])))
-            if alvo_escolhido['ID_CAD'] in uhc_acumulado_ramal_esg:
-                uhc_acumulado_ramal_esg[alvo_escolhido['ID_CAD']] += uhc_ap
-
-        diam_rd = max(esg_mm_ap, dimensionar_tubo_esgoto(uhc_ap))
-
-        alvo_man_h, diam_rd, _ = obter_override_topologico_ponto(ap['ID_CAD'], df_bh, diam_rd)
-        if alvo_man_h is not None:
-            alvo_escolhido = alvo_man_h
-
-        declividade_rd = 0.01 if diam_rd >= 100 else 0.02
-
-        pts_2d_rd = rota_a_star_2d(ap, alvo_escolhido, permitir_diagonal=True)
-        if pts_2d_rd:
-            z_inicio_rd = ap['z_base'] - 0.10
-            linha_rd = [(ap['x'], ap['y'], ap['z_base'] + ap.get('z_relativo', 0.0)), (ap['x'], ap['y'], z_inicio_rd)]
-            linha_3d_inter = []
-            dist_ac = 0.0
-            pt_ant = (ap['x'], ap['y'])
-            for px_r, py_r in pts_2d_rd:
-                dist_ac += dist_2d(pt_ant, (px_r, py_r))
-                linha_3d_inter.append((px_r, py_r, z_inicio_rd - (dist_ac * declividade_rd)))
-                pt_ant = (px_r, py_r)
-            linha_rd.extend(linha_3d_inter)
-            linha_rd.append((alvo_escolhido['x'], alvo_escolhido['y'], z_inicio_rd - (dist_ac * declividade_rd)))
-
-            linhas_processadas.append({
-                'pontos': linha_rd, 'cor': cor_ramal,
-                'tipo': f"Ramal de Descarga ({ap['Nome_Bloco']}) -> {alvo_escolhido['Nome_Bloco']}",
-                'diametro': diam_rd, 'declividade_pct': declividade_rd * 100,
-                'equipamento': ap['Equipamento'], 'id_ap': ap['ID_CAD'], 'prumada_ref': alvo_escolhido['ID_CAD']
-            })
-
-    # 5.3. SAÍDA DAS CAIXAS SIFONADAS / RALOS SIFONADOS (Esgoto Primário DN 50/75mm -> Ramal de Esgoto / TQ / Caixa de Inspeção)
-    for cs_b in caixas_sifonadas:
-        uhc_cs_total = max(2.0, uhc_recebido_cs.get(cs_b['ID_CAD'], 0.0) + 1.0)
-        # Pela NBR 8160 Tabela 5, saída de Caixa Sifonada é no mínimo DN 50mm (até 6 UHC) ou DN 75mm (> 6 UHC)
-        diam_saida_cs = 50 if uhc_cs_total <= 6.0 else 75
-        decliv_cs = 0.02
-
-        ramais_esg_andar = [re_b for re_b in ramais_esgoto if abs(re_b['z_base'] - cs_b['z_base']) < 0.5]
-        opcoes_dest_cs = ramais_esg_andar if ramais_esg_andar else (ramais_esgoto if ramais_esgoto else alvos_finais_esg)
-        opcoes_dest_cs = [op for op in opcoes_dest_cs if op['ID_CAD'] != cs_b['ID_CAD']]
-        if not opcoes_dest_cs:
-            continue
-
-        alvo_cs = min(opcoes_dest_cs, key=lambda p: dist_2d((cs_b['x'], cs_b['y']), (p['x'], p['y'])))
-        if alvo_cs['ID_CAD'] in uhc_acumulado_ramal_esg:
-            uhc_acumulado_ramal_esg[alvo_cs['ID_CAD']] += uhc_cs_total
-
-        pts_2d_cs = rota_a_star_2d(cs_b, alvo_cs, permitir_diagonal=True)
-        if pts_2d_cs:
-            z_ini_cs = cs_b['z_base'] - 0.14
-            linha_cs = [(cs_b['x'], cs_b['y'], cs_b['z_base']), (cs_b['x'], cs_b['y'], z_ini_cs)]
-            d_ac = 0.0
-            pt_a = (cs_b['x'], cs_b['y'])
-            for px_c, py_c in pts_2d_cs:
-                d_ac += dist_2d(pt_a, (px_c, py_c))
-                linha_cs.append((px_c, py_c, z_ini_cs - (d_ac * decliv_cs)))
-                pt_a = (px_c, py_c)
-            linha_cs.append((alvo_cs['x'], alvo_cs['y'], z_ini_cs - (d_ac * decliv_cs)))
-            linhas_processadas.append({
-                'pontos': linha_cs, 'cor': '#8b4513',
-                'tipo': f"Ramal de Esgoto [Saída Ralo Sifonado {cs_b['ID_CAD']}] -> {alvo_cs['Nome_Bloco']}",
-                'diametro': diam_saida_cs, 'declividade_pct': decliv_cs * 100,
-                'equipamento': cs_b['Equipamento'], 'id_ap': cs_b['ID_CAD'], 'prumada_ref': alvo_cs['ID_CAD'],
-                'uhc_acumulado_no': uhc_cs_total
-            })
-
-    # 5.4. SAÍDA DAS CAIXAS DE GORDURA (NBR 8160 Item 5.1.5: Saída DN 75mm/100mm -> Direto p/ Caixa de Inspeção ou TQ)
-    for cg_b in caixas_gordura:
-        uhc_cg_total = max(6.0, uhc_recebido_cg.get(cg_b['ID_CAD'], 0.0))
-        f_eq_cg = st.session_state.bib_hidro['Equipamento'] == cg_b['Equipamento']
-        dn_base_cg = int(st.session_state.bib_hidro.loc[f_eq_cg, 'Esgoto_mm'].values[0]) if f_eq_cg.any() else 75
-        diam_saida_cg = max(75, dn_base_cg, dimensionar_tubo_esgoto(uhc_cg_total))
-        decliv_cg = 0.01 if diam_saida_cg >= 100 else 0.02
-
-        # Caixa de Gordura descarrega prioritariamente na Caixa de Inspeção externa (CI)
-        opcoes_dest_cg = caixas_inspecao if caixas_inspecao else alvos_finais_esg
-        opcoes_dest_cg = [op for op in opcoes_dest_cg if op['ID_CAD'] != cg_b['ID_CAD']]
-        if not opcoes_dest_cg:
-            continue
-
-        alvo_cg = min(opcoes_dest_cg, key=lambda ci: dist_2d((cg_b['x'], cg_b['y']), (ci['x'], ci['y'])))
-        pts_2d_cg = rota_a_star_2d(cg_b, alvo_cg, permitir_diagonal=True)
-        if pts_2d_cg:
-            z_ini_cg = cg_b['z_base'] - 0.30
-            linha_cg = [(cg_b['x'], cg_b['y'], cg_b['z_base']), (cg_b['x'], cg_b['y'], z_ini_cg)]
-            d_ac = 0.0
-            pt_a = (cg_b['x'], cg_b['y'])
-            for px_g, py_g in pts_2d_cg:
-                d_ac += dist_2d(pt_a, (px_g, py_g))
-                linha_cg.append((px_g, py_g, z_ini_cg - (d_ac * decliv_cg)))
-                pt_a = (px_g, py_g)
-            linha_cg.append((alvo_cg['x'], alvo_cg['y'], z_ini_cg - (d_ac * decliv_cg)))
-            linhas_processadas.append({
-                'pontos': linha_cg, 'cor': '#5c3a21',
-                'tipo': f"Ramal de Esgoto [Saída Caixa de Gordura {cg_b['ID_CAD']}] -> {alvo_cg['Nome_Bloco']}",
-                'diametro': diam_saida_cg, 'declividade_pct': decliv_cg * 100,
-                'equipamento': cg_b['Equipamento'], 'id_ap': cg_b['ID_CAD'], 'prumada_ref': alvo_cg['ID_CAD'],
-                'uhc_acumulado_no': uhc_cg_total
-            })
-
-    # 5.5. RAMAIS DE ESGOTO COLETORES -> Tubo de Queda (TQ) ou Caixa de Inspeção (CI)
-    if ramais_esgoto and alvos_finais_esg:
-        for re_b in ramais_esgoto:
-            f_eq_re = st.session_state.bib_hidro['Equipamento'] == re_b['Equipamento']
-            esg_mm_base = int(st.session_state.bib_hidro.loc[f_eq_re, 'Esgoto_mm'].values[0]) if f_eq_re.any() else 50
-            uhc_proprio = float(st.session_state.bib_hidro.loc[f_eq_re, 'UHC'].values[0]) if f_eq_re.any() else 6.0
-
-            uhc_total_ramal = max(uhc_proprio, uhc_acumulado_ramal_esg.get(re_b['ID_CAD'], 0.0))
-            diam_re = max(50, esg_mm_base, dimensionar_tubo_esgoto(uhc_total_ramal))
-            declividade_re = 0.01 if diam_re >= 100 else 0.02
-
-            alvo_final = min(alvos_finais_esg, key=lambda tq: dist_2d((re_b['x'], re_b['y']), (tq['x'], tq['y'])))
-            pts_2d_re = rota_a_star_2d(re_b, alvo_final, permitir_diagonal=True)
-            if pts_2d_re:
-                z_ini_re = re_b['z_base'] - 0.18
-                linha_re = [(re_b['x'], re_b['y'], z_ini_re)]
-                dist_ac = 0.0
-                pt_ant = (re_b['x'], re_b['y'])
-                for px_e, py_e in pts_2d_re:
-                    dist_ac += dist_2d(pt_ant, (px_e, py_e))
-                    linha_re.append((px_e, py_e, z_ini_re - (dist_ac * declividade_re)))
-                    pt_ant = (px_e, py_e)
-                linha_re.append((alvo_final['x'], alvo_final['y'], z_ini_re - (dist_ac * declividade_re)))
-                linhas_processadas.append({
-                    'pontos': linha_re, 'cor': '#4a2e1b',
-                    'tipo': f"Ramal de Esgoto Coletor ({re_b['Nome_Bloco']}) -> {alvo_final['Nome_Bloco']}",
-                    'diametro': diam_re, 'declividade_pct': declividade_re * 100,
-                    'equipamento': re_b['Equipamento'], 'id_ap': re_b['ID_CAD'], 'prumada_ref': alvo_final['ID_CAD'],
-                    'uhc_acumulado_no': uhc_total_ramal
-                })
-
-    return linhas_processadas
-
-def rotear_eletrica(df_be, ctx, evitar_linhas=None):
-    """
-    Motor Elétrico 3D Consciente de Estrutura, Vergas/Contravergas (+30cm) e Simbologia ABNT NBR 5410 / 5444:
-    - Libera vãos de portas e janelas na matriz 2D e aplica desvios 3D acima da Verga ou abaixo da Contraverga;
-    - Utiliza Caixas de Passagem e Conexões de Eletroduto na altura z_relativo como nós intermediários;
-    - Roteia Iluminação pela laje superior, TUGs/TUEs em cascata por pavimento e Retornos de Interruptores.
-    """
-    linhas_processadas = []
-    if not df_be:
-        return linhas_processadas
-
-    matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-
     for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
         x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
         x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
@@ -1710,10 +1250,427 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
             px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
             bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
 
-    # Libera os vãos de portas e janelas na matriz 2D para que os eletrodutos atravessem por cima da verga ou abaixo da contraverga
     liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
 
-    # Se acionado pelo Clash Avoidance (Aba 2), penaliza pontos onde passam tubos hidráulicos na mesma cota
+    h_af = ctx.get('h_agua_fria', 0.20)
+    h_aq = ctx.get('h_agua_quente', 1.00)
+    h_viga = ctx.get('altura_viga', 0.40)
+    z_subsolo_af = -0.25
+
+    def rota_a_star_2d(orig, dest, permitir_diagonal=False, forcar_direto_se_falhar=True):
+        ox = max(0, min(ctx['grid_w'] - 1, escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])))
+        oy = max(0, min(ctx['grid_h'] - 1, escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])))
+        dx = max(0, min(ctx['grid_w'] - 1, escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])))
+        dy = max(0, min(ctx['grid_h'] - 1, escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])))
+        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'], raio=2)
+        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'], raio=2)
+        grid = Grid(matrix=matriz)
+        mov = DiagonalMovement.always if permitir_diagonal else DiagonalMovement.never
+        finder = AStarFinder(diagonal_movement=mov)
+        caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
+        pts = [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
+        if not pts and forcar_direto_se_falhar:
+            return [(orig['x'], orig['y']), (dest['x'], dest['y'])]
+        return pts
+
+    mapa_blocos = {str(b['ID_CAD']): b for b in df_bh}
+
+    # Classificação dos blocos por função BIM
+    caixas_agua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
+    prumadas_af = [b for b in df_bh if b['Tipo_BIM'] in ['Prumada Água Fria', 'Tubo de Queda Água Fria', 'Coluna de Subida Água Fria']]
+    conexoes_af = [b for b in df_bh if b['Tipo_BIM'] == 'Conexões Hidráulicas AF']
+    boilers = [b for b in df_bh if b['Tipo_BIM'] == 'Boiler / Aquecedor']
+    prumadas_aq = [b for b in df_bh if b['Tipo_BIM'] in ['Tubo de Queda Água Quente', 'Coluna de Subida Água Quente']]
+    conexoes_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Conexões Hidráulicas AQ']
+    prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
+    caixas_inspecao = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Inspeção / Destino Esgoto']
+    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
+    caixas_sifonadas = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa Sifonada / Ralo Sifonado' or "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', ''))]
+    caixas_gordura = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Gordura' or "GORDURA" in normalizar_texto_bim(b.get('Equipamento', ''))]
+
+    ids_esgoto_natos = {
+        str(b['ID_CAD']) for b in df_bh
+        if b['Tipo_BIM'] in [
+            'Caixa de Inspeção / Destino Esgoto', 'Caixa de Gordura',
+            'Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto',
+            'Ramal de Descarga', 'Conexões Tubulação Esgoto', 'Prumada Esgoto'
+        ]
+    }
+
+    # =========================================================================
+    # ETAPAS 1 A 3: ÁGUA FRIA (RESERVATÓRIO, COLUNAS, CONEXÕES AF E APARELHOS)
+    # =========================================================================
+    peso_total_edificacao = sum(
+        float(st.session_state.bib_hidro.loc[st.session_state.bib_hidro['Equipamento'] == b['Equipamento'], 'Peso'].values[0])
+        for b in df_bh
+        if b['Tipo_BIM'] == 'Aparelho Hidráulico' and (st.session_state.bib_hidro['Equipamento'] == b['Equipamento']).any()
+    )
+    dn_barrilete = max(32, dimensionar_tubo_agua_fria(peso_total_edificacao))
+
+    if caixas_agua and prumadas_af:
+        cx_sup = caixas_agua[0]
+        z_fundo_cx = ctx.get('max_z_cobertura', 3.0) + ctx.get('altura_caixa', 1.50)
+        z_barrilete = ctx.get('max_z_cobertura', 3.0) + 0.25
+        for prum in prumadas_af:
+            _, dn_p_af, _, _ = obter_override_topologico_ponto(prum['ID_CAD'], df_bh, dn_barrilete)
+            pts_b = rota_a_star_2d(cx_sup, prum, permitir_diagonal=False)
+            linha_b = [(cx_sup['x'], cx_sup['y'], z_fundo_cx), (cx_sup['x'], cx_sup['y'], z_barrilete)]
+            for px, py in pts_b:
+                linha_b.append((px, py, z_barrilete))
+            linha_b.extend([(prum['x'], prum['y'], z_barrilete), (prum['x'], prum['y'], 0.0)])
+            linhas_processadas.append({
+                'pontos': linha_b, 'cor': '#1d4ed8',
+                'tipo': f"Barrilete / Coluna AF ({prum['ID_CAD']})", 'diametro': dn_p_af
+            })
+
+    # Grafo de Água Fria (Aparelhos com Agua_mm > 0 + Conexões AF) subordinado ao Manual
+    nos_af = []
+    for b in df_bh:
+        if b['Tipo_BIM'] == 'Conexões Hidráulicas AF':
+            nos_af.append(b)
+        elif b['Tipo_BIM'] == 'Aparelho Hidráulico':
+            f_eq = st.session_state.bib_hidro['Equipamento'] == b['Equipamento']
+            af_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0]) if f_eq.any() else 0
+            alvo_m, _, _, tem_m = obter_override_topologico_ponto(b['ID_CAD'], df_bh, max(20, af_mm))
+            # Se tem ligação manual para um nó de esgoto, a ligação manual será tratada na Etapa 5 (Esgoto)
+            if af_mm > 0:
+                nos_af.append(b)
+
+    alvos_base_af = prumadas_af if prumadas_af else caixas_agua
+    for no_a in nos_af:
+        f_eq = st.session_state.bib_hidro['Equipamento'] == no_a['Equipamento']
+        af_mm_base = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0]) if f_eq.any() else 25
+        af_mm_base = max(20, af_mm_base)
+
+        alvo_man_af, dn_af_uso, peca_man_af, tem_man_af = obter_override_topologico_ponto(no_a['ID_CAD'], df_bh, af_mm_base)
+        alvo_af = None
+        tag_manual_af = ""
+
+        # Só usa o alvo manual na Água Fria se o alvo manual NÃO for uma peça exclusiva de esgoto
+        if tem_man_af and str(alvo_man_af['ID_CAD']) not in ids_esgoto_natos:
+            alvo_af = alvo_man_af
+            tag_manual_af = " [MANUAL]"
+        else:
+            # Roteamento Automático de Água Fria (conecta na conexão AF mais próxima ou na prumada/caixa d'água)
+            con_andar = [c for c in conexoes_af if str(c['ID_CAD']) != str(no_a['ID_CAD']) and abs(c['z_base'] - no_a['z_base']) < 0.6]
+            if no_a['Tipo_BIM'] == 'Aparelho Hidráulico' and con_andar:
+                cand_af = con_andar + alvos_base_af
+            else:
+                cand_af = [a for a in alvos_base_af if str(a['ID_CAD']) != str(no_a['ID_CAD'])]
+            if cand_af:
+                alvo_af = min(cand_af, key=lambda p: dist_2d((no_a['x'], no_a['y']), (p['x'], p['y'])))
+
+        if alvo_af is not None and str(alvo_af['ID_CAD']) != str(no_a['ID_CAD']):
+            pts_2d_af = rota_a_star_2d(no_a, alvo_af, permitir_diagonal=False)
+            z_orig = no_a['z_base'] + float(no_a.get('z_relativo', h_af))
+            z_dest = alvo_af['z_base'] + float(alvo_af.get('z_relativo', h_af))
+            z_cam = no_a['z_base'] + h_af
+            linha_af = [(no_a['x'], no_a['y'], z_orig), (no_a['x'], no_a['y'], z_cam)]
+            for px, py in pts_2d_af:
+                linha_af.append((px, py, z_cam))
+            linha_af.extend([(alvo_af['x'], alvo_af['y'], z_cam), (alvo_af['x'], alvo_af['y'], z_dest)])
+            linha_af = aplicar_desvios_estruturais_e_vaos_3d(linha_af, elementos_arq, no_a['z_base'], no_a.get('pe_direito', 3.0), h_viga)
+            j90_c, j45_c, tes_c = contar_conexoes_na_rota(linha_af)
+            linhas_processadas.append({
+                'pontos': linha_af, 'cor': '#0284c7',
+                'tipo': f"Água Fria ({no_a['Nome_Bloco']} -> {alvo_af['Nome_Bloco']}){tag_manual_af}",
+                'diametro': dn_af_uso, 'id_ap': no_a['ID_CAD'],
+                'comp_acumulado_total_m': calcular_comprimento_rota(linha_af),
+                'j90_acumulados': j90_c, 'tes_acumulados': max(1, tes_c)
+            })
+
+    # =========================================================================
+    # ETAPA 4: ÁGUA QUENTE (CPVC / PPR - BOILER, CONEXÕES AQ E APARELHOS AQ)
+    # =========================================================================
+    alvos_base_aq = boilers + prumadas_aq + conexoes_aq
+    for b_aq in df_bh:
+        if b_aq['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Conexões Hidráulicas AQ']:
+            continue
+        f_eq = st.session_state.bib_hidro['Equipamento'] == b_aq['Equipamento']
+        aq_mm = int(st.session_state.bib_hidro.loc[f_eq, 'AQ_mm'].values[0]) if (f_eq.any() and 'AQ_mm' in st.session_state.bib_hidro.columns) else 0
+        if aq_mm <= 0 and b_aq['Tipo_BIM'] != 'Conexões Hidráulicas AQ':
+            continue
+        aq_mm = max(22, aq_mm)
+        alvo_man_aq, dn_aq_uso, _, tem_man_aq = obter_override_topologico_ponto(b_aq['ID_CAD'], df_bh, aq_mm)
+        alvo_aq = alvo_man_aq if (tem_man_aq and str(alvo_man_aq['ID_CAD']) not in ids_esgoto_natos) else None
+        if alvo_aq is None:
+            cand_aq = [a for a in alvos_base_aq if str(a['ID_CAD']) != str(b_aq['ID_CAD'])]
+            if cand_aq:
+                alvo_aq = min(cand_aq, key=lambda p: dist_2d((b_aq['x'], b_aq['y']), (p['x'], p['y'])))
+        if alvo_aq is not None:
+            pts_2d_aq = rota_a_star_2d(b_aq, alvo_aq, permitir_diagonal=False)
+            z_cam_aq = b_aq['z_base'] + h_aq
+            linha_aq = [(b_aq['x'], b_aq['y'], b_aq['z_base'] + float(b_aq.get('z_relativo', h_aq))), (b_aq['x'], b_aq['y'], z_cam_aq)]
+            for px, py in pts_2d_aq:
+                linha_aq.append((px, py, z_cam_aq))
+            linha_aq.extend([(alvo_aq['x'], alvo_aq['y'], z_cam_aq), (alvo_aq['x'], alvo_aq['y'], alvo_aq['z_base'] + float(alvo_aq.get('z_relativo', h_aq)))])
+            linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, b_aq['z_base'], b_aq.get('pe_direito', 3.0), h_viga)
+            linhas_processadas.append({
+                'pontos': linha_aq, 'cor': '#dc2626',
+                'tipo': f"Água Quente ({b_aq['Nome_Bloco']} -> {alvo_aq['Nome_Bloco']})",
+                'diametro': dn_aq_uso, 'id_ap': b_aq['ID_CAD']
+            })
+
+    # =========================================================================
+    # ETAPA 5: ÁRVORE DE ESGOTO SANITÁRIO SUBORDINADA À TOPOLOGIA MANUAL (NBR 8160)
+    # =========================================================================
+    # 5.0. Tubos de Queda verticais e Colunas de Ventilação
+    if prumadas_esg:
+        z_topo_vent = ctx.get('max_z_cobertura', 3.0) + 0.30
+        for prum_e in prumadas_esg:
+            linhas_processadas.append({
+                'pontos': [(prum_e['x'], prum_e['y'], z_topo_vent), (prum_e['x'], prum_e['y'], z_subsolo_af - 0.10)],
+                'cor': '#5c3a21', 'tipo': f"Tubo de Queda Esgoto ({prum_e['ID_CAD']})", 'diametro': 100
+            })
+            linhas_processadas.append({
+                'pontos': [(prum_e['x'] + 0.15, prum_e['y'], z_topo_vent), (prum_e['x'] + 0.15, prum_e['y'], 0.0)],
+                'cor': '#2ca02c', 'tipo': f"Coluna de Ventilação ({prum_e['ID_CAD']})", 'diametro': 50
+            })
+
+    # 5.1. Coleta TODOS os nós que participam do esgoto (Aparelhos c/ esgoto, Conexões Esgoto, Ralos Sifonados, Caixas de Gordura, Ramais, TQs e Caixas de Inspeção)
+    nos_esgoto = []
+    uhc_proprio_no = {}
+    dn_min_no = {}
+
+    for b in df_bh:
+        id_b = str(b['ID_CAD'])
+        tb = b['Tipo_BIM']
+        f_eq = st.session_state.bib_hidro['Equipamento'] == b['Equipamento']
+        uhc_val = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0]) if f_eq.any() else 0.0
+        esg_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0]) if f_eq.any() else 0
+        alvo_m, dn_m, _, tem_m = obter_override_topologico_ponto(id_b, df_bh, max(40, esg_mm))
+
+        participa_esg = False
+        if tb in [
+            'Caixa de Inspeção / Destino Esgoto', 'Caixa de Gordura',
+            'Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto',
+            'Ramal de Descarga', 'Conexões Tubulação Esgoto', 'Prumada Esgoto'
+        ]:
+            participa_esg = True
+        elif tb == 'Aparelho Hidráulico' and (esg_mm > 0 or (tem_m and str(alvo_m['ID_CAD']) in ids_esgoto_natos)):
+            participa_esg = True
+
+        if participa_esg:
+            nos_esgoto.append(b)
+            # Apenas aparelhos geram UHC na origem; caixas/conexões somam o UHC que recebem a montante
+            uhc_proprio_no[id_b] = uhc_val if tb in ['Aparelho Hidráulico', 'Ramal de Descarga'] else 0.0
+            if tb in ['Caixa de Inspeção / Destino Esgoto', 'Prumada Esgoto']:
+                dn_min_no[id_b] = max(100, esg_mm)
+            elif tb == 'Caixa de Gordura':
+                dn_min_no[id_b] = max(75, esg_mm)
+            elif tb in ['Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto']:
+                dn_min_no[id_b] = max(50, esg_mm)
+            else:
+                dn_min_no[id_b] = max(40, esg_mm)
+
+    # 5.2. PASSO A: Registra PRIMEIRO todas as Ligações Manuais definidas pelo usuário no Inspetor 2D!
+    pai_esgoto = {}       # {id_origem: bloco_destino}
+    eh_link_manual = {}   # {id_origem: True/False}
+
+    for b in nos_esgoto:
+        id_b = str(b['ID_CAD'])
+        alvo_m, _, _, tem_m = obter_override_topologico_ponto(id_b, df_bh, dn_min_no.get(id_b, 50))
+        if tem_m and alvo_m is not None:
+            pai_esgoto[id_b] = alvo_m
+            eh_link_manual[id_b] = True
+
+    def forma_ciclo_esgoto(id_origem, id_candidato_destino):
+        """Impede que uma ligação automática aponte para um nó que já deságua em id_origem (evita loop infinito)."""
+        atual = str(id_candidato_destino)
+        visitados = set()
+        while atual in pai_esgoto and pai_esgoto[atual] is not None:
+            if atual == str(id_origem) or atual in visitados:
+                return True
+            visitados.add(atual)
+            atual = str(pai_esgoto[atual]['ID_CAD'])
+        return atual == str(id_origem)
+
+    # Nós que já possuem rota manual configurada pelo usuário (atuam como atratores/coletores ativos!)
+    ids_manualmente_conectados = set(pai_esgoto.keys())
+
+    # 5.3. PASSO B: Roteamento Automático Subordinado (Apenas para os nós que NÃO têm ligação manual)
+    conexoes_esg_lista = [b for b in nos_esgoto if b['Tipo_BIM'] == 'Conexões Tubulação Esgoto']
+    alvos_finais_esg = prumadas_esg + caixas_inspecao
+
+    for b in nos_esgoto:
+        id_b = str(b['ID_CAD'])
+        if id_b in pai_esgoto:
+            # JÁ CONFIGURADO MANUALMENTE PELO USUÁRIO -> Intocável!
+            continue
+
+        tb = b['Tipo_BIM']
+        eq_norm = normalizar_texto_bim(b.get('Equipamento', ''))
+
+        # Caixa de Inspeção sem ligação manual é o destino final (não cria saída automática a menos que o usuário mande)
+        if tb == 'Caixa de Inspeção / Destino Esgoto':
+            continue
+
+        opcoes_cand = []
+        if tb == 'Prumada Esgoto':
+            opcoes_cand = [ci for ci in caixas_inspecao if not forma_ciclo_esgoto(id_b, ci['ID_CAD'])]
+
+        elif tb == 'Caixa de Gordura':
+            # Caixa de Gordura vai para a Caixa de Inspeção mais próxima (ou conexão de 75/100mm que leve à CI)
+            con_prim = [c for c in conexoes_esg_lista if dn_min_no.get(str(c['ID_CAD']), 40) >= 75 and str(c['ID_CAD']) in ids_manualmente_conectados]
+            opcoes_cand = caixas_inspecao + con_prim + prumadas_esg
+
+        elif tb == 'Caixa Sifonada / Ralo Sifonado':
+            # Saída de Ralo Sifonado (DN 50/75mm) procura Conexões de Esgoto (>=50mm), Ramais de Esgoto, TQ ou Caixa de Inspeção
+            con_prim = [
+                c for c in conexoes_esg_lista
+                if dn_min_no.get(str(c['ID_CAD']), 40) >= 50
+                and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 5.0
+            ]
+            opcoes_cand = con_prim + ramais_esgoto + alvos_finais_esg
+
+        elif tb in ['Ramal de Esgoto', 'Conexões Tubulação Esgoto']:
+            dn_atual = dn_min_no.get(id_b, 50)
+            if dn_atual <= 40 and caixas_sifonadas:
+                # Conexão secundária de 40mm procura Ralo Sifonado próximo
+                opcoes_cand = [cs for cs in caixas_sifonadas if dist_2d((b['x'], b['y']), (cs['x'], cs['y'])) <= 6.0]
+            if not opcoes_cand:
+                # Procura outra conexão já configurada manualmente mais próxima do destino ou vai para Ramal/TQ/CI
+                con_jusante = [
+                    c for c in conexoes_esg_lista
+                    if str(c['ID_CAD']) != id_b
+                    and dn_min_no.get(str(c['ID_CAD']), 40) >= dn_atual
+                    and str(c['ID_CAD']) in ids_manualmente_conectados
+                    and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 4.5
+                ]
+                opcoes_cand = con_jusante + ramais_esgoto + alvos_finais_esg
+
+        elif tb in ['Aparelho Hidráulico', 'Ramal de Descarga']:
+            eh_bacia = ("BACIA" in eq_norm or "VASO" in eq_norm or "SANITARIO" in eq_norm or dn_min_no.get(id_b, 40) >= 100)
+            eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA", "GOURMET"])
+
+            if eh_cozinha and caixas_gordura:
+                opcoes_cand = caixas_gordura
+                dn_min_no[id_b] = max(50, dn_min_no.get(id_b, 50))
+            elif not eh_bacia and not eh_cozinha and caixas_sifonadas:
+                cs_prox = [cs for cs in caixas_sifonadas if abs(cs['z_base'] - b['z_base']) < 0.6 and dist_2d((b['x'], b['y']), (cs['x'], cs['y'])) <= 6.5]
+                opcoes_cand = cs_prox if cs_prox else (ramais_esgoto + alvos_finais_esg)
+            else:
+                # Bacia sanitária procura conexão de 100mm próxima (ex: Tê 100mm), Ramal de Esgoto, TQ ou Caixa de Inspeção
+                con_100 = [
+                    c for c in conexoes_esg_lista
+                    if dn_min_no.get(str(c['ID_CAD']), 40) >= 100
+                    and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 3.5
+                ]
+                opcoes_cand = con_100 + ramais_esgoto + alvos_finais_esg
+
+        # Filtra candidatos válidos que não sejam o próprio nó e não gerem loop fechado
+        opcoes_validas = [
+            cand for cand in opcoes_cand
+            if str(cand['ID_CAD']) != id_b and not forma_ciclo_esgoto(id_b, cand['ID_CAD'])
+        ]
+        if opcoes_validas:
+            # Prioriza nós que você já conectou manualmente se estiverem próximos, ou o mais próximo geometricamente
+            escolhido = min(
+                opcoes_validas,
+                key=lambda c: dist_2d((b['x'], b['y']), (c['x'], c['y'])) * (0.80 if str(c['ID_CAD']) in ids_manualmente_conectados else 1.0)
+            )
+            pai_esgoto[id_b] = escolhido
+            eh_link_manual[id_b] = False
+
+    # 5.4. PASSO C: Propagação Topológica de UHCs (Montante -> Jusante) pela Árvore Manual + Automática
+    uhc_acumulado_no = {str(b['ID_CAD']): uhc_proprio_no.get(str(b['ID_CAD']), 0.0) for b in nos_esgoto}
+    for b in nos_esgoto:
+        id_orig = str(b['ID_CAD'])
+        uhc_add = uhc_proprio_no.get(id_orig, 0.0)
+        if b['Tipo_BIM'] == 'Caixa Sifonada / Ralo Sifonado' and uhc_add == 0.0:
+            uhc_add = 2.0
+        elif b['Tipo_BIM'] == 'Caixa de Gordura' and uhc_add == 0.0:
+            uhc_add = 6.0
+
+        if uhc_add > 0:
+            atual = id_orig
+            visitados = set()
+            while atual in pai_esgoto and pai_esgoto[atual] is not None:
+                prox_id = str(pai_esgoto[atual]['ID_CAD'])
+                if prox_id in visitados:
+                    break
+                visitados.add(prox_id)
+                uhc_acumulado_no[prox_id] = uhc_acumulado_no.get(prox_id, 0.0) + uhc_add
+                atual = prox_id
+
+    # 5.5. PASSO D: Geração das Tubulações 3D/2D de Esgoto com Respeito Estrito ao Diâmetro e Destino Manual
+    for b in nos_esgoto:
+        id_b = str(b['ID_CAD'])
+        if id_b not in pai_esgoto or pai_esgoto[id_b] is None:
+            continue
+
+        alvo_esg = pai_esgoto[id_b]
+        foi_manual = eh_link_manual.get(id_b, False)
+        uhc_trecho = max(2.0, uhc_acumulado_no.get(id_b, 2.0))
+        dn_normativo = max(dn_min_no.get(id_b, 40), dimensionar_tubo_esgoto(uhc_trecho))
+
+        # Se o usuário definiu DN_Manual_mm > 0 no Inspetor (ex: 100mm), usa o valor do usuário!
+        _, diam_final_esg, peca_no_esg, _ = obter_override_topologico_ponto(id_b, df_bh, dn_normativo)
+        declividade_esg = 0.01 if diam_final_esg >= 100 else 0.02
+
+        # Para ligações entre Caixas de Inspeção ou ligações manuais diretas, permite diagonal 45° e fallback direto
+        pts_2d_esg = rota_a_star_2d(b, alvo_esg, permitir_diagonal=True, forcar_direto_se_falhar=True)
+        if pts_2d_esg:
+            tb = b['Tipo_BIM']
+            z_ini = b['z_base'] + float(b.get('z_relativo', -0.15))
+            if z_ini >= b['z_base']:
+                z_ini_tubo = b['z_base'] - (0.30 if tb == 'Caixa de Gordura' else (0.14 if 'Sifonad' in tb else 0.12))
+                linha_esg = [(b['x'], b['y'], z_ini), (b['x'], b['y'], z_ini_tubo)]
+            else:
+                z_ini_tubo = z_ini
+                linha_esg = [(b['x'], b['y'], z_ini_tubo)]
+
+            dist_ac = 0.0
+            pt_ant = (b['x'], b['y'])
+            for px_e, py_e in pts_2d_esg:
+                dist_ac += dist_2d(pt_ant, (px_e, py_e))
+                linha_esg.append((px_e, py_e, round(z_ini_tubo - (dist_ac * declividade_esg), 4)))
+                pt_ant = (px_e, py_e)
+            linha_esg.append((alvo_esg['x'], alvo_esg['y'], round(z_ini_tubo - (dist_ac * declividade_esg), 4)))
+
+            cor_esg = '#2563eb' if foi_manual else ('#3d2514' if tb == 'Caixa de Inspeção / Destino Esgoto' else ('#5c3a21' if tb == 'Caixa de Gordura' else ('#8b4513' if 'Sifonad' in tb else 'brown')))
+            tag_m = " [MANUAL]" if foi_manual else ""
+            linhas_processadas.append({
+                'pontos': linha_esg,
+                'cor': '#7c2d12' if foi_manual else cor_esg,
+                'tipo': f"Esgoto ({b['Nome_Bloco']} -> {alvo_esg['Nome_Bloco']}){tag_m}",
+                'diametro': diam_final_esg,
+                'declividade_pct': declividade_esg * 100,
+                'equipamento': b.get('Equipamento', ''),
+                'id_ap': b['ID_CAD'],
+                'prumada_ref': alvo_esg['ID_CAD'],
+                'uhc_acumulado_no': uhc_trecho,
+                'manual': foi_manual
+            })
+
+    return linhas_processadas
+
+def rotear_eletrica(df_be, ctx, evitar_linhas=None):
+    """
+    Motor Elétrico 3D/2D Subordinado às Ligações Manuais do Inspetor:
+    - Qualquer ponto elétrico com Conectado_A manual liga-se diretamente ao alvo escolhido;
+    - Os demais pontos se readequam automaticamente em cascata ou rumo ao QDG.
+    """
+    linhas_processadas = []
+    if not df_be:
+        return linhas_processadas
+
+    matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
+    for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
+        x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
+        x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
+        for px, py in algoritmo_bresenham(x0, y0, x1, y1):
+            if 0 <= py < ctx['grid_h'] and 0 <= px < ctx['grid_w']:
+                matriz[py][px] = 0
+
+    elementos_arq = ctx.get('elementos_arquitetonicos', [])
+    for elem in elementos_arq:
+        if elem.get('Tipo') == 'Pilar/Viga' and 'PILAR' in str(elem.get('ID_CAD', '')).upper():
+            px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
+            bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
+
+    liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
+
     if evitar_linhas:
         for l_hid in evitar_linhas:
             for pt_h in l_hid.get('pontos', []):
@@ -1726,145 +1683,116 @@ def rotear_eletrica(df_be, ctx, evitar_linhas=None):
     rotear_cascata = ctx.get('rotear_em_cascata', True)
 
     def rota_a_star_elet(orig, dest):
-        ox = escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])
-        oy = escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])
-        dx = escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])
-        dy = escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])
-        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'])
-        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'])
+        ox = max(0, min(ctx['grid_w'] - 1, escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])))
+        oy = max(0, min(ctx['grid_h'] - 1, escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])))
+        dx = max(0, min(ctx['grid_w'] - 1, escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])))
+        dy = max(0, min(ctx['grid_h'] - 1, escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])))
+        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'], raio=2)
+        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'], raio=2)
         grid = Grid(matrix=matriz)
         finder = AStarFinder(diagonal_movement=DiagonalMovement.never)
         caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
-        return [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
+        pts = [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
+        return pts if pts else [(orig['x'], orig['y']), (dest['x'], dest['y'])]
 
     quadros = [b for b in df_be if b.get('Tipo_BIM') == 'Quadro Geral']
     if not quadros:
-        # Fallback automático: se não houver QDG marcado na tabela, adota o 1º bloco elétrico como origem principal
         quadros = [df_be[0]]
 
     caixas_passagem = [b for b in df_be if b.get('Tipo_BIM') in ['Caixa de Passagem', 'Conexão / Eletroduto']]
     luminarias = [b for b in df_be if b.get('Tipo_BIM') == 'Luminária']
     caixas_tom_int = [b for b in df_be if b.get('Tipo_BIM') in ['Caixa 4x2', 'Caixa 4x4']]
 
-    # 1. ROTEAMENTO DAS CAIXAS DE PASSAGEM / CONEXÕES DE ELETRODUTO -> QUADRO GERAL (COM DESVIO DE VERGAS/CONTRAVERGAS)
+    # 1. CAIXAS DE PASSAGEM E CONEXÕES DE ELETRODUTO
     for cp in caixas_passagem:
-        qdg_alvo = min(quadros, key=lambda q: abs(q['z_base'] - cp['z_base']) * 4 + dist_2d((cp['x'], cp['y']), (q['x'], q['y'])))
+        alvo_man, dn_cp, _, tem_m = obter_override_topologico_ponto(cp['ID_CAD'], df_be, 25)
+        qdg_alvo = alvo_man if tem_m else min(quadros, key=lambda q: abs(q['z_base'] - cp['z_base']) * 4 + dist_2d((cp['x'], cp['y']), (q['x'], q['y'])))
         if qdg_alvo['ID_CAD'] == cp['ID_CAD']:
             continue
         pts_2d = rota_a_star_elet(cp, qdg_alvo)
-        if pts_2d:
-            z_cp = cp['z_base'] + float(cp.get('z_relativo', 1.30))
-            z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
-            linha_3d = [(cp['x'], cp['y'], z_cp)]
-            for px, py in pts_2d:
-                linha_3d.append((px, py, z_cp))
-            linha_3d.extend([(qdg_alvo['x'], qdg_alvo['y'], z_cp), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)])
-            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cp['z_base'], cp.get('pe_direito', 3.0), h_viga)
-            comp_m = round(calcular_comprimento_rota(linha_3d), 2)
-            linhas_processadas.append({
-                'pontos': linha_3d, 'cor': '#ca8a04', 'fios': 'F N T',
-                'comprimento_m': comp_m, 'id_origem': cp['ID_CAD'], 'tipo': 'Eletroduto Tronco / Passagem'
-            })
+        z_cp = cp['z_base'] + float(cp.get('z_relativo', 1.30))
+        z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
+        linha_3d = [(cp['x'], cp['y'], z_cp)] + [(px, py, z_cp) for px, py in pts_2d] + [(qdg_alvo['x'], qdg_alvo['y'], z_cp), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)]
+        linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cp['z_base'], cp.get('pe_direito', 3.0), h_viga)
+        linhas_processadas.append({
+            'pontos': linha_3d, 'cor': '#ca8a04', 'fios': 'F N T', 'diametro': dn_cp,
+            'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2), 'id_origem': cp['ID_CAD'],
+            'tipo': f"Eletroduto Passagem ({cp['ID_CAD']} -> {qdg_alvo['ID_CAD']})" + (" [MANUAL]" if tem_m else "")
+        })
 
-    # 2. ROTEAMENTO DE LUMINÁRIAS (PELO TETO/LAJE COM DESVIO DE VIGAS)
+    # 2. LUMINÁRIAS
     for lum in luminarias:
-        qdg_alvo = min(quadros, key=lambda q: abs(q['z_base'] - lum['z_base']) * 4 + dist_2d((lum['x'], lum['y']), (q['x'], q['y'])))
+        alvo_man, dn_lum, _, tem_m = obter_override_topologico_ponto(lum['ID_CAD'], df_be, 20)
+        qdg_alvo = alvo_man if tem_m else min(quadros, key=lambda q: abs(q['z_base'] - lum['z_base']) * 4 + dist_2d((lum['x'], lum['y']), (q['x'], q['y'])))
         if qdg_alvo['ID_CAD'] == lum['ID_CAD']:
             continue
         pts_2d = rota_a_star_elet(lum, qdg_alvo)
-        if pts_2d:
-            z_teto = lum['z_base'] + float(lum.get('z_relativo', lum.get('pe_direito', 3.0))) - 0.05
-            z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
-            linha_3d = [(lum['x'], lum['y'], z_teto)]
-            for px, py in pts_2d:
-                linha_3d.append((px, py, z_teto))
-            linha_3d.extend([(qdg_alvo['x'], qdg_alvo['y'], z_teto), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)])
-            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, lum['z_base'], lum.get('pe_direito', 3.0), h_viga)
-            comp_m = round(calcular_comprimento_rota(linha_3d), 2)
-            fios_lum = "F F T" if int(lum.get('Tensao_V', 127)) == 220 else "F N T"
-            linhas_processadas.append({
-                'pontos': linha_3d, 'cor': '#eab308', 'fios': fios_lum,
-                'comprimento_m': comp_m, 'id_origem': lum['ID_CAD'], 'tipo': 'Eletroduto Iluminação (Teto)'
-            })
+        z_teto = lum['z_base'] + float(lum.get('z_relativo', lum.get('pe_direito', 3.0))) - 0.05
+        z_qdg = qdg_alvo['z_base'] + float(qdg_alvo.get('z_relativo', 1.50))
+        linha_3d = [(lum['x'], lum['y'], z_teto)] + [(px, py, z_teto) for px, py in pts_2d] + [(qdg_alvo['x'], qdg_alvo['y'], z_teto), (qdg_alvo['x'], qdg_alvo['y'], z_qdg)]
+        linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, lum['z_base'], lum.get('pe_direito', 3.0), h_viga)
+        fios_lum = "F F T" if int(lum.get('Tensao_V', 127)) == 220 else "F N T"
+        linhas_processadas.append({
+            'pontos': linha_3d, 'cor': '#eab308', 'fios': fios_lum, 'diametro': dn_lum,
+            'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2), 'id_origem': lum['ID_CAD'],
+            'tipo': f"Eletroduto Iluminação ({lum['ID_CAD']} -> {qdg_alvo['ID_CAD']})" + (" [MANUAL]" if tem_m else "")
+        })
 
-    # 3. ROTEAMENTO DE TOMADAS (TUGs EM CASCATA / TUEs DEDICADOS) E INTERRUPTORES PELA PAREDE
-    # Nós alimentadores disponíveis (Quadro Geral + Caixas de Passagem já conectadas)
+    # 3. TOMADAS E INTERRUPTORES (SUBORDINADOS AO VÍNCULO MANUAL)
     nos_alimentados = list(quadros) + list(caixas_passagem)
-    caixas_ordenadas = sorted(
-        caixas_tom_int,
-        key=lambda c: min(dist_2d((c['x'], c['y']), (q['x'], q['y'])) for q in quadros)
-    )
+    caixas_ordenadas = sorted(caixas_tom_int, key=lambda c: min(dist_2d((c['x'], c['y']), (q['x'], q['y'])) for q in quadros))
 
     for cx in caixas_ordenadas:
-        if int(cx.get('Qtd_Tomadas', 0)) > 0 or int(cx.get('Qtd_Interruptores', 0)) == 0:
+        alvo_man, dn_el_uso, _, tem_m = obter_override_topologico_ponto(cx['ID_CAD'], df_be, 25)
+        if tem_m or int(cx.get('Qtd_Tomadas', 0)) > 0 or int(cx.get('Qtd_Interruptores', 0)) == 0:
             eq_ass = str(cx.get('Equipamento_Associado', ''))
             eh_tue = (int(cx.get('Tensao_V', 127)) == 220 and cx.get('Amperagem_Tomadas') == '20A') or any(k in eq_ass.upper() for k in ["CHUVEIRO", "AR-CONDICIONADO", "SPLIT", "HIDROMASSAGEM", "BOILER", "COOKTOP", "FORNO", "TORNEIRA"])
 
-            # TUE vai para o QDG (ou Caixa de Passagem); TUG pode encadear em cascata na tomada vizinha do mesmo pavimento
-            opcoes_dest = (list(quadros) + list(caixas_passagem)) if (eh_tue or not rotear_cascata) else [n for n in nos_alimentados if abs(n['z_base'] - cx['z_base']) < 0.6]
-            if not opcoes_dest:
-                opcoes_dest = list(quadros)
-
-            alvo_el = min(opcoes_dest, key=lambda n: dist_2d((cx['x'], cx['y']), (n['x'], n['y'])))
-
-            # ---> ENTRA EXATAMENTE AQUI (ANTES DO ROTEAMENTO A*):
-            alvo_man, dn_el_uso, _ = obter_override_topologico_ponto(cx['ID_CAD'], df_be, 25)
-            if alvo_man is not None:
+            if tem_m and alvo_man is not None:
                 alvo_el = alvo_man
+            else:
+                opcoes_dest = (list(quadros) + list(caixas_passagem)) if (eh_tue or not rotear_cascata) else [n for n in nos_alimentados if abs(n['z_base'] - cx['z_base']) < 0.6 and n['ID_CAD'] != cx['ID_CAD']]
+                if not opcoes_dest:
+                    opcoes_dest = [q for q in quadros if q['ID_CAD'] != cx['ID_CAD']]
+                alvo_el = min(opcoes_dest, key=lambda n: dist_2d((cx['x'], cx['y']), (n['x'], n['y']))) if opcoes_dest else cx
 
             if alvo_el['ID_CAD'] != cx['ID_CAD']:
                 pts_2d = rota_a_star_elet(cx, alvo_el)
-                if pts_2d:
-                    z_cx = cx['z_base'] + float(cx.get('z_relativo', 0.30))
-                    z_alvo = alvo_el['z_base'] + float(alvo_el.get('z_relativo', 1.30))
-                    z_travessia = z_cx if abs(z_cx - z_alvo) < 0.4 else min(max(z_cx, 0.35), 1.30)
-                    linha_3d = [(cx['x'], cx['y'], z_cx), (cx['x'], cx['y'], z_travessia)]
-                    for px, py in pts_2d:
-                        linha_3d.append((px, py, z_travessia))
-                    linha_3d.extend([(alvo_el['x'], alvo_el['y'], z_travessia), (alvo_el['x'], alvo_el['y'], z_alvo)])
-                    linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
+                z_cx = cx['z_base'] + float(cx.get('z_relativo', 0.30))
+                z_alvo = alvo_el['z_base'] + float(alvo_el.get('z_relativo', 1.30))
+                z_travessia = z_cx if abs(z_cx - z_alvo) < 0.4 else min(max(z_cx, 0.35), 1.30)
+                linha_3d = [(cx['x'], cx['y'], z_cx), (cx['x'], cx['y'], z_travessia)] + [(px, py, z_travessia) for px, py in pts_2d] + [(alvo_el['x'], alvo_el['y'], z_travessia), (alvo_el['x'], alvo_el['y'], z_alvo)]
+                linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
+                fios_tom = "F F T" if int(cx.get('Tensao_V', 127)) == 220 else "F N T"
+                linhas_processadas.append({
+                    'pontos': linha_3d, 'cor': '#dc2626' if eh_tue else '#16a34a', 'fios': fios_tom,
+                    'diametro': dn_el_uso, 'comprimento_m': round(calcular_comprimento_rota(linha_3d), 2),
+                    'id_origem': cx['ID_CAD'],
+                    'tipo': ('Eletroduto TUE' if eh_tue else 'Eletroduto Tomadas') + f" ({cx['ID_CAD']} -> {alvo_el['ID_CAD']})" + (" [MANUAL]" if tem_m else "")
+                })
+                if not eh_tue and cx not in nos_alimentados:
+                    nos_alimentados.append(cx)
 
-                    comp_m = round(calcular_comprimento_rota(linha_3d), 2)
-                    fios_tom = "F F T" if int(cx.get('Tensao_V', 127)) == 220 else "F N T"
-                    cor_el = '#dc2626' if eh_tue else '#16a34a'
-                    linhas_processadas.append({
-                        'pontos': linha_3d, 'cor': cor_el, 'fios': fios_tom,
-                        'diametro': dn_el_uso,
-                        'comprimento_m': comp_m, 'id_origem': cx['ID_CAD'],
-                        'tipo': 'Eletroduto TUE Dedicado' if eh_tue else 'Eletroduto Tomadas (Parede)'
-                    })
-                    if not eh_tue:
-                        nos_alimentados.append(cx)
-            
-        # 4. DESCIDA DE COMANDO DE INTERRUPTORES (RETORNO ENTRE INTERRUPTOR E LUMINÁRIA CONTROLADA)
-        if int(cx.get('Qtd_Interruptores', 0)) > 0:
+        if int(cx.get('Qtd_Interruptores', 0)) > 0 and not tem_m:
             lums_ctrl_str = str(cx.get('Luminarias_Controladas', '')).strip()
             lums_alvo = [l for l in luminarias if l['ID_CAD'] in lums_ctrl_str.split(",")] if lums_ctrl_str else []
             if not lums_alvo and luminarias:
-                # Se não selecionou manualmente, vincula automaticamente à luminária mais próxima do mesmo pavimento
                 lums_andar = [l for l in luminarias if abs(l['z_base'] - cx['z_base']) < 0.6]
                 if lums_andar:
                     lums_alvo = [min(lums_andar, key=lambda l: dist_2d((cx['x'], cx['y']), (l['x'], l['y'])))]
-
             qtd_i = int(cx.get('Qtd_Interruptores', 1))
             fios_ret = "F R1 R2" if ("PARALELO" in str(cx.get('Nome_Bloco', '')).upper() or qtd_i == 2) else ("F R1 R2 R3" if qtd_i >= 3 else "F R")
-
             for lum_dest in lums_alvo:
                 pts_2d_r = rota_a_star_elet(cx, lum_dest)
-                if pts_2d_r:
-                    z_int = cx['z_base'] + float(cx.get('z_relativo', 1.20))
-                    z_lum = lum_dest['z_base'] + float(lum_dest.get('z_relativo', lum_dest.get('pe_direito', 3.0))) - 0.05
-                    linha_ret = [(cx['x'], cx['y'], z_int), (cx['x'], cx['y'], z_lum)]
-                    for px, py in pts_2d_r:
-                        linha_ret.append((px, py, z_lum))
-                    linha_ret.append((lum_dest['x'], lum_dest['y'], z_lum))
-                    linha_ret = aplicar_desvios_estruturais_e_vaos_3d(linha_ret, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
-                    linhas_processadas.append({
-                        'diametro': dn_el_uso,
-                        'pontos': linha_ret, 'cor': '#f59e0b', 'fios': fios_ret,
-                        'comprimento_m': round(calcular_comprimento_rota(linha_ret), 2),
-                        'id_origem': cx['ID_CAD'], 'tipo': f"Retorno Interruptor ({fios_ret})"
-                    })
+                z_int = cx['z_base'] + float(cx.get('z_relativo', 1.20))
+                z_lum = lum_dest['z_base'] + float(lum_dest.get('z_relativo', lum_dest.get('pe_direito', 3.0))) - 0.05
+                linha_ret = [(cx['x'], cx['y'], z_int), (cx['x'], cx['y'], z_lum)] + [(px, py, z_lum) for px, py in pts_2d_r] + [(lum_dest['x'], lum_dest['y'], z_lum)]
+                linha_ret = aplicar_desvios_estruturais_e_vaos_3d(linha_ret, elementos_arq, cx['z_base'], cx.get('pe_direito', 3.0), h_viga)
+                linhas_processadas.append({
+                    'pontos': linha_ret, 'cor': '#f59e0b', 'fios': fios_ret, 'diametro': dn_el_uso,
+                    'comprimento_m': round(calcular_comprimento_rota(linha_ret), 2), 'id_origem': cx['ID_CAD'],
+                    'tipo': f"Retorno Interruptor ({fios_ret})"
+                })
 
     return linhas_processadas
 # ==============================================================================
@@ -3198,7 +3126,8 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             key=f"insp_dn_{id_escolhido}"
         )
 
-        if st.button("💾 Aplicar ao Ponto e Atualizar 3D/2D", type="primary", use_container_width=True):
+        col_ap1, col_ap2 = st.columns([2, 1])
+        if col_ap1.button("💾 Aplicar ao Ponto e Atualizar 3D/2D", type="primary", use_container_width=True):
             overrides[id_escolhido] = {
                 "z_relativo": float(novo_z_rel),
                 "Conectado_A": novo_conectado_a,
@@ -3206,17 +3135,47 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                 "DN_Manual_mm": int(novo_dn_manual)
             }
             st.session_state["overrides_topologia_bim"] = overrides
+            st.session_state.contexto_bim["overrides_topologia_bim"] = overrides
 
-            # Atualiza também a coluna z_relativo na tabela principal (Elétrica ou Hidro)
             if no_atual["Disciplina"] == "Elétrica" and not df_editado_elet.empty:
                 df_editado_elet.loc[df_editado_elet["ID_CAD"] == id_escolhido, "z_relativo"] = float(novo_z_rel)
             elif not df_editado_hidro.empty:
                 df_editado_hidro.loc[df_editado_hidro["ID_CAD"] == id_escolhido, "z_relativo"] = float(novo_z_rel)
 
             salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
+
+            # Reprocessa IMEDIATAMENTE as rotas 3D/2D subordinando o automático às ligações manuais!
+            ctx_at = st.session_state.contexto_bim
+            ctx_at['df_eletrica'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+            ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+            if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
+                novas_linhas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                novas_linhas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at)
+                st.session_state.linhas_3d_master['hidro'] = novas_linhas_hd
+                st.session_state.linhas_3d_master['eletrica'] = novas_linhas_el
+                st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                    novas_linhas_el, novas_linhas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                )
+
             st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
-            st.toast(f"✅ Ponto {id_escolhido} atualizado (z={novo_z_rel:.2f}m | Destino: {novo_conectado_a})!", icon="🎯")
+            st.toast(f"✅ Ligação manual aplicada: {id_escolhido} ➔ {novo_conectado_a} (Ø{novo_dn_manual if novo_dn_manual>0 else 'Auto'}mm)!", icon="🔗")
             st.rerun()
+
+        if col_ap2.button("🗑️ Resetar Nó", use_container_width=True):
+            if id_escolhido in overrides:
+                del overrides[id_escolhido]
+                st.session_state["overrides_topologia_bim"] = overrides
+                st.rerun()
+
+        # Exibe resumo rápido de todas as ligações manuais ativas no projeto
+        links_ativos = [
+            f"• `{k}` ➔ `{v.get('Conectado_A')}` (Ø{v.get('DN_Manual_mm') if v.get('DN_Manual_mm',0)>0 else 'Auto'}mm | z={v.get('z_relativo',0):.2f}m)"
+            for k, v in overrides.items()
+            if v.get("Conectado_A") and v.get("Conectado_A") != "Automático (Menor Rota ABNT)"
+        ]
+        if links_ativos:
+            st.markdown("**🔒 Ligações Manuais Ativas (Prioridade Absoluta):**")
+            st.caption("\n".join(links_ativos))
 
 def extrair_segmentos_entidade_dxf(ent, modo="parede"):
     """
