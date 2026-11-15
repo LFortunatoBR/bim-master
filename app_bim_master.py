@@ -528,6 +528,21 @@ def garantir_tubos_queda_subida_na_biblioteca():
         {"Equipamento": "Tubulação Esgoto 40mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 40},
         {"Equipamento": "Ponto de Esgoto 100mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
         {"Equipamento": "Ponto de Esgoto 75mm", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 75, "Vent_mm": 50},
+        # ---- CONEXÕES E DISPOSITIVOS COMPLEMENTARES (TRANSPOSIÇÃO, VENTILAÇÃO, PLUVIAL, CURVA 45, RAMAL DESCARGA) ----
+        {"Equipamento": "Curva de Transposição 25mm (Água Fria)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Curva de Transposição 22mm (Água Quente)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 22, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Curva 45° 25mm (Água Fria)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 25, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 0, "Esgoto_mm": 0, "Vent_mm": 0},
+        {"Equipamento": "Curva 45° 40mm (Esgoto)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 40},
+        {"Equipamento": "Curva 45° 50mm (Esgoto)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Curva 45° 75mm (Esgoto)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 75, "Vent_mm": 50},
+        {"Equipamento": "Curva 45° 100mm (Esgoto)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 160, "Esgoto_mm": 100, "Vent_mm": 75},
+        {"Equipamento": "Tubo de Ventilação 50mm (NBR 8160)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 10, "Esgoto_mm": 50, "Vent_mm": 50},
+        {"Equipamento": "Tubo de Ventilação 75mm (NBR 8160)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 30, "Esgoto_mm": 75, "Vent_mm": 75},
+        {"Equipamento": "Ramal de Descarga 40mm (Esgoto Secundário)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 2, "Esgoto_mm": 40, "Vent_mm": 40},
+        {"Equipamento": "Ramal de Descarga 50mm (Pia / Tanque / Máquina)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
+        {"Equipamento": "Ramal de Descarga 100mm (Bacia Sanitária)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 100, "Vent_mm": 50},
+        {"Equipamento": "Ralo Seco 100x100mm (Grelha de Piso)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 1, "Esgoto_mm": 40, "Vent_mm": 0},
+        {"Equipamento": "Caixa de Passagem de Águas Pluviais / Areia (NBR 10844)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 20, "Esgoto_mm": 100, "Vent_mm": 0},
         # ---- CAIXAS SIFONADAS E CAIXAS DE GORDURA NORMATIVAS (NBR 8160 - ITEM 5.1.5) ----
         {"Equipamento": "Ralo Sifonado 100x100x50mm (Fecho 50mm - Máx 6 UHC)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 6, "Esgoto_mm": 50, "Vent_mm": 40},
         {"Equipamento": "Caixa Sifonada 150x150x50mm (Fecho 50mm - Máx 15 UHC)", "Vazao_Ls": 0.00, "Peso": 0.0, "Agua_mm": 0, "AQ_mm": 0, "Pressao_kpa": 0, "UHC": 15, "Esgoto_mm": 75, "Vent_mm": 50},
@@ -2577,6 +2592,13 @@ def classificar_bloco_hidro_inteligente(nome_bloco, layer_bloco, opcoes_equip):
         (["AGUA FRIA 32", "AF 32"], "Conexões Hidráulicas AF", "Tubulação Água Fria 32mm", 0.20),
         (["AGUA FRIA 20", "AF 20"], "Conexões Hidráulicas AF", "Tubulação Água Fria 20mm", 0.20),
         (["AGUA FRIA", "AF"], "Conexões Hidráulicas AF", "Tubulação Água Fria 25mm", 0.20),
+        (["TRANSPOSICAO", "CURVA DE TRANSPOSICAO", "PASSANTE"], "Conexões Hidráulicas AF", "Curva de Transposição 25mm (Água Fria)", 0.60),
+        (["CAIXA PLUVIAL", "CX PLUVIAL", "CAIXA DE AREIA", "CX AREIA", "PASSAGEM PLUVIAL"], "Caixa de Inspeção / Destino Esgoto", "Caixa de Passagem de Águas Pluviais / Areia (NBR 10844)", -0.40),
+        (["TUBO DE VENTILACAO", "COLUNA DE VENTILACAO", "VENTILACAO", "TV 50", "CV 50"], "Prumada Esgoto", "Tubo de Ventilação 50mm (NBR 8160)", 0.00),
+        (["RAMAL DE DESCARGA 100", "RD 100"], "Ramal de Descarga", "Ramal de Descarga 100mm (Bacia Sanitária)", -0.12),
+        (["RAMAL DE DESCARGA 50", "RD 50"], "Ramal de Descarga", "Ramal de Descarga 50mm (Pia / Tanque / Máquina)", -0.10),
+        (["RAMAL DE DESCARGA", "RD 40"], "Ramal de Descarga", "Ramal de Descarga 40mm (Esgoto Secundário)", -0.10),
+        (["RALO SECO"], "Ramal de Descarga", "Ralo Seco 100x100mm (Grelha de Piso)", 0.00),
         (["ESGOTO 100", "ESG 100", "TUBO 100", "TUBULACAO 100", "PRIMARIO", "SUBCOLETOR"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 100mm", -0.20),
         (["ESGOTO 75", "ESG 75", "TUBO 75", "TUBULACAO 75"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 75mm", -0.18),
         (["ESGOTO 40", "ESG 40", "TUBO 40", "TUBULACAO 40", "SECUNDARIO"], "Conexões Tubulação Esgoto", "Tubulação Esgoto 40mm", -0.10),
@@ -2986,13 +3008,182 @@ with st.sidebar:
 # ==============================================================================
 import ezdxf.path
 
+CATALOGO_CONEXOES_INSPETOR = [
+    # --- DISPOSITIVOS E CAIXAS DE ESGOTO / PLUVIAL (NBR 8160 / NBR 10844) ---
+    "Ralo Sifonado / Caixa Sifonada (Fecho Hídrico ≥ 50mm)",
+    "Ralo Seco / Grelha de Piso (Esgoto Secundário)",
+    "Caixa de Gordura c/ Septo Submerso (NBR 8160)",
+    "Caixa de Inspeção Sanitária (Alvenaria / PVC)",
+    "Caixa de Passagem de Águas Pluviais / Caixa de Areia (NBR 10844)",
+    "Caixa de Passagem / Retenção de Dreno (Ar-Condicionado)",
+    # --- RAMAIS, TUBOS E COLUNAS DE ESGOTO E VENTILAÇÃO ---
+    "Ramal de Descarga (Recebe Dejetos Direto do Aparelho)",
+    "Ramal de Esgoto (Coletor Primário / Secundário)",
+    "Tubo / Coluna de Ventilação Sanitária (NBR 8160)",
+    "Tubo de Queda de Esgoto (Prumada Vertical TQ)",
+    "Subcoletor / Coletor Predial de Esgoto",
+    "Condutor Vertical / Horizontal de Águas Pluviais",
+    # --- CONEXÕES DE ESGOTO E ÁGUA (CURVAS, JOELHOS, TÊS, JUNÇÕES E LUVAS) ---
+    "Curva de Transposição (Desvio de Tubulações no Mesmo Plano)",
+    "Curva 45° (Mudança Suave de Direção - Água / Esgoto)",
+    "Curva Longa 90° (Baixa Perda de Carga - Água / Esgoto)",
+    "Curva Curta 90° (Esgoto / Transição)",
+    "Joelho 90° Soldável / Esgoto",
+    "Joelho 45° Soldável / Esgoto",
+    "Joelho 90° c/ Bucha de Latão (Ponto de Consumo na Parede)",
+    "Joelho 90° de Redução Soldável",
+    "Joelho 90° c/ Anel de Borracha (Esgoto)",
+    "Tê 90° Passagem Direta (Derivação Água / Esgoto)",
+    "Tê de Redução 90° Soldável / Esgoto",
+    "Tê c/ Bucha de Latão na Bolsa Central (Misturador / Ponto)",
+    "Tê Sanitário / Curva c/ Visita (Inspeção de Esgoto)",
+    "Junção Simples 45° (Y - Esgoto NBR 8160)",
+    "Junção Dupla 45° / Junção Invertida (Ventilação / Esgoto)",
+    "Luva Simples Soldável / Luva de Correr (Reparo / Emenda)",
+    "Bucha de Redução Curta / Longa / Excêntrica",
+    # --- LIGAÇÕES DE APARELHOS, REGISTROS E VÁLVULAS (NBR 5626) ---
+    "Anel de Vedação + Tubo de Ligação (Saída Bacia Sanitária 100mm)",
+    "Sifão + Joelho 90° c/ Bucha de Latão (Ponto de Pia / Lavatório / Tanque)",
+    "Registro de Gaveta (Bloqueio Geral / Coluna)",
+    "Registro de Pressão (Controle de Vazão - Chuveiro / Ducha)",
+    "Válvula Redutora de Pressão - VRP (Controle > 40 m.c.a.)",
+    "Válvula de Retenção (Fluxo Unidirecional / Recalque)",
+    "Coluna de Distribuição Água Fria / Água Quente (Prumada)",
+    "Adaptador / Flange de Reservatório (Caixa d'Água)",
+    "Conexão Térmica CPVC / PPR (Boiler / Aquecedor / Água Quente)",
+    "Conexão / Ponto de Gás Combustível (GLP / GN - NBR 15526)",
+    # --- ELÉTRICA (NBR 5410) ---
+    "Curva 90° / 45° Eletroduto / Luva de Emenda",
+    "Caixa de Passagem Elétrica 4x2\" / 4x4\" / Octogonal de Teto",
+    "Barramento / Entrada de Quadro de Distribuição (QDG)"
+]
+
+
+def inferir_conexao_principal_inteligente(nome_bloco, equipamento, funcao_bim, disciplina="Hidrossanitário"):
+    """
+    Interpreta o Nome_Bloco do CAD, o Equipamento e a Função BIM para associar
+    automaticamente a Conexão Principal exata do ponto no Inspetor 2D/3D.
+    """
+    alvo = normalizar_texto_bim(f"{nome_bloco} {equipamento} {funcao_bim}")
+    palavras = set(alvo.split())
+
+    if disciplina == "Elétrica":
+        if "QUADRO" in alvo or "QDG" in alvo:
+            return "Barramento / Entrada de Quadro de Distribuição (QDG)"
+        if "CURVA" in alvo or "ELETRODUTO" in alvo or "LUVA" in alvo:
+            return "Curva 90° / 45° Eletroduto / Luva de Emenda"
+        return "Caixa de Passagem Elétrica 4x2\" / 4x4\" / Octogonal de Teto"
+
+    if disciplina == "Gás" or "GAS" in palavras or "GLP" in palavras:
+        return "Conexão / Ponto de Gás Combustível (GLP / GN - NBR 15526)"
+
+    # 1. Dispositivos e Caixas (Ralo Sifonado, Ralo Seco, Caixa de Gordura, Inspeção, Pluvial, Dreno)
+    if "TRANSPOSICAO" in alvo or "PASSANTE" in alvo:
+        return "Curva de Transposição (Desvio de Tubulações no Mesmo Plano)"
+    if "SIFONAD" in alvo or "CS" in palavras or "RS" in palavras:
+        return "Ralo Sifonado / Caixa Sifonada (Fecho Hídrico ≥ 50mm)"
+    if "RALO SECO" in alvo or ("RALO" in palavras and "SIFONAD" not in alvo):
+        return "Ralo Seco / Grelha de Piso (Esgoto Secundário)"
+    if "GORDURA" in alvo or "CG" in palavras or "CGP" in palavras or "CGS" in palavras or "CGD" in palavras:
+        return "Caixa de Gordura c/ Septo Submerso (NBR 8160)"
+    if any(k in alvo for k in ["PLUVIAL", "AREIA", "CHUVA", "CALHA", "AP"]):
+        if "TUBO" in alvo or "CONDUTOR" in alvo or "DESC" in alvo:
+            return "Condutor Vertical / Horizontal de Águas Pluviais"
+        return "Caixa de Passagem de Águas Pluviais / Caixa de Areia (NBR 10844)"
+    if "DRENO" in alvo or "AR CONDICIONADO" in alvo or "SPLIT" in alvo:
+        return "Caixa de Passagem / Retenção de Dreno (Ar-Condicionado)"
+    if "INSPECAO" in alvo or "CI" in palavras or "FOSSA" in alvo:
+        return "Caixa de Inspeção Sanitária (Alvenaria / PVC)"
+
+    # 2. Ventilação, Ramal de Descarga, Ramal de Esgoto e Prumadas
+    if any(k in alvo for k in ["VENTILACAO", "VENT", "COLUNA DE VENTILACAO", "TUBO DE VENTILACAO"]) or "TV" in palavras:
+        return "Tubo / Coluna de Ventilação Sanitária (NBR 8160)"
+    if "RAMAL DE DESCARGA" in alvo:
+        return "Ramal de Descarga (Recebe Dejetos Direto do Aparelho)"
+    if "RAMAL DE ESGOTO" in alvo:
+        return "Ramal de Esgoto (Coletor Primário / Secundário)"
+    if "SUBCOLETOR" in alvo or "COLETOR" in alvo:
+        return "Subcoletor / Coletor Predial de Esgoto"
+    if any(k in alvo for k in ["PRUMADA ESGOTO", "QUEDA ESGOTO", "TQ ESGOTO"]):
+        return "Tubo de Queda de Esgoto (Prumada Vertical TQ)"
+    if any(k in alvo for k in ["TUBO DE QUEDA", "COLUNA DE SUBIDA", "PRUMADA", "TUBO DESC", "DESCIDA", "SUBIDA"]):
+        return "Coluna de Distribuição Água Fria / Água Quente (Prumada)"
+
+    # 3. Conexões Específicas (Curva 45°, Curva 90°, Joelho 45°/90°, Junção Y, Tê, Luva, Redução)
+    if "JUNCAO" in alvo or " Y " in f" {alvo} ":
+        if "DUPLA" in alvo or "INVERTIDA" in alvo:
+            return "Junção Dupla 45° / Junção Invertida (Ventilação / Esgoto)"
+        return "Junção Simples 45° (Y - Esgoto NBR 8160)"
+
+    if "CURVA" in alvo:
+        if "VISITA" in alvo or "INSPECAO" in alvo:
+            return "Tê Sanitário / Curva c/ Visita (Inspeção de Esgoto)"
+        if "45" in alvo:
+            return "Curva 45° (Mudança Suave de Direção - Água / Esgoto)"
+        if "CURTA" in alvo:
+            return "Curva Curta 90° (Esgoto / Transição)"
+        return "Curva Longa 90° (Baixa Perda de Carga - Água / Esgoto)"
+
+    if "JOELHO" in alvo or "COTOVELO" in alvo:
+        if "LATAO" in alvo or "BUCHA" in alvo or "AZUL" in alvo:
+            return "Joelho 90° c/ Bucha de Latão (Ponto de Consumo na Parede)"
+        if "45" in alvo:
+            return "Joelho 45° Soldável / Esgoto"
+        if "REDUCAO" in alvo:
+            return "Joelho 90° de Redução Soldável"
+        if "ANEL" in alvo or "BORRACHA" in alvo:
+            return "Joelho 90° c/ Anel de Borracha (Esgoto)"
+        return "Joelho 90° Soldável / Esgoto"
+
+    if any(k in palavras for k in ["TE", "T", "TEE"]) or "TE 90" in alvo or "TE DE" in alvo or "T ESGOTO" in alvo or "T AGUA" in alvo:
+        if "LATAO" in alvo or "MISTURADOR" in alvo:
+            return "Tê c/ Bucha de Latão na Bolsa Central (Misturador / Ponto)"
+        if "REDUCAO" in alvo:
+            return "Tê de Redução 90° Soldável / Esgoto"
+        if "SANITARIO" in alvo or "VISITA" in alvo:
+            return "Tê Sanitário / Curva c/ Visita (Inspeção de Esgoto)"
+        return "Tê 90° Passagem Direta (Derivação Água / Esgoto)"
+
+    if "LUVA" in alvo:
+        return "Luva Simples Soldável / Luva de Correr (Reparo / Emenda)"
+    if "BUCHA" in alvo or "REDUCAO" in alvo:
+        return "Bucha de Redução Curta / Longa / Excêntrica"
+
+    # 4. Registros, Válvulas, Reservatório e Boiler
+    if "REGISTRO DE PRESSAO" in alvo or "RP" in palavras:
+        return "Registro de Pressão (Controle de Vazão - Chuveiro / Ducha)"
+    if "REGISTRO DE GAVETA" in alvo or "RG" in palavras or "REGISTRO" in alvo:
+        return "Registro de Gaveta (Bloqueio Geral / Coluna)"
+    if "VRP" in palavras or "REDUTORA" in alvo:
+        return "Válvula Redutora de Pressão - VRP (Controle > 40 m.c.a.)"
+    if "RETENCAO" in alvo:
+        return "Válvula de Retenção (Fluxo Unidirecional / Recalque)"
+    if "CAIXA D AGUA" in alvo or "RESERVATORIO" in alvo:
+        return "Adaptador / Flange de Reservatório (Caixa d'Água)"
+    if "BOILER" in alvo or "AQUECEDOR" in alvo or "AGUA QUENTE" in alvo or "AQ" in palavras:
+        return "Conexão Térmica CPVC / PPR (Boiler / Aquecedor / Água Quente)"
+
+    # 5. Aparelhos Sanitários (Bacia Sanitária, Pia, Lavatório, Chuveiro, etc.)
+    if any(k in alvo for k in ["BACIA", "VASO", "SANITARIO"]):
+        return "Anel de Vedação + Tubo de Ligação (Saída Bacia Sanitária 100mm)"
+    if any(k in alvo for k in ["PIA", "LAVATORIO", "CUBA", "TANQUE", "LAVA LOUCA", "LAVADORA", "MAQUINA"]):
+        return "Sifão + Joelho 90° c/ Bucha de Latão (Ponto de Pia / Lavatório / Tanque)"
+    if any(k in alvo for k in ["CHUVEIRO", "DUCHA", "TORNEIRA", "FILTRO", "GELADEIRA", "BIDE", "DUCHA HIGIENICA"]):
+        return "Joelho 90° c/ Bucha de Latão (Ponto de Consumo na Parede)"
+
+    if "ESGOTO" in alvo:
+        return "Ramal de Esgoto (Coletor Primário / Secundário)"
+
+    return "Joelho 90° Soldável / Esgoto"
+
+
 def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet, df_editado_hidro, ctx):
     """
-    Tela Gráfica 2D Interativa com Anti-Sobreposição de Textos, Ligação Rápida em Sequência (2 Cliques)
-    e Sincronização Direta com o Inspetor.
+    Tela Gráfica 2D Interativa com Anti-Sobreposição de Textos, Ligação Rápida em Sequência (2 Cliques),
+    Catálogo Completo de 38 Conexões Hidrossanitárias/Elétricas e Reconhecimento Automático pelo Nome do Bloco.
     """
     st.subheader("🕸️ Topologia Ramificada 2D Interativa & Inspetor de Conexões / Eixo Z (Clique no Ponto)")
-    st.caption("Clique em um bloco na planta 2D para selecioná-lo. Para ligar dois pontos rapidamente, ative o 'Modo Ligação Rápida' abaixo e clique no ponto de origem e depois no destino.")
+    st.caption("Clique em um bloco na planta 2D para selecioná-lo. A Conexão Principal é reconhecida automaticamente pelo nome do bloco CAD, podendo ser ajustada livremente abaixo.")
 
     if "overrides_topologia_bim" not in st.session_state:
         st.session_state["overrides_topologia_bim"] = ctx.get("overrides_topologia_bim", {})
@@ -3005,34 +3196,50 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         dn_alim_agua = ce_r3.selectbox("Ramal Predial Água (Rua → Caixa/Cisterna)", [20, 25, 32, 40, 50], index=1, key="dn_rua_af")
         dn_alim_elet = ce_r4.selectbox("Eletroduto Entrada (Medidor Rua → QDG)", [25, 32, 40, 50, 60, 75], index=2, key="dn_rua_el")
 
+    antigos_genericos = {"Joelho 90° Soldável / Tê", "Curva 90° Eletroduto / Caixa", ""}
+
     todos_nos = []
     if not df_editado_elet.empty:
         for _, r in df_editado_elet.iterrows():
             id_c = str(r["ID_CAD"])
             ov = overrides.get(id_c, {})
+            nome_b = str(r.get("Nome_Bloco", id_c))
+            func_b = str(r.get("Tipo_BIM", "Caixa 4x2"))
+            eq_b = str(r.get("Equipamento_Associado", ""))
+            con_auto = inferir_conexao_principal_inteligente(nome_b, eq_b, func_b, "Elétrica")
+            con_salva = ov.get("Conexao_No", "")
+            con_final = con_auto if (con_salva in antigos_genericos or con_salva not in CATALOGO_CONEXOES_INSPETOR) else con_salva
+
             todos_nos.append({
-                "ID_CAD": id_c, "Disciplina": "Elétrica", "Nome": str(r.get("Nome_Bloco", id_c)),
-                "Funcao": str(r.get("Tipo_BIM", "Caixa 4x2")), "Equipamento": str(r.get("Equipamento_Associado", "")),
+                "ID_CAD": id_c, "Disciplina": "Elétrica", "Nome": nome_b,
+                "Funcao": func_b, "Equipamento": eq_b,
                 "x": float(r["x"]), "y": float(r["y"]), "z_base": float(r.get("z_base", 0.0)),
                 "z_relativo": float(ov.get("z_relativo", r.get("z_relativo", 1.30))),
                 "Conectado_A": ov.get("Conectado_A", "Automático (Menor Rota ABNT)"),
                 "DN_Manual_mm": int(ov.get("DN_Manual_mm", 25)),
-                "Conexao_No": ov.get("Conexao_No", "Curva 90° Eletroduto / Caixa")
+                "Conexao_No": con_final
             })
+
     if not df_editado_hidro.empty:
         for _, r in df_editado_hidro.iterrows():
             id_c = str(r["ID_CAD"])
             ov = overrides.get(id_c, {})
+            nome_b = str(r.get("Nome_Bloco", id_c))
+            func_b = str(r.get("Tipo_BIM", "Aparelho Hidráulico"))
             eq_str = str(r.get("Equipamento", ""))
             disc = "Gás" if ("GAS" in normalizar_texto_bim(eq_str) or "FOGAO" in normalizar_texto_bim(eq_str)) else "Hidrossanitário"
+            con_auto = inferir_conexao_principal_inteligente(nome_b, eq_str, func_b, disc)
+            con_salva = ov.get("Conexao_No", "")
+            con_final = con_auto if (con_salva in antigos_genericos or con_salva not in CATALOGO_CONEXOES_INSPETOR) else con_salva
+
             todos_nos.append({
-                "ID_CAD": id_c, "Disciplina": disc, "Nome": str(r.get("Nome_Bloco", id_c)),
-                "Funcao": str(r.get("Tipo_BIM", "Aparelho Hidráulico")), "Equipamento": eq_str,
+                "ID_CAD": id_c, "Disciplina": disc, "Nome": nome_b,
+                "Funcao": func_b, "Equipamento": eq_str,
                 "x": float(r["x"]), "y": float(r["y"]), "z_base": float(r.get("z_base", 0.0)),
                 "z_relativo": float(ov.get("z_relativo", r.get("z_relativo", 0.50))),
                 "Conectado_A": ov.get("Conectado_A", "Automático (Menor Rota ABNT)"),
                 "DN_Manual_mm": int(ov.get("DN_Manual_mm", 0)),
-                "Conexao_No": ov.get("Conexao_No", "Joelho 90° Soldável / Tê")
+                "Conexao_No": con_final
             })
 
     if not todos_nos:
@@ -3041,17 +3248,16 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
 
     ids_disponiveis = [n["ID_CAD"] for n in todos_nos]
 
-    # Ajuste dinâmico de posições dos textos para evitar sobreposição visual (Efeito Leque)
+    # Ajuste dinâmico de posições dos textos para evitar sobreposição visual (Empilhamento Vertical Limpo)
     posicoes_calculadas = {}
     ocupadas = []
-    for n in sorted(todos_nos, key=lambda item: (item["x"], item["y"])):
+    for n in sorted(todos_nos, key=lambda item: (round(item["x"], 2), round(item["y"], 2))):
         bx, by = n["x"], n["y"]
-        offset_y = 0.22
+        offset_y = 0.08
         offset_x = 0.0
         for ox, oy in ocupadas:
-            if abs(bx - ox) < 0.65 and abs(by - oy) < 0.35:
-                offset_y += 0.30
-                offset_x += 0.15
+            if abs(bx - ox) < 0.45 and abs((by + offset_y) - oy) < 0.14:
+                offset_y += 0.15
         ocupadas.append((bx + offset_x, by + offset_y))
         posicoes_calculadas[n["ID_CAD"]] = (bx + offset_x, by + offset_y)
 
@@ -3135,7 +3341,7 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                     showlegend=False, hoverinfo="skip"
                 ))
 
-            # 4. Nós Clicáveis + Textos Deslocados (Anti-Sobreposição)
+    # 4. Nós Clicáveis + Rótulos Empilhados Clicáveis
     cores_nos = []
     hover_nos = []
     textos_2d = []
@@ -3145,15 +3351,15 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         cores_nos.append(cor_n)
         hover_nos.append(
             f"<b>{n['ID_CAD']}</b> ({n['Nome']})<br>Função: {n['Funcao']}<br>Eq: {n['Equipamento']}"
+            f"<br>Conexão: <b>{n['Conexao_No']}</b>"
             f"<br>Altura z_relativo: {n['z_relativo']:.2f}m<br>Ligado a: {n['Conectado_A']}"
-            f"<br>Conexão: {n['Conexao_No']} | DN Manual: {n['DN_Manual_mm'] if n['DN_Manual_mm']>0 else 'Auto'}mm"
+            f"<br>DN Manual: {n['DN_Manual_mm'] if n['DN_Manual_mm']>0 else 'Auto'}mm"
         )
         px_t, py_t = posicoes_calculadas[n["ID_CAD"]]
         tx_x.append(px_t)
         tx_y.append(py_t)
         textos_2d.append(n["ID_CAD"])
 
-    # Camada dos Pontos (Marcadores)
     fig_2d.add_trace(go.Scatter(
         x=[n["x"] for n in todos_nos],
         y=[n["y"] for n in todos_nos],
@@ -3167,15 +3373,15 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         name="🎯 Blocos (Marcadores)"
     ))
 
-    # Camada dos Textos Separados (Permite clicar no nome do bloco sem sobreposição)
     fig_2d.add_trace(go.Scatter(
         x=tx_x, y=tx_y,
         mode="text",
         text=textos_2d,
-        textfont=dict(size=10, color="#0f172a", family="Arial Black"),
+        textfont=dict(size=11, color="#0f172a", family="Arial Black"),
         customdata=[n["ID_CAD"] for n in todos_nos],
-        hoverinfo="skip",
-        name="📝 Rótulos"
+        hovertext=hover_nos,
+        hoverinfo="text",
+        name="📝 Rótulos Clicáveis"
     ))
 
     fig_2d.update_layout(
@@ -3198,7 +3404,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             key="grafico_2d_interativo_bim"
         )
 
-    # Captura infalível do ponto clicado no Gráfico 2D
     if evento_clique and hasattr(evento_clique, "selection") and evento_clique.selection.get("points"):
         pts_clicados = evento_clique.selection["points"]
         if pts_clicados:
@@ -3218,8 +3423,7 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
 
             if id_detectado and st.session_state.get("ultimo_clique_2d_assinatura") != f"{id_detectado}_{pt_sel.get('x')}_{pt_sel.get('y')}":
                 st.session_state["ultimo_clique_2d_assinatura"] = f"{id_detectado}_{pt_sel.get('x')}_{pt_sel.get('y')}"
-                
-                # Se o modo de ligação rápida estiver ativo, faz a ligação automática entre o ponto anterior e este!
+
                 if st.session_state.get("modo_ligacao_rapida_ativo", False):
                     ponto_origem_ant = st.session_state.get("origem_ligacao_rapida")
                     if ponto_origem_ant and ponto_origem_ant != id_detectado:
@@ -3229,7 +3433,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                         st.session_state.contexto_bim["overrides_topologia_bim"] = overrides
                         salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
 
-                        # Reprocessa rotas
                         ctx_at = st.session_state.contexto_bim
                         ctx_at['df_eletrica'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
                         ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
@@ -3242,12 +3445,12 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                                 novas_linhas_el, novas_linhas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
                             )
 
-                        st.toast(f"🔗 Ligação rápida criada com sucesso: {ponto_origem_ant} ➔ {id_detectado}!", icon="⚡")
+                        st.toast(f"🔗 Ligação rápida criada: {ponto_origem_ant} ➔ {id_detectado}!", icon="⚡")
                         st.session_state["modo_ligacao_rapida_ativo"] = False
                         st.session_state["origem_ligacao_rapida"] = None
                     else:
                         st.session_state["origem_ligacao_rapida"] = id_detectado
-                        st.toast(f"📍 Ponto de origem definido: `{id_detectado}`. Agora clique no ponto de destino!", icon="🎯")
+                        st.toast(f"📍 Origem definida: `{id_detectado}`. Clique agora no ponto de destino!", icon="🎯")
 
                 st.session_state["no_selecionado_bim"] = id_detectado
                 st.session_state["sel_insp_no"] = id_detectado
@@ -3259,7 +3462,6 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
     with col_insp:
         st.markdown("### 🛠️ Inspetor do Ponto Selecionado")
 
-        # Botão de Ligação Rápida Sequencial (2 Cliques)
         modo_rapido = st.toggle("🔗 Modo Ligação Rápida (1º Clique Origem, 2º Clique Destino)", value=st.session_state.get("modo_ligacao_rapida_ativo", False), key="toggle_ligacao_rapida")
         st.session_state["modo_ligacao_rapida_ativo"] = modo_rapido
         if modo_rapido:
@@ -3277,7 +3479,11 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
         st.session_state["no_selecionado_bim"] = id_escolhido
         no_atual = next(n for n in todos_nos if n["ID_CAD"] == id_escolhido)
 
-        st.info(f"**Bloco CAD:** `{no_atual['Nome']}`\n\n**Disciplina:** {no_atual['Disciplina']} | **Função:** {no_atual['Funcao']}\n\n**Coord. 2D:** X={no_atual['x']:.2f}m, Y={no_atual['y']:.2f}m")
+        st.info(
+            f"**Bloco CAD:** `{no_atual['Nome']}`\n\n"
+            f"**Disciplina:** {no_atual['Disciplina']} | **Função BIM:** {no_atual['Funcao']}\n\n"
+            f"**Equipamento:** {no_atual['Equipamento']} | **Coord. 2D:** X={no_atual['x']:.2f}m, Y={no_atual['y']:.2f}m"
+        )
 
         novo_z_rel = st.number_input(
             "📏 Altura Relativa ao Piso — Eixo Z (m):",
@@ -3294,20 +3500,15 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
             key=f"insp_dest_{id_escolhido}"
         )
 
-        opcoes_peca_no = [
-            "Joelho 90° Soldável / Tê",
-            "Joelho 45° (Suavizado)",
-            "Curva Longa 90° (Baixa Perda)",
-            "Tê 90° Passagem Direta",
-            "Tê de Redução Soldável",
-            "Junção Simples 45° (Y - Esgoto)",
-            "Curva 90° Eletroduto / Caixa",
-            "Caixa de Passagem / Octogonal"
-        ]
-        peca_atual = no_atual["Conexao_No"] if no_atual["Conexao_No"] in opcoes_peca_no else opcoes_peca_no[0]
+        peca_atual = no_atual["Conexao_No"] if no_atual["Conexao_No"] in CATALOGO_CONEXOES_INSPETOR else CATALOGO_CONEXOES_INSPETOR[0]
+        # Sincroniza o widget caso ainda estivesse com valor antigo na sessão
+        if st.session_state.get(f"insp_peca_{id_escolhido}") in antigos_genericos:
+            st.session_state[f"insp_peca_{id_escolhido}"] = peca_atual
+
         nova_conexao_no = st.selectbox(
-            "🔩 Conexão Principal neste Ponto:",
-            opcoes_peca_no, index=opcoes_peca_no.index(peca_atual),
+            "🔩 Conexão Principal neste Ponto (Auto-Associada pelo Bloco):",
+            CATALOGO_CONEXOES_INSPETOR,
+            index=CATALOGO_CONEXOES_INSPETOR.index(peca_atual),
             key=f"insp_peca_{id_escolhido}"
         )
 
@@ -3350,17 +3551,19 @@ def renderizar_tela_2d_ramificada_e_inspetor(paredes_filtradas, df_editado_elet,
                 )
 
             st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
-            st.toast(f"✅ Ligação manual aplicada: {id_escolhido} ➔ {novo_conectado_a} (Ø{novo_dn_manual if novo_dn_manual>0 else 'Auto'}mm)!", icon="🔗")
+            st.toast(f"✅ Ponto {id_escolhido} atualizado ({nova_conexao_no} | Ø{novo_dn_manual if novo_dn_manual>0 else 'Auto'}mm)!", icon="🔗")
             st.rerun()
 
         if col_ap2.button("🗑️ Resetar Nó", use_container_width=True):
             if id_escolhido in overrides:
                 del overrides[id_escolhido]
                 st.session_state["overrides_topologia_bim"] = overrides
-                st.rerun()
+            if f"insp_peca_{id_escolhido}" in st.session_state:
+                del st.session_state[f"insp_peca_{id_escolhido}"]
+            st.rerun()
 
         links_ativos = [
-            f"• `{k}` ➔ `{v.get('Conectado_A')}` (Ø{v.get('DN_Manual_mm') if v.get('DN_Manual_mm',0)>0 else 'Auto'}mm | z={v.get('z_relativo',0):.2f}m)"
+            f"• `{k}` ➔ `{v.get('Conectado_A')}` ({v.get('Conexao_No','')} | Ø{v.get('DN_Manual_mm') if v.get('DN_Manual_mm',0)>0 else 'Auto'}mm | z={v.get('z_relativo',0):.2f}m)"
             for k, v in overrides.items()
             if v.get("Conectado_A") and v.get("Conectado_A") != "Automático (Menor Rota ABNT)"
         ]
