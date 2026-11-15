@@ -4841,21 +4841,25 @@ with tab_bim:
                     st.session_state.linhas_3d_master['hidro'] = apenas_manuais
 
             # Barra de controle rápido das linhas traçadas manualmente no 3D
-            qtd_trechos_manuais = len(st.session_state.get("arestas_manuais_bim", []))
+            arestas_atuais_lista = st.session_state.get("arestas_manuais_bim", [])
+            qtd_trechos_manuais = len(arestas_atuais_lista)
             c_m3d_1, c_m3d_2, c_m3d_3 = st.columns([2.6, 1.2, 1.2])
             c_m3d_1.info(
-                f"🔗 **Traçado Manual 3D Ativo:** `{qtd_trechos_manuais}` trecho(s) conectado(s). "
-                "Clique nos pontos em sequência dentro do gráfico 3D para interligá-los do início ao fim da linha."
+                f"🔗 **Traçado Manual 3D Ativo:** `{qtd_trechos_manuais}` trecho(s) gravado(s). "
+                "Durante o clique no 3D, use **Backspace** para voltar 1 ponto ou **ESC** para iniciar outro ramal."
             )
             if c_m3d_2.button("↩️ Desfazer Último Trecho 3D", use_container_width=True, disabled=(qtd_trechos_manuais == 0)):
-                st.session_state["arestas_manuais_bim"].pop()
+                removida = st.session_state["arestas_manuais_bim"].pop()
                 st.session_state.contexto_bim["arestas_manuais_bim"] = st.session_state["arestas_manuais_bim"]
+                id_orig_rem = str(removida.get("origem", ""))
+                if id_orig_rem in st.session_state.get("overrides_topologia_bim", {}):
+                    st.session_state["overrides_topologia_bim"][id_orig_rem]["Conectado_A"] = "Automático (Menor Rota ABNT)"
                 ctx_at = st.session_state.contexto_bim
                 ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
                 st.session_state.linhas_3d_master['hidro'] = rotear_hidro(ctx_at['df_hidro'], ctx_at)
                 st.rerun()
 
-            if c_m3d_3.button("🧹 Limpar Todas as Ligações", use_container_width=True):
+            if c_m3d_3.button("🧹 Limpar Todas as Ligações", use_container_width=True, disabled=(qtd_trechos_manuais == 0)):
                 st.session_state["arestas_manuais_bim"] = []
                 st.session_state.contexto_bim["arestas_manuais_bim"] = []
                 for k_ov in list(st.session_state.get("overrides_topologia_bim", {}).keys()):
@@ -4864,54 +4868,75 @@ with tab_bim:
                 st.toast("🧹 Todas as tubulações foram limpas! Clique nos pontos no 3D para traçar do zero.", icon="✨")
                 st.rerun()
 
-            # Processa comandos vindos da Interface 3D (Quer seja Edição de Eixo Z ou Sequência de Ligações 3D!)
-            cmd_z3d = st.session_state.get("bridge_z3d_input", "")
-            if cmd_z3d and cmd_z3d != st.session_state.get("ultimo_cmd_z3d_proc", ""):
-                st.session_state["ultimo_cmd_z3d_proc"] = cmd_z3d
-                partes_cmd = str(cmd_z3d).split("|")
+            if qtd_trechos_manuais > 0:
+                with st.expander("✂️ Excluir um Ponto Errado no Meio da Linha (P1 ➔ P2 ➔ P3) ou Apagar Trechos Específicos", expanded=False):
+                    col_ed_t1, col_ed_t2 = st.columns(2)
 
-                # CASO A: Usuário enviou novas ligações ponto a ponto feitas diretamente no Gráfico 3D (CHAIN|id1>id2,id2>id3|dn|ts)
-                if partes_cmd[0] == "CHAIN" and len(partes_cmd) >= 3:
-                    pares_str = partes_cmd[1].strip()
-                    try:
-                        dn_chain = int(partes_cmd[2].strip())
-                    except Exception:
-                        dn_chain = 0
+                    with col_ed_t1:
+                        st.markdown("**1. Apagar Trechos Específicos:**")
+                        opcoes_trechos_fmt = [
+                            f"{idx}: {a['origem']} ➔ {a['destino']} (Ø{a.get('dn', 0) if a.get('dn', 0) > 0 else 'Auto'}mm)"
+                            for idx, a in enumerate(arestas_atuais_lista)
+                        ]
+                        trechos_para_apagar = st.multiselect(
+                            "Selecione o(s) trecho(s) que deseja deletar:",
+                            opcoes_trechos_fmt,
+                            key="ms_del_trechos_3d"
+                        )
+                        if st.button("🗑️ Deletar Trecho(s) Selecionado(s)", use_container_width=True, disabled=(not trechos_para_apagar)):
+                            indices_rem = {int(item.split(":")[0]) for item in trechos_para_apagar}
+                            novas_arestas = []
+                            for idx, a in enumerate(arestas_atuais_lista):
+                                if idx in indices_rem:
+                                    id_o_r = str(a.get("origem", ""))
+                                    if id_o_r in st.session_state.get("overrides_topologia_bim", {}):
+                                        st.session_state["overrides_topologia_bim"][id_o_r]["Conectado_A"] = "Automático (Menor Rota ABNT)"
+                                else:
+                                    novas_arestas.append(a)
+                            st.session_state["arestas_manuais_bim"] = novas_arestas
+                            st.session_state.contexto_bim["arestas_manuais_bim"] = novas_arestas
+                            ctx_at = st.session_state.contexto_bim
+                            ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                            st.session_state.linhas_3d_master['hidro'] = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                            st.toast(f"🗑️ {len(indices_rem)} trecho(s) removido(s)!", icon="✅")
+                            st.rerun()
 
-                    arestas_atuais = list(st.session_state.get("arestas_manuais_bim", []))
-                    ov_dict = st.session_state.get("overrides_topologia_bim", {})
-                    novos_adicionados = 0
+                    with col_ed_t2:
+                        st.markdown("**2. Retirar um Ponto Clicado Errado da Linha:**")
+                        pontos_em_uso = sorted(list({str(a["origem"]) for a in arestas_atuais_lista} | {str(a["destino"]) for a in arestas_atuais_lista}))
+                        ponto_errado = st.selectbox("Ponto clicado por engano:", pontos_em_uso, key="sel_pt_errado_3d")
+                        emendar_vizinhos = st.checkbox(
+                            "🔗 Emendar automaticamente o ponto anterior ao seguinte (Ex: P1 ➔ P2 ➔ P3 vira P1 ➔ P3)",
+                            value=True,
+                            key="chk_emendar_viz"
+                        )
+                        if st.button("✂️ Retirar Ponto da Ligação", use_container_width=True):
+                            entradas_no_ponto = [a for a in arestas_atuais_lista if str(a["destino"]) == ponto_errado]
+                            saidas_do_ponto = [a for a in arestas_atuais_lista if str(a["origem"]) == ponto_errado]
+                            restantes = [a for a in arestas_atuais_lista if str(a["origem"]) != ponto_errado and str(a["destino"]) != ponto_errado]
 
-                    for par in pares_str.split(","):
-                        if ">" in par:
-                            id_o_c, id_d_c = [p.strip() for p in par.split(">", 1)]
-                            if id_o_c and id_d_c and id_o_c != id_d_c:
-                                arestas_atuais = [a for a in arestas_atuais if not (a.get("origem") == id_o_c and a.get("destino") == id_d_c)]
-                                arestas_atuais.append({"origem": id_o_c, "destino": id_d_c, "dn": dn_chain})
-                                if id_o_c not in ov_dict:
-                                    ov_dict[id_o_c] = {"z_relativo": 0.50, "Conexao_No": "Joelho 90° Soldável / Esgoto", "DN_Manual_mm": dn_chain}
-                                ov_dict[id_o_c]["Conectado_A"] = id_d_c
-                                if dn_chain > 0:
-                                    ov_dict[id_o_c]["DN_Manual_mm"] = dn_chain
-                                novos_adicionados += 1
+                            if emendar_vizinhos and entradas_no_ponto and saidas_do_ponto:
+                                for ent_a in entradas_no_ponto:
+                                    for sai_a in saidas_do_ponto:
+                                        if str(ent_a["origem"]) != str(sai_a["destino"]):
+                                            restantes.append({
+                                                "origem": str(ent_a["origem"]),
+                                                "destino": str(sai_a["destino"]),
+                                                "dn": int(ent_a.get("dn", 0))
+                                            })
+                                            if str(ent_a["origem"]) in st.session_state.get("overrides_topologia_bim", {}):
+                                                st.session_state["overrides_topologia_bim"][str(ent_a["origem"])]["Conectado_A"] = str(sai_a["destino"])
 
-                    st.session_state["arestas_manuais_bim"] = arestas_atuais
-                    st.session_state.contexto_bim["arestas_manuais_bim"] = arestas_atuais
-                    st.session_state["overrides_topologia_bim"] = ov_dict
-                    st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+                            if ponto_errado in st.session_state.get("overrides_topologia_bim", {}):
+                                st.session_state["overrides_topologia_bim"][ponto_errado]["Conectado_A"] = "Automático (Menor Rota ABNT)"
 
-                    ctx_at = st.session_state.contexto_bim
-                    ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
-                    ctx_at['df_eletrica'] = ctx_at['df_elet']
-                    ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
-                    novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at)
-                    st.session_state.linhas_3d_master['hidro'] = novas_hd
-                    st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
-                        st.session_state.linhas_3d_master.get('eletrica', []), novas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
-                    )
-                    st.cache_data.clear()
-                    st.toast(f"🔗 {novos_adicionados} novo(s) trecho(s) interligado(s) no 3D com sucesso!", icon="✅")
-                    st.rerun()
+                            st.session_state["arestas_manuais_bim"] = restantes
+                            st.session_state.contexto_bim["arestas_manuais_bim"] = restantes
+                            ctx_at = st.session_state.contexto_bim
+                            ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                            st.session_state.linhas_3d_master['hidro'] = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                            st.toast(f"✂️ Ponto {ponto_errado} removido da linha!", icon="✅")
+                            st.rerun()
 
                 # CASO B: Usuário editou a Altura Z pelo Popup 3D (id|z_val|escopo|ts)
                 elif len(partes_cmd) >= 3:
@@ -5160,6 +5185,15 @@ with tab_bim:
                     if (!parentWin.__modoClique3D) parentWin.__modoClique3D = 'CHAIN';
                     if (!parentWin.__pontoAnteriorChain3D) parentWin.__pontoAnteriorChain3D = null;
                     if (!parentWin.__paresTraced3D) parentWin.__paresTraced3D = [];
+                    if (typeof parentWin.__qtdTracesTemp3D !== 'number') parentWin.__qtdTracesTemp3D = 0;
+
+                    function obterPlot3DAtivo() {{
+                        const plots = parentDoc.querySelectorAll('.js-plotly-plot');
+                        for (const p of plots) {{
+                            if (p.querySelector('.gl-container canvas')) return p;
+                        }}
+                        return null;
+                    }}
 
                     function enviarPayloadParaStreamlit(payload) {{
                         const inputBridge = parentDoc.querySelector('input[aria-label="BRIDGE_Z3D_INPUT"]');
@@ -5174,12 +5208,12 @@ with tab_bim:
                         }}
                     }}
 
-                    // 1. Cria a Barra Flutuante (HUD) para Traçado em Sequência (P1 -> P2 -> P3) e Alternância p/ Eixo Z
+                    // 1. Barra Flutuante (HUD) com Botões de Voltar 1 Ponto (Backspace) e Cancelar Sequência
                     let hudBar = parentDoc.getElementById('bim-hud-chain3d');
                     if (!hudBar) {{
                         hudBar = parentDoc.createElement('div');
                         hudBar.id = 'bim-hud-chain3d';
-                        hudBar.style.cssText = 'position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.95); color:#f8fafc; border:2px solid #38bdf8; border-radius:10px; padding:10px 16px; z-index:999990; box-shadow:0 10px 30px rgba(0,0,0,0.6); font-family:sans-serif; font-size:13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;';
+                        hudBar.style.cssText = 'position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.96); color:#f8fafc; border:2px solid #38bdf8; border-radius:10px; padding:10px 16px; z-index:999990; box-shadow:0 10px 30px rgba(0,0,0,0.65); font-family:sans-serif; font-size:13px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; max-width:96vw;';
                         parentDoc.body.appendChild(hudBar);
                     }}
 
@@ -5193,6 +5227,44 @@ with tab_bim:
                         parentWin.__atualizarHud3D();
                     }};
 
+                    // VOLTAR 1 PONTO NA SEQUÊNCIA (Apaga o último trecho clicado e devolve o cursor ao ponto anterior!)
+                    parentWin.__desfazerUltimoPontoChain3D = function() {{
+                        const plot3d = obterPlot3DAtivo();
+                        if (parentWin.__paresTraced3D && parentWin.__paresTraced3D.length > 0) {{
+                            const ultimoPar = parentWin.__paresTraced3D.pop();
+                            const partes = ultimoPar.split('>');
+                            parentWin.__pontoAnteriorChain3D = partes[0];
+                            if (plot3d && parentWin.Plotly && parentWin.__qtdTracesTemp3D > 0) {{
+                                try {{
+                                    parentWin.Plotly.deleteTraces(plot3d, -1);
+                                    parentWin.__qtdTracesTemp3D--;
+                                }} catch (err) {{}}
+                            }}
+                        }} else {{
+                            parentWin.__pontoAnteriorChain3D = null;
+                        }}
+                        parentWin.__atualizarHud3D();
+                    }};
+
+                    // CANCELAR / REFAZER TODA A SEQUÊNCIA ATUAL AINDA NÃO GRAVADA
+                    parentWin.__cancelarSequenciaAtual3D = function() {{
+                        const plot3d = obterPlot3DAtivo();
+                        if (plot3d && parentWin.Plotly && parentWin.__qtdTracesTemp3D > 0) {{
+                            const indicesParaApagar = [];
+                            const totalTraces = plot3d.data ? plot3d.data.length : 0;
+                            for (let i = 0; i < parentWin.__qtdTracesTemp3D; i++) {{
+                                if (totalTraces - 1 - i >= 0) indicesParaApagar.push(totalTraces - 1 - i);
+                            }}
+                            if (indicesParaApagar.length > 0) {{
+                                try {{ parentWin.Plotly.deleteTraces(plot3d, indicesParaApagar); }} catch (err) {{}}
+                            }}
+                        }}
+                        parentWin.__qtdTracesTemp3D = 0;
+                        parentWin.__paresTraced3D = [];
+                        parentWin.__pontoAnteriorChain3D = null;
+                        parentWin.__atualizarHud3D();
+                    }};
+
                     parentWin.__salvarChain3D = function() {{
                         if (!parentWin.__paresTraced3D || parentWin.__paresTraced3D.length === 0) return;
                         const selDn = parentDoc.getElementById('bim-hud-dn');
@@ -5200,6 +5272,7 @@ with tab_bim:
                         const payload = 'CHAIN|' + parentWin.__paresTraced3D.join(',') + '|' + dnVal + '|' + Date.now();
                         parentWin.__paresTraced3D = [];
                         parentWin.__pontoAnteriorChain3D = null;
+                        parentWin.__qtdTracesTemp3D = 0;
                         parentWin.__atualizarHud3D();
                         enviarPayloadParaStreamlit(payload);
                     }};
@@ -5208,7 +5281,7 @@ with tab_bim:
                         const m = parentWin.__modoClique3D;
                         const ptAnt = parentWin.__pontoAnteriorChain3D;
                         const qtdNovos = parentWin.__paresTraced3D ? parentWin.__paresTraced3D.length : 0;
-                        const infoAnt = ptAnt && parentWin.__blocosMeta3D[ptAnt] ? `${{ptAnt}} (${{parentWin.__blocosMeta3D[ptAnt].nome}})` : 'Nenhum (Clique no 1º bloco p/ iniciar)';
+                        const infoAnt = ptAnt && parentWin.__blocosMeta3D[ptAnt] ? `${{ptAnt}} (${{parentWin.__blocosMeta3D[ptAnt].nome}})` : 'Nenhum (Clique no 1º bloco)';
 
                         hudBar.innerHTML = `
                             <div style="display:flex; gap:6px; align-items:center;">
@@ -5216,8 +5289,8 @@ with tab_bim:
                                 <button onclick="window.__setModo3D('Z')" style="background:${{m==='Z'?'#d97706':'#334155'}}; color:white; border:none; border-radius:6px; padding:7px 11px; cursor:pointer; font-weight:bold;">📏 Editar Altura (Eixo Z)</button>
                             </div>
                             ${{m === 'CHAIN' ? `
-                                <div style="border-left:1px solid #475569; padding-left:10px; display:flex; align-items:center; gap:10px;">
-                                    <span>📍 <b>Último Ponto:</b> <code style="color:#fde047;">${{infoAnt}}</code></span>
+                                <div style="border-left:1px solid #475569; padding-left:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    <span>📍 <b>Ponto Atual:</b> <code style="color:#fde047;">${{infoAnt}}</code></span>
                                     <select id="bim-hud-dn" style="background:#1e293b; color:white; border:1px solid #475569; border-radius:5px; padding:5px;">
                                         <option value="0">Ø Auto ABNT</option>
                                         <option value="20">Ø 20mm</option>
@@ -5228,8 +5301,10 @@ with tab_bim:
                                         <option value="75">Ø 75mm</option>
                                         <option value="100">Ø 100mm</option>
                                     </select>
-                                    <button onclick="window.__novaLinha3D()" title="Atalho: Tecla ESC" style="background:#475569; color:white; border:none; border-radius:6px; padding:7px 10px; cursor:pointer;">✂️ Nova Linha (ESC)</button>
-                                    <button onclick="window.__salvarChain3D()" style="background:${{qtdNovos>0?'#16a34a':'#1e293b'}}; color:white; border:1px solid #22c55e; border-radius:6px; padding:7px 13px; cursor:pointer; font-weight:bold;">💾 Gravar ${{qtdNovos}} Trecho(s) no Projeto</button>
+                                    <button onclick="window.__desfazerUltimoPontoChain3D()" title="Atalho: Tecla Backspace ou Ctrl+Z" style="background:#b45309; color:white; border:none; border-radius:6px; padding:7px 10px; cursor:pointer; font-weight:bold;">↩️ Voltar 1 Ponto (Backspace)</button>
+                                    <button onclick="window.__novaLinha3D()" title="Atalho: Tecla ESC (Solta a ponta atual para começar outro ramal)" style="background:#475569; color:white; border:none; border-radius:6px; padding:7px 10px; cursor:pointer;">✂️ Novo Ramal (ESC)</button>
+                                    <button onclick="window.__cancelarSequenciaAtual3D()" title="Apaga todos os cliques ainda não gravados desta sequência" style="background:#991b1b; color:white; border:none; border-radius:6px; padding:7px 10px; cursor:pointer;">🗑️ Cancelar Linha</button>
+                                    <button onclick="window.__salvarChain3D()" style="background:${{qtdNovos>0?'#16a34a':'#1e293b'}}; color:white; border:1px solid #22c55e; border-radius:6px; padding:7px 13px; cursor:pointer; font-weight:bold;">💾 Gravar ${{qtdNovos}} Trecho(s)</button>
                                 </div>
                             ` : `
                                 <div style="border-left:1px solid #475569; padding-left:10px; color:#fde047;">
@@ -5240,12 +5315,17 @@ with tab_bim:
                     }};
                     parentWin.__atualizarHud3D();
 
-                    // Atalho Tecla ESC para encerrar a linha atual e iniciar outro ramal
-                    if (!parentWin.__escListener3D) {{
-                        parentWin.__escListener3D = true;
+                    // Atalhos de Teclado: ESC (Soltar ponta p/ novo ramal) e Backspace / Ctrl+Z (Voltar 1 ponto clicado errado!)
+                    if (!parentWin.__keyListenerChain3D) {{
+                        parentWin.__keyListenerChain3D = true;
                         parentWin.addEventListener('keydown', function(e) {{
+                            const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+                            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
                             if (e.key === 'Escape') {{
                                 parentWin.__novaLinha3D();
+                            }} else if (e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z')) {{
+                                e.preventDefault();
+                                parentWin.__desfazerUltimoPontoChain3D();
                             }}
                         }});
                     }}
@@ -5316,7 +5396,6 @@ with tab_bim:
                         modalZ.style.display = 'block';
                     }}
 
-                    // 3. Desenha instantaneamente o tubo 3D na tela a cada clique em sequência (sem resetar a câmera!)
                     function processarCliqueNoBloco3D(plot3d, idClicado) {{
                         if (!idClicado || !parentWin.__blocosMeta3D[idClicado]) return;
 
@@ -5332,7 +5411,11 @@ with tab_bim:
                             return;
                         }}
 
-                        if (idAnt === idClicado) return;
+                        // Se clicar novamente no mesmo ponto ativo, desmarca o ponto
+                        if (idAnt === idClicado) {{
+                            parentWin.__desfazerUltimoPontoChain3D();
+                            return;
+                        }}
 
                         const b1 = parentWin.__blocosMeta3D[idAnt];
                         const b2 = parentWin.__blocosMeta3D[idClicado];
@@ -5358,6 +5441,7 @@ with tab_bim:
                                 marker: {{ size: 4, color: '#22c55e' }},
                                 name: `🔗 ${{idAnt}} ➔ ${{idClicado}}`
                             }}]);
+                            parentWin.__qtdTracesTemp3D = (parentWin.__qtdTracesTemp3D || 0) + 1;
                         }}
 
                         parentWin.__paresTraced3D.push(idAnt + '>' + idClicado);
@@ -5366,20 +5450,14 @@ with tab_bim:
                     }}
 
                     function configurarMouse3D() {{
-                        const plots = parentDoc.querySelectorAll('.js-plotly-plot');
-                        let plot3d = null;
-                        for (const p of plots) {{
-                            if (p.querySelector('.gl-container canvas')) {{
-                                plot3d = p;
-                                break;
-                            }}
-                        }}
+                        const plot3d = obterPlot3DAtivo();
                         if (!plot3d) {{
                             setTimeout(configurarMouse3D, 350);
                             return;
                         }}
                         if (plot3d.__mouse3dConfigurado) return;
                         plot3d.__mouse3dConfigurado = true;
+                        parentWin.__qtdTracesTemp3D = 0;
 
                         const glContainer = plot3d.querySelector('.gl-container');
                         let ultimoHoverId = null;
