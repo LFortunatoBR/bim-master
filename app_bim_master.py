@@ -4938,8 +4938,57 @@ with tab_bim:
                             st.toast(f"✂️ Ponto {ponto_errado} removido da linha!", icon="✅")
                             st.rerun()
 
+            # Processa comandos vindos da Interface 3D (Quer seja Edição de Eixo Z ou Sequência de Ligações 3D!)
+            cmd_z3d = st.session_state.get("bridge_z3d_input", "")
+            if cmd_z3d and cmd_z3d != st.session_state.get("ultimo_cmd_z3d_proc", ""):
+                st.session_state["ultimo_cmd_z3d_proc"] = cmd_z3d
+                partes_cmd = str(cmd_z3d).split("|")
+
+                # CASO A: Usuário enviou novas ligações ponto a ponto feitas diretamente no Gráfico 3D (CHAIN|id1>id2,id2>id3|dn|ts)
+                if partes_cmd[0] == "CHAIN" and len(partes_cmd) >= 3:
+                    pares_str = partes_cmd[1].strip()
+                    try:
+                        dn_chain = int(partes_cmd[2].strip())
+                    except Exception:
+                        dn_chain = 0
+
+                    arestas_atuais = list(st.session_state.get("arestas_manuais_bim", []))
+                    ov_dict = st.session_state.get("overrides_topologia_bim", {})
+                    novos_adicionados = 0
+
+                    for par in pares_str.split(","):
+                        if ">" in par:
+                            id_o_c, id_d_c = [p.strip() for p in par.split(">", 1)]
+                            if id_o_c and id_d_c and id_o_c != id_d_c:
+                                arestas_atuais = [a for a in arestas_atuais if not (a.get("origem") == id_o_c and a.get("destino") == id_d_c)]
+                                arestas_atuais.append({"origem": id_o_c, "destino": id_d_c, "dn": dn_chain})
+                                if id_o_c not in ov_dict:
+                                    ov_dict[id_o_c] = {"z_relativo": 0.50, "Conexao_No": "Joelho 90° Soldável / Esgoto", "DN_Manual_mm": dn_chain}
+                                ov_dict[id_o_c]["Conectado_A"] = id_d_c
+                                if dn_chain > 0:
+                                    ov_dict[id_o_c]["DN_Manual_mm"] = dn_chain
+                                novos_adicionados += 1
+
+                    st.session_state["arestas_manuais_bim"] = arestas_atuais
+                    st.session_state.contexto_bim["arestas_manuais_bim"] = arestas_atuais
+                    st.session_state["overrides_topologia_bim"] = ov_dict
+                    st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+
+                    ctx_at = st.session_state.contexto_bim
+                    ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+                    ctx_at['df_eletrica'] = ctx_at['df_elet']
+                    ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                    novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                    st.session_state.linhas_3d_master['hidro'] = novas_hd
+                    st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                        st.session_state.linhas_3d_master.get('eletrica', []), novas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                    )
+                    st.cache_data.clear()
+                    st.toast(f"🔗 {novos_adicionados} novo(s) trecho(s) interligado(s) no 3D com sucesso!", icon="✅")
+                    st.rerun()
+
                 # CASO B: Usuário editou a Altura Z pelo Popup 3D (id|z_val|escopo|ts)
-                elif len(partes_cmd) >= 3:
+                if partes_cmd[0] != "CHAIN" and len(partes_cmd) >= 3:
                     id_alvo_cmd = partes_cmd[0].strip()
                     try:
                         novo_z_cmd = round(float(partes_cmd[1].replace(",", ".")), 3)
