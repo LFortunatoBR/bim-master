@@ -1332,433 +1332,162 @@ def obter_override_topologico_ponto(id_cad, todos_blocos, diam_padrao):
     return bloco_alvo_manual, diam_final, ov.get("Conexao_No", ""), tem_link_manual
 
 
+def eh_ponto_esgoto_bim(b):
+    """Identifica se o bloco pertence à rede de Esgoto/Pluvial (True) ou à rede de Água Fria/Quente (False)."""
+    tb = str(b.get('Tipo_BIM', ''))
+    if tb in [
+        'Caixa de Inspeção / Destino Esgoto', 'Caixa de Gordura',
+        'Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto',
+        'Ramal de Descarga', 'Conexões Tubulação Esgoto', 'Prumada Esgoto'
+    ]:
+        return True
+    if tb in [
+        'Conexões Hidráulicas AF', 'Conexões Hidráulicas AQ',
+        'Tubo de Queda Água Fria', 'Coluna de Subida Água Fria',
+        'Prumada Água Fria', 'Boiler / Aquecedor',
+        'Tubo de Queda Água Quente', 'Coluna de Subida Água Quente',
+        "Caixa d'Água"
+    ]:
+        return False
+
+    texto = normalizar_texto_bim(f"{b.get('Nome_Bloco','')} {b.get('Equipamento','')} {b.get('Layer_CAD','')}")
+    if any(k in texto for k in ["AGUA FRIA", "AGUA QUENTE", "HIDRAULIC", "AF ", "AQ ", "REGISTRO", "CHUVEIRO", "DUCHA", "TORNEIRA", "FILTRO", "GELADEIRA"]):
+        if not any(e in texto for e in ["ESGOTO", "SANIT", "RALO", "GORDURA", "INSPECAO", "DESCARGA"]):
+            return False
+    if any(e in texto for e in ["ESGOTO", "ESG", "SANIT", "RALO", "SIFONAD", "GORDURA", "INSPECAO", "DESCARGA", "VENTILACAO", "VENT", "PLUVIAL", "DRENO", "BACIA", "VASO"]):
+        return True
+
+    if 'bib_hidro' in st.session_state:
+        f_eq = st.session_state.bib_hidro['Equipamento'] == b.get('Equipamento', '')
+        if f_eq.any():
+            ag_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0])
+            es_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0])
+            if ag_mm == 0 and es_mm > 0:
+                return True
+    return False
+
+
 def rotear_hidro(df_bh, ctx):
     """
-    Motor Hidrossanitário 3D/2D (NBR 5626 e NBR 8160) Subordinado à Configuração Manual do Usuário:
-    1. Toda ligação manual definida no Inspetor 2D tem prioridade absoluta (inclusive entre Caixas de Inspeção, Conexões e Caixas);
-    2. O roteamento automático se readequa à árvore manual, evitando ciclos e acumulando Pesos e UHCs a jusante;
-    3. Garante fallback geométrico direto caso o A* encontre obstáculo externo, nunca deixando uma ligação manual sem tubo.
+    Motor Hidrossanitário 100% Controlado pelo Usuário (Zero Caminhos Automáticos):
+    Gera tubulações de Água Fria, Água Quente, Esgoto e Ventilação exclusivamente
+    entre os pontos interligados manualmente pelo usuário no Gráfico 3D ou no Inspetor 2D.
     """
     linhas_processadas = []
     if not df_bh:
         return linhas_processadas
 
-    matriz = [[1 for _ in range(ctx['grid_w'])] for _ in range(ctx['grid_h'])]
-    for (p1_x, p1_y, _), (p2_x, p2_y, _) in ctx['paredes']:
-        x0, y0 = escalar_coord(p1_x - ctx['min_x'] + ctx['offset']), escalar_coord(p1_y - ctx['min_y'] + ctx['offset'])
-        x1, y1 = escalar_coord(p2_x - ctx['min_x'] + ctx['offset']), escalar_coord(p2_y - ctx['min_y'] + ctx['offset'])
-        for px, py in algoritmo_bresenham(x0, y0, x1, y1):
-            if 0 <= py < ctx['grid_h'] and 0 <= px < ctx['grid_w']:
-                matriz[py][px] = 0
-
-    elementos_arq = ctx.get('elementos_arquitetonicos', [])
-    for elem in elementos_arq:
-        if elem.get('Tipo') == 'Pilar/Viga' and 'PILAR' in str(elem.get('ID_CAD', '')).upper():
-            px, py = escalar_coord(elem['x'] - ctx['min_x'] + ctx['offset']), escalar_coord(elem['y'] - ctx['min_y'] + ctx['offset'])
-            bloquear_caixa_estrutural(matriz, px, py, ctx['grid_w'], ctx['grid_h'], raio=2)
-
-    liberar_vaos_esquadrias_na_matriz(matriz, elementos_arq, ctx)
-
-    h_af = ctx.get('h_agua_fria', 0.20)
-    h_aq = ctx.get('h_agua_quente', 1.00)
-    h_viga = ctx.get('altura_viga', 0.40)
-    z_subsolo_af = -0.25
-
-    def rota_a_star_2d(orig, dest, permitir_diagonal=False, forcar_direto_se_falhar=True):
-        ox = max(0, min(ctx['grid_w'] - 1, escalar_coord(orig['x'] - ctx['min_x'] + ctx['offset'])))
-        oy = max(0, min(ctx['grid_h'] - 1, escalar_coord(orig['y'] - ctx['min_y'] + ctx['offset'])))
-        dx = max(0, min(ctx['grid_w'] - 1, escalar_coord(dest['x'] - ctx['min_x'] + ctx['offset'])))
-        dy = max(0, min(ctx['grid_h'] - 1, escalar_coord(dest['y'] - ctx['min_y'] + ctx['offset'])))
-        liberar_caixa(matriz, ox, oy, ctx['grid_w'], ctx['grid_h'], raio=2)
-        liberar_caixa(matriz, dx, dy, ctx['grid_w'], ctx['grid_h'], raio=2)
-        grid = Grid(matrix=matriz)
-        mov = DiagonalMovement.always if permitir_diagonal else DiagonalMovement.never
-        finder = AStarFinder(diagonal_movement=mov)
-        caminho, _ = finder.find_path(grid.node(ox, oy), grid.node(dx, dy), grid)
-        pts = [(desescalar_coord(p.x) + ctx['min_x'] - ctx['offset'], desescalar_coord(p.y) + ctx['min_y'] - ctx['offset']) for p in caminho]
-        if not pts and forcar_direto_se_falhar:
-            return [(orig['x'], orig['y']), (dest['x'], dest['y'])]
-        return pts
-
     mapa_blocos = {str(b['ID_CAD']): b for b in df_bh}
+    elementos_arq = ctx.get('elementos_arquitetonicos', [])
+    h_viga = ctx.get('altura_viga', 0.40)
 
-    # Classificação dos blocos por função BIM
-    caixas_agua = [b for b in df_bh if b['Tipo_BIM'] == "Caixa d'Água"]
-    prumadas_af = [b for b in df_bh if b['Tipo_BIM'] in ['Prumada Água Fria', 'Tubo de Queda Água Fria', 'Coluna de Subida Água Fria']]
-    conexoes_af = [b for b in df_bh if b['Tipo_BIM'] == 'Conexões Hidráulicas AF']
-    boilers = [b for b in df_bh if b['Tipo_BIM'] == 'Boiler / Aquecedor']
-    prumadas_aq = [b for b in df_bh if b['Tipo_BIM'] in ['Tubo de Queda Água Quente', 'Coluna de Subida Água Quente']]
-    conexoes_aq = [b for b in df_bh if b['Tipo_BIM'] == 'Conexões Hidráulicas AQ']
-    prumadas_esg = [b for b in df_bh if b['Tipo_BIM'] == 'Prumada Esgoto']
-    caixas_inspecao = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Inspeção / Destino Esgoto']
-    ramais_esgoto = [b for b in df_bh if b['Tipo_BIM'] == 'Ramal de Esgoto']
-    caixas_sifonadas = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa Sifonada / Ralo Sifonado' or "SIFONAD" in normalizar_texto_bim(b.get('Equipamento', ''))]
-    caixas_gordura = [b for b in df_bh if b['Tipo_BIM'] == 'Caixa de Gordura' or "GORDURA" in normalizar_texto_bim(b.get('Equipamento', ''))]
+    # Consolida todas as conexões manuais: tanto da lista de sequências 3D (arestas_manuais_bim) quanto do Inspetor 2D (overrides_topologia_bim)
+    arestas_lista = list(st.session_state.get("arestas_manuais_bim", ctx.get("arestas_manuais_bim", [])))
+    overrides = st.session_state.get("overrides_topologia_bim", ctx.get("overrides_topologia_bim", {}))
 
-    ids_esgoto_natos = {
-        str(b['ID_CAD']) for b in df_bh
-        if b['Tipo_BIM'] in [
-            'Caixa de Inspeção / Destino Esgoto', 'Caixa de Gordura',
-            'Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto',
-            'Ramal de Descarga', 'Conexões Tubulação Esgoto', 'Prumada Esgoto'
-        ]
-    }
+    pares_vistos = {(str(a.get("origem")), str(a.get("destino"))) for a in arestas_lista if a.get("origem") and a.get("destino")}
+    for id_orig, dados_ov in overrides.items():
+        id_dest = str(dados_ov.get("Conectado_A", "")).strip()
+        if id_dest and id_dest != "Automático (Menor Rota ABNT)" and id_orig != id_dest:
+            if (str(id_orig), id_dest) not in pares_vistos:
+                arestas_lista.append({
+                    "origem": str(id_orig),
+                    "destino": id_dest,
+                    "dn": int(dados_ov.get("DN_Manual_mm", 0))
+                })
+                pares_vistos.add((str(id_orig), id_dest))
 
-    # =========================================================================
-    # ETAPAS 1 A 3: ÁGUA FRIA (RESERVATÓRIO, COLUNAS, CONEXÕES AF E APARELHOS)
-    # =========================================================================
-    peso_total_edificacao = sum(
-        float(st.session_state.bib_hidro.loc[st.session_state.bib_hidro['Equipamento'] == b['Equipamento'], 'Peso'].values[0])
-        for b in df_bh
-        if b['Tipo_BIM'] == 'Aparelho Hidráulico' and (st.session_state.bib_hidro['Equipamento'] == b['Equipamento']).any()
-    )
-    dn_barrilete = max(32, dimensionar_tubo_agua_fria(peso_total_edificacao))
+    # Gera exatamente cada trecho conectado pelo usuário
+    for aresta in arestas_lista:
+        id_o = str(aresta.get("origem", ""))
+        id_d = str(aresta.get("destino", ""))
+        if id_o not in mapa_blocos or id_d not in mapa_blocos or id_o == id_d:
+            continue
 
-    if caixas_agua and prumadas_af:
-        cx_sup = caixas_agua[0]
-        z_fundo_cx = ctx.get('max_z_cobertura', 3.0) + ctx.get('altura_caixa', 1.50)
-        z_barrilete = ctx.get('max_z_cobertura', 3.0) + 0.25
-        for prum in prumadas_af:
-            _, dn_p_af, _, _ = obter_override_topologico_ponto(prum['ID_CAD'], df_bh, dn_barrilete)
-            pts_b = rota_a_star_2d(cx_sup, prum, permitir_diagonal=False)
-            linha_b = [(cx_sup['x'], cx_sup['y'], z_fundo_cx), (cx_sup['x'], cx_sup['y'], z_barrilete)]
-            for px, py in pts_b:
-                linha_b.append((px, py, z_barrilete))
-            linha_b.extend([(prum['x'], prum['y'], z_barrilete), (prum['x'], prum['y'], 0.0)])
-            linhas_processadas.append({
-                'pontos': linha_b, 'cor': '#1d4ed8',
-                'tipo': f"Barrilete / Coluna AF ({prum['ID_CAD']})", 'diametro': dn_p_af
-            })
+        b_orig = mapa_blocos[id_o]
+        b_dest = mapa_blocos[id_d]
 
-    # Grafo de Água Fria (Aparelhos com Agua_mm > 0 + Conexões AF) subordinado ao Manual
-    nos_af = []
-    for b in df_bh:
-        if b['Tipo_BIM'] == 'Conexões Hidráulicas AF':
-            nos_af.append(b)
-        elif b['Tipo_BIM'] == 'Aparelho Hidráulico':
-            f_eq = st.session_state.bib_hidro['Equipamento'] == b['Equipamento']
-            af_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0]) if f_eq.any() else 0
-            alvo_m, _, _, tem_m = obter_override_topologico_ponto(b['ID_CAD'], df_bh, max(20, af_mm))
-            # Se tem ligação manual para um nó de esgoto, a ligação manual será tratada na Etapa 5 (Esgoto)
-            if af_mm > 0:
-                nos_af.append(b)
+        x1, y1 = float(b_orig['x']), float(b_orig['y'])
+        x2, y2 = float(b_dest['x']), float(b_dest['y'])
+        z1 = float(b_orig.get('z_base', 0.0)) + float(b_orig.get('z_relativo', 0.20))
+        z2 = float(b_dest.get('z_base', 0.0)) + float(b_dest.get('z_relativo', 0.20))
 
-    alvos_base_af = prumadas_af if prumadas_af else caixas_agua
-    for no_a in nos_af:
-        f_eq = st.session_state.bib_hidro['Equipamento'] == no_a['Equipamento']
-        af_mm_base = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0]) if f_eq.any() else 25
-        af_mm_base = max(20, af_mm_base)
+        eh_esg = eh_ponto_esgoto_bim(b_orig) or eh_ponto_esgoto_bim(b_dest)
+        txt_combinado = normalizar_texto_bim(f"{b_orig.get('Nome_Bloco','')} {b_orig.get('Equipamento','')} {b_orig.get('Tipo_BIM','')} {b_dest.get('Nome_Bloco','')} {b_dest.get('Tipo_BIM','')}")
+        eh_vent = "VENTILACAO" in txt_combinado or "VENT" in txt_combinado
+        eh_aq = ("QUENTE" in txt_combinado or "BOILER" in txt_combinado or "AQUECEDOR" in txt_combinado or "AQ" in txt_combinado.split()) and not eh_esg
 
-        alvo_man_af, dn_af_uso, peca_man_af, tem_man_af = obter_override_topologico_ponto(no_a['ID_CAD'], df_bh, af_mm_base)
-        alvo_af = None
-        tag_manual_af = ""
+        # Determina o Diâmetro Nominal (DN)
+        dn_manual = int(aresta.get("dn", 0))
+        if dn_manual <= 0:
+            dn_ov = int(overrides.get(id_o, {}).get("DN_Manual_mm", 0))
+            dn_manual = dn_ov
 
-        # Só usa o alvo manual na Água Fria se o alvo manual NÃO for uma peça exclusiva de esgoto
-        if tem_man_af and str(alvo_man_af['ID_CAD']) not in ids_esgoto_natos:
-            alvo_af = alvo_man_af
-            tag_manual_af = " [MANUAL]"
+        f_eq = st.session_state.bib_hidro['Equipamento'] == b_orig.get('Equipamento', '')
+        uhc_val = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0]) if f_eq.any() else 2.0
+
+        if dn_manual > 0:
+            diam_uso = dn_manual
+        elif eh_vent:
+            diam_uso = 50
+        elif eh_esg:
+            esg_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0]) if f_eq.any() else 50
+            diam_uso = max(40, esg_mm)
+        elif eh_aq:
+            aq_mm = int(st.session_state.bib_hidro.loc[f_eq, 'AQ_mm'].values[0]) if (f_eq.any() and 'AQ_mm' in st.session_state.bib_hidro.columns) else 22
+            diam_uso = max(22, aq_mm)
         else:
-            # Roteamento Automático de Água Fria (conecta na conexão AF mais próxima ou na prumada/caixa d'água)
-            con_andar = [c for c in conexoes_af if str(c['ID_CAD']) != str(no_a['ID_CAD']) and abs(c['z_base'] - no_a['z_base']) < 0.6]
-            if no_a['Tipo_BIM'] == 'Aparelho Hidráulico' and con_andar:
-                cand_af = con_andar + alvos_base_af
-            else:
-                cand_af = [a for a in alvos_base_af if str(a['ID_CAD']) != str(no_a['ID_CAD'])]
-            if cand_af:
-                alvo_af = min(cand_af, key=lambda p: dist_2d((no_a['x'], no_a['y']), (p['x'], p['y'])))
+            af_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Agua_mm'].values[0]) if f_eq.any() else 25
+            diam_uso = max(20, af_mm)
 
-        if alvo_af is not None and str(alvo_af['ID_CAD']) != str(no_a['ID_CAD']):
-            pts_2d_af = rota_a_star_2d(no_a, alvo_af, permitir_diagonal=False)
-            z_orig = no_a['z_base'] + float(no_a.get('z_relativo', h_af))
-            z_dest = alvo_af['z_base'] + float(alvo_af.get('z_relativo', h_af))
-
-            # Se a origem ou o destino for uma Conexão AF (Curva, Joelho, Tê, Registro) ou estiverem na mesma cota,
-            # a tubulação corre na altura real do bloco editado em vez de cair para 0.20m!
-            if abs(z_orig - z_dest) <= 0.25:
-                z_cam = z_orig
-            elif no_a['Tipo_BIM'] == 'Conexões Hidráulicas AF':
-                z_cam = z_orig
-            elif alvo_af['Tipo_BIM'] == 'Conexões Hidráulicas AF':
-                z_cam = z_dest
-            else:
-                z_cam = no_a['z_base'] + h_af
-
-            linha_af = [(no_a['x'], no_a['y'], z_orig), (no_a['x'], no_a['y'], z_cam)]
-            for px, py in pts_2d_af:
-                linha_af.append((px, py, z_cam))
-            linha_af.extend([(alvo_af['x'], alvo_af['y'], z_cam), (alvo_af['x'], alvo_af['y'], z_dest)])
-            linha_af = aplicar_desvios_estruturais_e_vaos_3d(linha_af, elementos_arq, no_a['z_base'], no_a.get('pe_direito', 3.0), h_viga)
-            j90_c, j45_c, tes_c = contar_conexoes_na_rota(linha_af)
+        # Constrói a geometria 3D entre o Ponto A e o Ponto B clicados
+        dist_xy = math.hypot(x2 - x1, y2 - y1)
+        if eh_esg or eh_vent:
+            # No esgoto/ventilação, liga diretamente respeitando as cotas Z1 e Z2 dos blocos clicados
+            decliv = 0.01 if diam_uso >= 100 else 0.02
+            z2_final = z2 if abs(z1 - z2) > 0.005 else round(z1 - dist_xy * decliv, 4)
+            linha_3d = [(x1, y1, round(z1, 4)), (x2, y2, round(z2_final, 4))]
+            cor_t = '#2ca02c' if eh_vent else '#7c2d12'
+            tipo_t = f"Ventilação Sanitária ({id_o} ➔ {id_d})" if eh_vent else f"Esgoto Sanitário ({id_o} ➔ {id_d})"
             linhas_processadas.append({
-                'pontos': linha_af, 'cor': '#0284c7',
-                'tipo': f"Água Fria ({no_a['Nome_Bloco']} -> {alvo_af['Nome_Bloco']}){tag_manual_af}",
-                'diametro': dn_af_uso, 'id_ap': no_a['ID_CAD'],
-                'comp_acumulado_total_m': calcular_comprimento_rota(linha_af),
-                'j90_acumulados': j90_c, 'tes_acumulados': max(1, tes_c)
+                'pontos': linha_3d,
+                'cor': cor_t,
+                'tipo': tipo_t,
+                'diametro': diam_uso,
+                'declividade_pct': decliv * 100,
+                'equipamento': b_orig.get('Equipamento', ''),
+                'id_ap': id_o,
+                'prumada_ref': id_d,
+                'uhc_acumulado_no': uhc_val,
+                'manual': True
             })
-
-    # =========================================================================
-    # ETAPA 4: ÁGUA QUENTE (CPVC / PPR - BOILER, CONEXÕES AQ E APARELHOS AQ)
-    # =========================================================================
-    alvos_base_aq = boilers + prumadas_aq + conexoes_aq
-    for b_aq in df_bh:
-        if b_aq['Tipo_BIM'] not in ['Aparelho Hidráulico', 'Conexões Hidráulicas AQ']:
-            continue
-        f_eq = st.session_state.bib_hidro['Equipamento'] == b_aq['Equipamento']
-        aq_mm = int(st.session_state.bib_hidro.loc[f_eq, 'AQ_mm'].values[0]) if (f_eq.any() and 'AQ_mm' in st.session_state.bib_hidro.columns) else 0
-        if aq_mm <= 0 and b_aq['Tipo_BIM'] != 'Conexões Hidráulicas AQ':
-            continue
-        aq_mm = max(22, aq_mm)
-        alvo_man_aq, dn_aq_uso, _, tem_man_aq = obter_override_topologico_ponto(b_aq['ID_CAD'], df_bh, aq_mm)
-        alvo_aq = alvo_man_aq if (tem_man_aq and str(alvo_man_aq['ID_CAD']) not in ids_esgoto_natos) else None
-        if alvo_aq is None:
-            cand_aq = [a for a in alvos_base_aq if str(a['ID_CAD']) != str(b_aq['ID_CAD'])]
-            if cand_aq:
-                alvo_aq = min(cand_aq, key=lambda p: dist_2d((b_aq['x'], b_aq['y']), (p['x'], p['y'])))
-        if alvo_aq is not None:
-            pts_2d_aq = rota_a_star_2d(b_aq, alvo_aq, permitir_diagonal=False)
-            z_cam_aq = b_aq['z_base'] + h_aq
-            linha_aq = [(b_aq['x'], b_aq['y'], b_aq['z_base'] + float(b_aq.get('z_relativo', h_aq))), (b_aq['x'], b_aq['y'], z_cam_aq)]
-            for px, py in pts_2d_aq:
-                linha_aq.append((px, py, z_cam_aq))
-            linha_aq.extend([(alvo_aq['x'], alvo_aq['y'], z_cam_aq), (alvo_aq['x'], alvo_aq['y'], alvo_aq['z_base'] + float(alvo_aq.get('z_relativo', h_aq)))])
-            linha_aq = aplicar_desvios_estruturais_e_vaos_3d(linha_aq, elementos_arq, b_aq['z_base'], b_aq.get('pe_direito', 3.0), h_viga)
-            linhas_processadas.append({
-                'pontos': linha_aq, 'cor': '#dc2626',
-                'tipo': f"Água Quente ({b_aq['Nome_Bloco']} -> {alvo_aq['Nome_Bloco']})",
-                'diametro': dn_aq_uso, 'id_ap': b_aq['ID_CAD']
-            })
-
-    # =========================================================================
-    # ETAPA 5: ÁRVORE DE ESGOTO SANITÁRIO SUBORDINADA À TOPOLOGIA MANUAL (NBR 8160)
-    # =========================================================================
-    # 5.0. Tubos de Queda verticais e Colunas de Ventilação
-    if prumadas_esg:
-        z_topo_vent = ctx.get('max_z_cobertura', 3.0) + 0.30
-        for prum_e in prumadas_esg:
-            linhas_processadas.append({
-                'pontos': [(prum_e['x'], prum_e['y'], z_topo_vent), (prum_e['x'], prum_e['y'], z_subsolo_af - 0.10)],
-                'cor': '#5c3a21', 'tipo': f"Tubo de Queda Esgoto ({prum_e['ID_CAD']})", 'diametro': 100
-            })
-            linhas_processadas.append({
-                'pontos': [(prum_e['x'] + 0.15, prum_e['y'], z_topo_vent), (prum_e['x'] + 0.15, prum_e['y'], 0.0)],
-                'cor': '#2ca02c', 'tipo': f"Coluna de Ventilação ({prum_e['ID_CAD']})", 'diametro': 50
-            })
-
-    # 5.1. Coleta TODOS os nós que participam do esgoto (Aparelhos c/ esgoto, Conexões Esgoto, Ralos Sifonados, Caixas de Gordura, Ramais, TQs e Caixas de Inspeção)
-    nos_esgoto = []
-    uhc_proprio_no = {}
-    dn_min_no = {}
-
-    for b in df_bh:
-        id_b = str(b['ID_CAD'])
-        tb = b['Tipo_BIM']
-        f_eq = st.session_state.bib_hidro['Equipamento'] == b['Equipamento']
-        uhc_val = float(st.session_state.bib_hidro.loc[f_eq, 'UHC'].values[0]) if f_eq.any() else 0.0
-        esg_mm = int(st.session_state.bib_hidro.loc[f_eq, 'Esgoto_mm'].values[0]) if f_eq.any() else 0
-        alvo_m, dn_m, _, tem_m = obter_override_topologico_ponto(id_b, df_bh, max(40, esg_mm))
-
-        participa_esg = False
-        if tb in [
-            'Caixa de Inspeção / Destino Esgoto', 'Caixa de Gordura',
-            'Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto',
-            'Ramal de Descarga', 'Conexões Tubulação Esgoto', 'Prumada Esgoto'
-        ]:
-            participa_esg = True
-        elif tb == 'Aparelho Hidráulico' and (esg_mm > 0 or (tem_m and str(alvo_m['ID_CAD']) in ids_esgoto_natos)):
-            participa_esg = True
-
-        if participa_esg:
-            nos_esgoto.append(b)
-            # Apenas aparelhos geram UHC na origem; caixas/conexões somam o UHC que recebem a montante
-            uhc_proprio_no[id_b] = uhc_val if tb in ['Aparelho Hidráulico', 'Ramal de Descarga'] else 0.0
-            if tb in ['Caixa de Inspeção / Destino Esgoto', 'Prumada Esgoto']:
-                dn_min_no[id_b] = max(100, esg_mm)
-            elif tb == 'Caixa de Gordura':
-                dn_min_no[id_b] = max(75, esg_mm)
-            elif tb in ['Caixa Sifonada / Ralo Sifonado', 'Ramal de Esgoto']:
-                dn_min_no[id_b] = max(50, esg_mm)
+        else:
+            # Na Água Fria / Água Quente, respeita prumadas verticais e trechos ortogonais entre as conexões clicadas
+            if dist_xy < 0.06:
+                linha_3d = [(x1, y1, round(z1, 4)), (x2, y2, round(z2, 4))]
+            elif abs(x1 - x2) < 0.08 or abs(y1 - y2) < 0.08:
+                if abs(z1 - z2) < 0.04:
+                    linha_3d = [(x1, y1, round(z1, 4)), (x2, y2, round(z2, 4))]
+                else:
+                    linha_3d = [(x1, y1, round(z1, 4)), (x2, y2, round(z1, 4)), (x2, y2, round(z2, 4))]
             else:
-                dn_min_no[id_b] = max(40, esg_mm)
+                linha_3d = [(x1, y1, round(z1, 4)), (x2, y1, round(z1, 4)), (x2, y2, round(z1, 4)), (x2, y2, round(z2, 4))]
 
-    # 5.2. PASSO A: Registra PRIMEIRO todas as Ligações Manuais definidas pelo usuário no Inspetor 2D!
-    pai_esgoto = {}       # {id_origem: bloco_destino}
-    eh_link_manual = {}   # {id_origem: True/False}
-
-    for b in nos_esgoto:
-        id_b = str(b['ID_CAD'])
-        alvo_m, _, _, tem_m = obter_override_topologico_ponto(id_b, df_bh, dn_min_no.get(id_b, 50))
-        if tem_m and alvo_m is not None:
-            pai_esgoto[id_b] = alvo_m
-            eh_link_manual[id_b] = True
-
-    def forma_ciclo_esgoto(id_origem, id_candidato_destino):
-        """Impede que uma ligação automática aponte para um nó que já deságua em id_origem (evita loop infinito)."""
-        atual = str(id_candidato_destino)
-        visitados = set()
-        while atual in pai_esgoto and pai_esgoto[atual] is not None:
-            if atual == str(id_origem) or atual in visitados:
-                return True
-            visitados.add(atual)
-            atual = str(pai_esgoto[atual]['ID_CAD'])
-        return atual == str(id_origem)
-
-    # Nós que já possuem rota manual configurada pelo usuário (atuam como atratores/coletores ativos!)
-    ids_manualmente_conectados = set(pai_esgoto.keys())
-
-    # 5.3. PASSO B: Roteamento Automático Subordinado (Apenas para os nós que NÃO têm ligação manual)
-    conexoes_esg_lista = [b for b in nos_esgoto if b['Tipo_BIM'] == 'Conexões Tubulação Esgoto']
-    alvos_finais_esg = prumadas_esg + caixas_inspecao
-
-    for b in nos_esgoto:
-        id_b = str(b['ID_CAD'])
-        if id_b in pai_esgoto:
-            # JÁ CONFIGURADO MANUALMENTE PELO USUÁRIO -> Intocável!
-            continue
-
-        tb = b['Tipo_BIM']
-        eq_norm = normalizar_texto_bim(b.get('Equipamento', ''))
-
-        # Caixa de Inspeção sem ligação manual é o destino final (não cria saída automática a menos que o usuário mande)
-        if tb == 'Caixa de Inspeção / Destino Esgoto':
-            continue
-
-        opcoes_cand = []
-        if tb == 'Prumada Esgoto':
-            opcoes_cand = [ci for ci in caixas_inspecao if not forma_ciclo_esgoto(id_b, ci['ID_CAD'])]
-
-        elif tb == 'Caixa de Gordura':
-            # Caixa de Gordura vai para a Caixa de Inspeção mais próxima (ou conexão de 75/100mm que leve à CI)
-            con_prim = [c for c in conexoes_esg_lista if dn_min_no.get(str(c['ID_CAD']), 40) >= 75 and str(c['ID_CAD']) in ids_manualmente_conectados]
-            opcoes_cand = caixas_inspecao + con_prim + prumadas_esg
-
-        elif tb == 'Caixa Sifonada / Ralo Sifonado':
-            # Saída de Ralo Sifonado (DN 50/75mm) procura Conexões de Esgoto (>=50mm), Ramais de Esgoto, TQ ou Caixa de Inspeção
-            con_prim = [
-                c for c in conexoes_esg_lista
-                if dn_min_no.get(str(c['ID_CAD']), 40) >= 50
-                and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 5.0
-            ]
-            opcoes_cand = con_prim + ramais_esgoto + alvos_finais_esg
-
-        elif tb in ['Ramal de Esgoto', 'Conexões Tubulação Esgoto']:
-            dn_atual = dn_min_no.get(id_b, 50)
-            if dn_atual <= 40 and caixas_sifonadas:
-                # Conexão secundária de 40mm procura Ralo Sifonado próximo
-                opcoes_cand = [cs for cs in caixas_sifonadas if dist_2d((b['x'], b['y']), (cs['x'], cs['y'])) <= 6.0]
-            if not opcoes_cand:
-                # Procura outra conexão já configurada manualmente mais próxima do destino ou vai para Ramal/TQ/CI
-                con_jusante = [
-                    c for c in conexoes_esg_lista
-                    if str(c['ID_CAD']) != id_b
-                    and dn_min_no.get(str(c['ID_CAD']), 40) >= dn_atual
-                    and str(c['ID_CAD']) in ids_manualmente_conectados
-                    and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 4.5
-                ]
-                opcoes_cand = con_jusante + ramais_esgoto + alvos_finais_esg
-
-        elif tb in ['Aparelho Hidráulico', 'Ramal de Descarga']:
-            eh_bacia = ("BACIA" in eq_norm or "VASO" in eq_norm or "SANITARIO" in eq_norm or dn_min_no.get(id_b, 40) >= 100)
-            eh_cozinha = any(k in eq_norm for k in ["PIA", "COZINHA", "LAVA LOUCA", "GOURMET"])
-
-            if eh_cozinha and caixas_gordura:
-                opcoes_cand = caixas_gordura
-                dn_min_no[id_b] = max(50, dn_min_no.get(id_b, 50))
-            elif not eh_bacia and not eh_cozinha and caixas_sifonadas:
-                cs_prox = [cs for cs in caixas_sifonadas if abs(cs['z_base'] - b['z_base']) < 0.6 and dist_2d((b['x'], b['y']), (cs['x'], cs['y'])) <= 6.5]
-                opcoes_cand = cs_prox if cs_prox else (ramais_esgoto + alvos_finais_esg)
-            else:
-                # Bacia sanitária procura conexão de 100mm próxima (ex: Tê 100mm), Ramal de Esgoto, TQ ou Caixa de Inspeção
-                con_100 = [
-                    c for c in conexoes_esg_lista
-                    if dn_min_no.get(str(c['ID_CAD']), 40) >= 100
-                    and dist_2d((b['x'], b['y']), (c['x'], c['y'])) <= 3.5
-                ]
-                opcoes_cand = con_100 + ramais_esgoto + alvos_finais_esg
-
-        # Filtra candidatos válidos que não sejam o próprio nó e não gerem loop fechado
-        opcoes_validas = [
-            cand for cand in opcoes_cand
-            if str(cand['ID_CAD']) != id_b and not forma_ciclo_esgoto(id_b, cand['ID_CAD'])
-        ]
-        if opcoes_validas:
-            # Prioriza nós que você já conectou manualmente se estiverem próximos, ou o mais próximo geometricamente
-            escolhido = min(
-                opcoes_validas,
-                key=lambda c: dist_2d((b['x'], b['y']), (c['x'], c['y'])) * (0.80 if str(c['ID_CAD']) in ids_manualmente_conectados else 1.0)
-            )
-            pai_esgoto[id_b] = escolhido
-            eh_link_manual[id_b] = False
-
-    # 5.4. PASSO C: Propagação Topológica de UHCs (Montante -> Jusante) pela Árvore Manual + Automática
-    uhc_acumulado_no = {str(b['ID_CAD']): uhc_proprio_no.get(str(b['ID_CAD']), 0.0) for b in nos_esgoto}
-    for b in nos_esgoto:
-        id_orig = str(b['ID_CAD'])
-        uhc_add = uhc_proprio_no.get(id_orig, 0.0)
-        if b['Tipo_BIM'] == 'Caixa Sifonada / Ralo Sifonado' and uhc_add == 0.0:
-            uhc_add = 2.0
-        elif b['Tipo_BIM'] == 'Caixa de Gordura' and uhc_add == 0.0:
-            uhc_add = 6.0
-
-        if uhc_add > 0:
-            atual = id_orig
-            visitados = set()
-            while atual in pai_esgoto and pai_esgoto[atual] is not None:
-                prox_id = str(pai_esgoto[atual]['ID_CAD'])
-                if prox_id in visitados:
-                    break
-                visitados.add(prox_id)
-                uhc_acumulado_no[prox_id] = uhc_acumulado_no.get(prox_id, 0.0) + uhc_add
-                atual = prox_id
-
-    # 5.5. PASSO D: Geração das Tubulações 3D/2D de Esgoto com Respeito Estrito ao Diâmetro e Destino Manual
-    for b in nos_esgoto:
-        id_b = str(b['ID_CAD'])
-        if id_b not in pai_esgoto or pai_esgoto[id_b] is None:
-            continue
-
-        alvo_esg = pai_esgoto[id_b]
-        foi_manual = eh_link_manual.get(id_b, False)
-        uhc_trecho = max(2.0, uhc_acumulado_no.get(id_b, 2.0))
-        dn_normativo = max(dn_min_no.get(id_b, 40), dimensionar_tubo_esgoto(uhc_trecho))
-
-        # Se o usuário definiu DN_Manual_mm > 0 no Inspetor (ex: 100mm), usa o valor do usuário!
-        _, diam_final_esg, peca_no_esg, _ = obter_override_topologico_ponto(id_b, df_bh, dn_normativo)
-        declividade_esg = 0.01 if diam_final_esg >= 100 else 0.02
-
-        # Para ligações entre Caixas de Inspeção ou ligações manuais diretas, permite diagonal 45° e fallback direto
-        pts_2d_esg = rota_a_star_2d(b, alvo_esg, permitir_diagonal=True, forcar_direto_se_falhar=True)
-        if pts_2d_esg:
-            tb = b['Tipo_BIM']
-            z_ini = b['z_base'] + float(b.get('z_relativo', -0.15))
-            if z_ini >= b['z_base']:
-                z_ini_tubo = b['z_base'] - (0.30 if tb == 'Caixa de Gordura' else (0.14 if 'Sifonad' in tb else 0.12))
-                linha_esg = [(b['x'], b['y'], z_ini), (b['x'], b['y'], z_ini_tubo)]
-            else:
-                z_ini_tubo = z_ini
-                linha_esg = [(b['x'], b['y'], z_ini_tubo)]
-
-            dist_ac = 0.0
-            pt_ant = (b['x'], b['y'])
-            for px_e, py_e in pts_2d_esg:
-                dist_ac += dist_2d(pt_ant, (px_e, py_e))
-                linha_esg.append((px_e, py_e, round(z_ini_tubo - (dist_ac * declividade_esg), 4)))
-                pt_ant = (px_e, py_e)
-            linha_esg.append((alvo_esg['x'], alvo_esg['y'], round(z_ini_tubo - (dist_ac * declividade_esg), 4)))
-
-            cor_esg = '#2563eb' if foi_manual else ('#3d2514' if tb == 'Caixa de Inspeção / Destino Esgoto' else ('#5c3a21' if tb == 'Caixa de Gordura' else ('#8b4513' if 'Sifonad' in tb else 'brown')))
-            tag_m = " [MANUAL]" if foi_manual else ""
+            linha_3d = aplicar_desvios_estruturais_e_vaos_3d(linha_3d, elementos_arq, b_orig.get('z_base', 0.0), b_orig.get('pe_direito', 3.0), h_viga)
+            j90_c, j45_c, tes_c = contar_conexoes_na_rota(linha_3d)
+            cor_t = '#dc2626' if eh_aq else '#0284c7'
+            tipo_t = f"{'Água Quente' if eh_aq else 'Água Fria'} ({id_o} ➔ {id_d})"
             linhas_processadas.append({
-                'pontos': linha_esg,
-                'cor': '#7c2d12' if foi_manual else cor_esg,
-                'tipo': f"Esgoto ({b['Nome_Bloco']} -> {alvo_esg['Nome_Bloco']}){tag_m}",
-                'diametro': diam_final_esg,
-                'declividade_pct': declividade_esg * 100,
-                'equipamento': b.get('Equipamento', ''),
-                'id_ap': b['ID_CAD'],
-                'prumada_ref': alvo_esg['ID_CAD'],
-                'uhc_acumulado_no': uhc_trecho,
-                'manual': foi_manual
+                'pontos': linha_3d,
+                'cor': cor_t,
+                'tipo': tipo_t,
+                'diametro': diam_uso,
+                'id_ap': id_o,
+                'prumada_ref': id_d,
+                'comp_acumulado_total_m': calcular_comprimento_rota(linha_3d),
+                'j90_acumulados': j90_c,
+                'tes_acumulados': max(1, tes_c),
+                'manual': True
             })
 
     return linhas_processadas
@@ -5099,21 +4828,99 @@ with tab_bim:
                     name='🧱 Pilares / Vigas (3D)', legendgroup='pilares'
                 ))
 
-            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM CLIQUE ESQUERDO (POPUP EIXO Z) E SCROLL CENTRAL (ORBITAR)
+            # 3. REDES ELÉTRICAS E HIDROSSANITÁRIAS COM SEPARAÇÃO ÁGUA/ESGOTO E TRAÇADO PONTO A PONTO NO 3D
             import streamlit.components.v1 as components
 
-            # Processa imediatamente qualquer alteração de Altura Z enviada pelo Popup Flutuante 3D
+            if "arestas_manuais_bim" not in st.session_state:
+                st.session_state["arestas_manuais_bim"] = st.session_state.contexto_bim.get("arestas_manuais_bim", [])
+
+            # Remove automaticamente tubulações antigas que não tenham sido traçadas manualmente pelo usuário
+            if st.session_state.linhas_3d_master.get('hidro'):
+                apenas_manuais = [l for l in st.session_state.linhas_3d_master['hidro'] if l.get('manual') is True]
+                if len(apenas_manuais) != len(st.session_state.linhas_3d_master['hidro']):
+                    st.session_state.linhas_3d_master['hidro'] = apenas_manuais
+
+            # Barra de controle rápido das linhas traçadas manualmente no 3D
+            qtd_trechos_manuais = len(st.session_state.get("arestas_manuais_bim", []))
+            c_m3d_1, c_m3d_2, c_m3d_3 = st.columns([2.6, 1.2, 1.2])
+            c_m3d_1.info(
+                f"🔗 **Traçado Manual 3D Ativo:** `{qtd_trechos_manuais}` trecho(s) conectado(s). "
+                "Clique nos pontos em sequência dentro do gráfico 3D para interligá-los do início ao fim da linha."
+            )
+            if c_m3d_2.button("↩️ Desfazer Último Trecho 3D", use_container_width=True, disabled=(qtd_trechos_manuais == 0)):
+                st.session_state["arestas_manuais_bim"].pop()
+                st.session_state.contexto_bim["arestas_manuais_bim"] = st.session_state["arestas_manuais_bim"]
+                ctx_at = st.session_state.contexto_bim
+                ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                st.session_state.linhas_3d_master['hidro'] = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                st.rerun()
+
+            if c_m3d_3.button("🧹 Limpar Todas as Ligações", use_container_width=True):
+                st.session_state["arestas_manuais_bim"] = []
+                st.session_state.contexto_bim["arestas_manuais_bim"] = []
+                for k_ov in list(st.session_state.get("overrides_topologia_bim", {}).keys()):
+                    st.session_state["overrides_topologia_bim"][k_ov]["Conectado_A"] = "Automático (Menor Rota ABNT)"
+                st.session_state.linhas_3d_master['hidro'] = []
+                st.toast("🧹 Todas as tubulações foram limpas! Clique nos pontos no 3D para traçar do zero.", icon="✨")
+                st.rerun()
+
+            # Processa comandos vindos da Interface 3D (Quer seja Edição de Eixo Z ou Sequência de Ligações 3D!)
             cmd_z3d = st.session_state.get("bridge_z3d_input", "")
             if cmd_z3d and cmd_z3d != st.session_state.get("ultimo_cmd_z3d_proc", ""):
                 st.session_state["ultimo_cmd_z3d_proc"] = cmd_z3d
                 partes_cmd = str(cmd_z3d).split("|")
-                if len(partes_cmd) >= 3:
+
+                # CASO A: Usuário enviou novas ligações ponto a ponto feitas diretamente no Gráfico 3D (CHAIN|id1>id2,id2>id3|dn|ts)
+                if partes_cmd[0] == "CHAIN" and len(partes_cmd) >= 3:
+                    pares_str = partes_cmd[1].strip()
+                    try:
+                        dn_chain = int(partes_cmd[2].strip())
+                    except Exception:
+                        dn_chain = 0
+
+                    arestas_atuais = list(st.session_state.get("arestas_manuais_bim", []))
+                    ov_dict = st.session_state.get("overrides_topologia_bim", {})
+                    novos_adicionados = 0
+
+                    for par in pares_str.split(","):
+                        if ">" in par:
+                            id_o_c, id_d_c = [p.strip() for p in par.split(">", 1)]
+                            if id_o_c and id_d_c and id_o_c != id_d_c:
+                                arestas_atuais = [a for a in arestas_atuais if not (a.get("origem") == id_o_c and a.get("destino") == id_d_c)]
+                                arestas_atuais.append({"origem": id_o_c, "destino": id_d_c, "dn": dn_chain})
+                                if id_o_c not in ov_dict:
+                                    ov_dict[id_o_c] = {"z_relativo": 0.50, "Conexao_No": "Joelho 90° Soldável / Esgoto", "DN_Manual_mm": dn_chain}
+                                ov_dict[id_o_c]["Conectado_A"] = id_d_c
+                                if dn_chain > 0:
+                                    ov_dict[id_o_c]["DN_Manual_mm"] = dn_chain
+                                novos_adicionados += 1
+
+                    st.session_state["arestas_manuais_bim"] = arestas_atuais
+                    st.session_state.contexto_bim["arestas_manuais_bim"] = arestas_atuais
+                    st.session_state["overrides_topologia_bim"] = ov_dict
+                    st.session_state.contexto_bim["overrides_topologia_bim"] = ov_dict
+
+                    ctx_at = st.session_state.contexto_bim
+                    ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
+                    ctx_at['df_eletrica'] = ctx_at['df_elet']
+                    ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
+                    novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at)
+                    st.session_state.linhas_3d_master['hidro'] = novas_hd
+                    st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
+                        st.session_state.linhas_3d_master.get('eletrica', []), novas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
+                    )
+                    st.cache_data.clear()
+                    st.toast(f"🔗 {novos_adicionados} novo(s) trecho(s) interligado(s) no 3D com sucesso!", icon="✅")
+                    st.rerun()
+
+                # CASO B: Usuário editou a Altura Z pelo Popup 3D (id|z_val|escopo|ts)
+                elif len(partes_cmd) >= 3:
                     id_alvo_cmd = partes_cmd[0].strip()
                     try:
                         novo_z_cmd = round(float(partes_cmd[1].replace(",", ".")), 3)
                     except Exception:
                         novo_z_cmd = 0.50
-                    escopo_cmd = partes_cmd[2].strip()  # 'PONTO', 'BLOCO' ou 'EQUIP'
+                    escopo_cmd = partes_cmd[2].strip()
 
                     todos_tmp = (df_editado_elet.to_dict('records') if not df_editado_elet.empty else []) + (df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else [])
                     blk_ref_cmd = next((b for b in todos_tmp if str(b.get('ID_CAD')) == id_alvo_cmd), None)
@@ -5131,7 +4938,6 @@ with tab_bim:
                         else:
                             ids_afetar = {id_alvo_cmd}
 
-                        # 1. Atualiza DataFrames da Aba 1
                         if not df_editado_elet.empty:
                             m_el = df_editado_elet['ID_CAD'].astype(str).isin(ids_afetar)
                             if m_el.any():
@@ -5141,14 +4947,12 @@ with tab_bim:
                             if m_hd.any():
                                 df_editado_hidro.loc[m_hd, 'z_relativo'] = novo_z_cmd
 
-                        # 2. Atualiza Memória Smart Sync por coordenada
                         salvar_edicoes_na_memoria(df_editado_elet, df_editado_hidro)
 
-                        # 3. Atualiza Overrides Topológicos (Gráfico 2D e Inspetor 2D)
                         ov_dict = st.session_state.get("overrides_topologia_bim", {})
                         for id_af in ids_afetar:
                             if id_af not in ov_dict:
-                                ov_dict[id_af] = {"Conectado_A": "Automático (Menor Rota ABNT)", "Conexao_No": "Joelho 90° Soldável / Tê", "DN_Manual_mm": 0}
+                                ov_dict[id_af] = {"Conectado_A": "Automático (Menor Rota ABNT)", "Conexao_No": "Joelho 90° Soldável / Esgoto", "DN_Manual_mm": 0}
                             ov_dict[id_af]["z_relativo"] = novo_z_cmd
                             st.session_state[f"insp_z_{id_af}"] = novo_z_cmd
                         st.session_state["overrides_topologia_bim"] = ov_dict
@@ -5156,38 +4960,15 @@ with tab_bim:
                         st.session_state["no_selecionado_bim"] = id_alvo_cmd
                         st.session_state["sel_insp_no"] = id_alvo_cmd
 
-                        # 4. Reprocessa Rotas 3D e 2D imediatamente com a nova altura
                         ctx_at = st.session_state.contexto_bim
                         ctx_at['df_elet'] = df_editado_elet.to_dict('records') if not df_editado_elet.empty else []
                         ctx_at['df_eletrica'] = ctx_at['df_elet']
                         ctx_at['df_hidro'] = df_editado_hidro.to_dict('records') if not df_editado_hidro.empty else []
-                        if ctx_at.get('grid_w') and ctx_at.get('grid_h'):
-                            novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at) if modo_visualizacao != "Apenas Elétrica" else []
-                            novas_el = rotear_eletrica(ctx_at['df_eletrica'], ctx_at) if modo_visualizacao != "Apenas Hidrossanitário" else []
-                            st.session_state.linhas_3d_master['hidro'] = novas_hd
-                            st.session_state.linhas_3d_master['eletrica'] = novas_el
-                            st.session_state.quantitativos_master = gerar_quantitativos_totais_bim(
-                                novas_el, novas_hd, st.session_state.circuitos, ctx_at['df_eletrica'], ctx_at['df_hidro']
-                            )
-
-                        # 5. Atualiza Tabela de Pressões Hidráulicas (Aba 4)
-                        if st.session_state.get("pontos_hidro"):
-                            z_res_mca = float(ctx_at.get("max_z_cobertura", 3.0)) + float(ctx_at.get("altura_caixa", 1.5))
-                            for pt_h_row in st.session_state.pontos_hidro:
-                                if str(pt_h_row.get("ID")) in ids_afetar:
-                                    b_ref = next((b for b in ctx_at['df_hidro'] if str(b['ID_CAD']) == str(pt_h_row.get("ID"))), None)
-                                    z_b = float(b_ref.get('z_base', 0.0)) if b_ref else 0.0
-                                    novo_z_abs = round(z_b + novo_z_cmd, 2)
-                                    pt_h_row["z"] = novo_z_abs
-                                    if float(pt_h_row.get("Peso (NBR 5626)", 0.0)) > 0:
-                                        p_est = max(1.5, z_res_mca - novo_z_abs)
-                                        perda = float(pt_h_row.get("Perda Carga (m.c.a.)", 0.0))
-                                        pt_h_row["Pressão Estática (m.c.a.)"] = round(p_est, 1)
-                                        pt_h_row["Pressão Disp. (kPa)"] = round(max(0.0, p_est - perda) * 9.81, 1)
-
+                        novas_hd = rotear_hidro(ctx_at['df_hidro'], ctx_at) if modo_visualizacao != "Apenas Elétrica" else []
+                        st.session_state.linhas_3d_master['hidro'] = novas_hd
                         st.session_state["sync_version"] = st.session_state.get("sync_version", 0) + 1
                         st.cache_data.clear()
-                        st.toast(f"✅ Altura Z = {novo_z_cmd:.2f}m aplicada em {len(ids_afetar)} ponto(s) em todo o projeto!", icon="📏")
+                        st.toast(f"✅ Altura Z = {novo_z_cmd:.2f}m aplicada em {len(ids_afetar)} ponto(s)!", icon="📏")
                         st.rerun()
 
             grupos_legenda_usados = set()
@@ -5209,15 +4990,7 @@ with tab_bim:
                             line=dict(color=linha['cor'], width=5),
                             customdata=[id_ref_el for _ in pts],
                             name=nome_grp, legendgroup='rede_eletrica', showlegend=mostrar_leg,
-                            hovertext=f"Elétrica ({fios_txt}) | Bloco: {id_ref_el} | L={linha.get('comprimento_m',0)}m", hoverinfo="text"
-                        ))
-                    if mostrar_fios and len(pts) >= 2:
-                        p_mid = pts[len(pts) // 2]
-                        fig.add_trace(go.Scatter3d(
-                            x=[p_mid[0]], y=[p_mid[1]], z=[p_mid[2] + 0.15],
-                            mode='text', text=[fios_txt], textposition="top center",
-                            textfont=dict(color="black", size=11, family="Arial Black"),
-                            legendgroup='rede_eletrica', showlegend=False, hoverinfo='skip'
+                            hovertext=f"Elétrica ({fios_txt}) | Bloco: {id_ref_el}", hoverinfo="text"
                         ))
 
             if modo_visualizacao in ["Unificado (Elétrica + Hidráulica)", "Apenas Hidrossanitário"]:
@@ -5244,7 +5017,7 @@ with tab_bim:
                             line=dict(color=linha['cor'], width=6),
                             customdata=[id_ref_hd for _ in pts],
                             name=nome_grp, legendgroup=grp_id, showlegend=mostrar_leg,
-                            hovertext=f"{tipo_raw} (DN {dn_val}mm) | Bloco: {id_ref_hd}", hoverinfo="text"
+                            hovertext=f"{tipo_raw} (DN {dn_val}mm)", hoverinfo="text"
                         ))
 
             if df_el_ctx:
@@ -5254,24 +5027,44 @@ with tab_bim:
                     z=[b['z_base'] + float(b.get('z_relativo', 1.3)) for b in df_el_ctx],
                     mode='markers',
                     customdata=[str(b['ID_CAD']) for b in df_el_ctx],
-                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b.get('Nome_Bloco','')}<br>Altura z_relativo: {float(b.get('z_relativo',1.3)):.2f}m<br>🖱️ Clique Esquerdo: Editar Altura Z" for b in df_el_ctx],
+                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b.get('Nome_Bloco','')}<br>Altura z: {float(b.get('z_relativo',1.3)):.2f}m" for b in df_el_ctx],
                     hoverinfo="text",
                     marker=dict(size=7, color=['red' if 'Quadro' in b['Tipo_BIM'] else 'gold' if 'Luminária' in b['Tipo_BIM'] else 'green' for b in df_el_ctx]),
-                    name="🔌 Pontos Elétricos (Clique Esq. = Editar Z)"
+                    name="🔌 Pontos Elétricos"
                 ))
 
+            # SEPARA OS PONTOS DE ÁGUA (FRIA/QUENTE) DOS PONTOS DE ESGOTO PARA LIGAR/DESLIGAR NA LEGENDA 3D!
             if df_h_proc:
-                fig.add_trace(go.Scatter3d(
-                    x=[b['x'] for b in df_h_proc],
-                    y=[b['y'] for b in df_h_proc],
-                    z=[b['z_base'] + float(b.get('z_relativo', 0.5)) for b in df_h_proc],
-                    mode='markers',
-                    customdata=[str(b['ID_CAD']) for b in df_h_proc],
-                    hovertext=[f"<b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']} ({b['Tipo_BIM']})<br>Altura z_relativo: {float(b.get('z_relativo',0.5)):.2f}m<br>🖱️ Clique Esquerdo: Editar Altura Z" for b in df_h_proc],
-                    hoverinfo="text",
-                    marker=dict(size=6, color='#0ea5e9', symbol='circle'),
-                    name="🚰 Pontos Hidrossanitários (Clique Esq. = Editar Z)"
-                ))
+                pts_agua_3d = [b for b in df_h_proc if not eh_ponto_esgoto_bim(b) and b.get('Tipo_BIM') != "Caixa d'Água"]
+                pts_esgoto_3d = [b for b in df_h_proc if eh_ponto_esgoto_bim(b)]
+
+                if pts_agua_3d:
+                    fig.add_trace(go.Scatter3d(
+                        x=[b['x'] for b in pts_agua_3d],
+                        y=[b['y'] for b in pts_agua_3d],
+                        z=[b['z_base'] + float(b.get('z_relativo', 0.5)) for b in pts_agua_3d],
+                        mode='markers',
+                        customdata=[str(b['ID_CAD']) for b in pts_agua_3d],
+                        hovertext=[f"💧 <b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']}<br>Altura z: {float(b.get('z_relativo',0.5)):.2f}m" for b in pts_agua_3d],
+                        hoverinfo="text",
+                        marker=dict(size=6.5, color='#0ea5e9', symbol='circle', line=dict(width=1, color='#0369a1')),
+                        name="💧 Pontos de Água (Fria / Quente)",
+                        legendgroup="pontos_agua_3d"
+                    ))
+
+                if pts_esgoto_3d:
+                    fig.add_trace(go.Scatter3d(
+                        x=[b['x'] for b in pts_esgoto_3d],
+                        y=[b['y'] for b in pts_esgoto_3d],
+                        z=[b['z_base'] + float(b.get('z_relativo', -0.15)) for b in pts_esgoto_3d],
+                        mode='markers',
+                        customdata=[str(b['ID_CAD']) for b in pts_esgoto_3d],
+                        hovertext=[f"🤎 <b>{b['ID_CAD']}</b> | {b['Nome_Bloco']}<br>Eq: {b['Equipamento']}<br>Altura z: {float(b.get('z_relativo',-0.15)):.2f}m" for b in pts_esgoto_3d],
+                        hoverinfo="text",
+                        marker=dict(size=6.5, color='#d97706', symbol='circle', line=dict(width=1, color='#78350f')),
+                        name="🤎 Pontos de Esgoto e Sanitários",
+                        legendgroup="pontos_esgoto_3d"
+                    ))
 
             cx_box = next((b for b in df_h_proc if b['Tipo_BIM'] == 'Caixa d\'Água'), None)
             if cx_box:
@@ -5280,12 +5073,16 @@ with tab_bim:
                     z=[cx_box['z_base'] + float(cx_box.get('z_relativo', st.session_state.contexto_bim.get('altura_caixa', 1.5)))],
                     mode='markers',
                     customdata=[str(cx_box['ID_CAD'])],
+                    hovertext=[f"🟦 <b>{cx_box['ID_CAD']}</b> (Caixa d'Água)<br>Altura z: {float(cx_box.get('z_relativo',1.5)):.2f}m"],
+                    hoverinfo="text",
                     marker=dict(size=18, color='#1d4ed8', symbol='square'),
                     name='🟦 Caixa d\'Água Superior'
                 ))
 
             fig.update_layout(
+                uirevision='manter_camera_3d_ativa',
                 scene=dict(
+                    uirevision='manter_camera_3d_ativa',
                     dragmode='turntable',
                     aspectmode='data',
                     bgcolor='#f8fafc',
@@ -5305,10 +5102,9 @@ with tab_bim:
                 height=780, margin=dict(l=0, r=0, b=0, t=0)
             )
 
-            st.caption("🖱️ **Controles do Mouse no 3D:** **Botão Central (Clique no Scroll + Arrastar)** = Orbitar Maquete | **Botão Direito + Arrastar** = Pan (Mover) | **Roda do Scroll** = Zoom | **Clique Esquerdo sobre um Bloco/Tubo** = Abre Caixa Flutuante de Edição do Eixo Z")
+            st.caption("🖱️ **Controles 3D:** **Clique no Scroll + Arrastar** = Orbitar | **Botão Direito + Arrastar** = Mover (Pan) | **Clique Esquerdo nos Pontos** = Interliga os blocos em sequência (`P1 ➔ P2 ➔ P3...`) ou Edita a Altura Z (conforme modo na barra sobre o gráfico)")
             st.plotly_chart(fig, use_container_width=True, key="grafico_3d_interativo_bim")
 
-            # Ponte invisível de comunicação instantânea entre o Popup Flutuante 3D e o Python
             st.markdown(
                 """
                 <style>
@@ -5329,18 +5125,19 @@ with tab_bim:
             )
             st.text_input("BRIDGE_Z3D_INPUT", key="bridge_z3d_input", label_visibility="collapsed")
 
-            # Empacota metadados de todos os blocos 3D para o Popup Flutuante exibir Nome, Equipamento, Contagens e Altura Z atual
             mapa_meta_3d = {}
             todos_b3d = df_el_ctx + df_h_proc
             for b in todos_b3d:
                 id_b = str(b['ID_CAD'])
                 nb_b = str(b.get('Nome_Bloco', id_b))
                 eq_b = str(b.get('Equipamento', b.get('Equipamento_Associado', '')))
+                eh_esg_b = eh_ponto_esgoto_bim(b) if b in df_h_proc else False
                 mapa_meta_3d[id_b] = {
                     "id": id_b,
                     "nome": nb_b,
                     "equip": eq_b,
                     "funcao": str(b.get('Tipo_BIM', '')),
+                    "eh_esgoto": eh_esg_b,
                     "x": round(float(b.get('x', 0.0)), 3),
                     "y": round(float(b.get('y', 0.0)), 3),
                     "z_base": round(float(b.get('z_base', 0.0)), 3),
@@ -5351,7 +5148,6 @@ with tab_bim:
 
             json_meta_3d = json.dumps(mapa_meta_3d)
 
-            # Injeção do Controlador 3D: Botão do Meio (Scroll) = Orbitar | Clique Esquerdo = Abre Modal Flutuante de Altura Z
             components.html(
                 f"""
                 <script>
@@ -5361,7 +5157,100 @@ with tab_bim:
                     const blocosMeta = {json_meta_3d};
                     parentWin.__blocosMeta3D = blocosMeta;
 
-                    // 1. Cria o Modal Flutuante de Edição de Altura (Eixo Z) sobre a tela 3D
+                    if (!parentWin.__modoClique3D) parentWin.__modoClique3D = 'CHAIN';
+                    if (!parentWin.__pontoAnteriorChain3D) parentWin.__pontoAnteriorChain3D = null;
+                    if (!parentWin.__paresTraced3D) parentWin.__paresTraced3D = [];
+
+                    function enviarPayloadParaStreamlit(payload) {{
+                        const inputBridge = parentDoc.querySelector('input[aria-label="BRIDGE_Z3D_INPUT"]');
+                        if (inputBridge) {{
+                            const setter = Object.getOwnPropertyDescriptor(parentWin.HTMLInputElement.prototype, 'value').set;
+                            inputBridge.focus();
+                            setter.call(inputBridge, payload);
+                            inputBridge.dispatchEvent(new parentWin.Event('input', {{ bubbles: true }}));
+                            inputBridge.dispatchEvent(new parentWin.Event('change', {{ bubbles: true }}));
+                            inputBridge.dispatchEvent(new parentWin.KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
+                            inputBridge.blur();
+                        }}
+                    }}
+
+                    // 1. Cria a Barra Flutuante (HUD) para Traçado em Sequência (P1 -> P2 -> P3) e Alternância p/ Eixo Z
+                    let hudBar = parentDoc.getElementById('bim-hud-chain3d');
+                    if (!hudBar) {{
+                        hudBar = parentDoc.createElement('div');
+                        hudBar.id = 'bim-hud-chain3d';
+                        hudBar.style.cssText = 'position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.95); color:#f8fafc; border:2px solid #38bdf8; border-radius:10px; padding:10px 16px; z-index:999990; box-shadow:0 10px 30px rgba(0,0,0,0.6); font-family:sans-serif; font-size:13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;';
+                        parentDoc.body.appendChild(hudBar);
+                    }}
+
+                    parentWin.__setModo3D = function(novoModo) {{
+                        parentWin.__modoClique3D = novoModo;
+                        parentWin.__atualizarHud3D();
+                    }};
+
+                    parentWin.__novaLinha3D = function() {{
+                        parentWin.__pontoAnteriorChain3D = null;
+                        parentWin.__atualizarHud3D();
+                    }};
+
+                    parentWin.__salvarChain3D = function() {{
+                        if (!parentWin.__paresTraced3D || parentWin.__paresTraced3D.length === 0) return;
+                        const selDn = parentDoc.getElementById('bim-hud-dn');
+                        const dnVal = selDn ? selDn.value : '0';
+                        const payload = 'CHAIN|' + parentWin.__paresTraced3D.join(',') + '|' + dnVal + '|' + Date.now();
+                        parentWin.__paresTraced3D = [];
+                        parentWin.__pontoAnteriorChain3D = null;
+                        parentWin.__atualizarHud3D();
+                        enviarPayloadParaStreamlit(payload);
+                    }};
+
+                    parentWin.__atualizarHud3D = function() {{
+                        const m = parentWin.__modoClique3D;
+                        const ptAnt = parentWin.__pontoAnteriorChain3D;
+                        const qtdNovos = parentWin.__paresTraced3D ? parentWin.__paresTraced3D.length : 0;
+                        const infoAnt = ptAnt && parentWin.__blocosMeta3D[ptAnt] ? `${{ptAnt}} (${{parentWin.__blocosMeta3D[ptAnt].nome}})` : 'Nenhum (Clique no 1º bloco p/ iniciar)';
+
+                        hudBar.innerHTML = `
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <button onclick="window.__setModo3D('CHAIN')" style="background:${{m==='CHAIN'?'#0284c7':'#334155'}}; color:white; border:none; border-radius:6px; padding:7px 11px; cursor:pointer; font-weight:bold;">🔗 Traçar Linha (P1 ➔ P2 ➔ P3)</button>
+                                <button onclick="window.__setModo3D('Z')" style="background:${{m==='Z'?'#d97706':'#334155'}}; color:white; border:none; border-radius:6px; padding:7px 11px; cursor:pointer; font-weight:bold;">📏 Editar Altura (Eixo Z)</button>
+                            </div>
+                            ${{m === 'CHAIN' ? `
+                                <div style="border-left:1px solid #475569; padding-left:10px; display:flex; align-items:center; gap:10px;">
+                                    <span>📍 <b>Último Ponto:</b> <code style="color:#fde047;">${{infoAnt}}</code></span>
+                                    <select id="bim-hud-dn" style="background:#1e293b; color:white; border:1px solid #475569; border-radius:5px; padding:5px;">
+                                        <option value="0">Ø Auto ABNT</option>
+                                        <option value="20">Ø 20mm</option>
+                                        <option value="25">Ø 25mm</option>
+                                        <option value="32">Ø 32mm</option>
+                                        <option value="40">Ø 40mm</option>
+                                        <option value="50">Ø 50mm</option>
+                                        <option value="75">Ø 75mm</option>
+                                        <option value="100">Ø 100mm</option>
+                                    </select>
+                                    <button onclick="window.__novaLinha3D()" title="Atalho: Tecla ESC" style="background:#475569; color:white; border:none; border-radius:6px; padding:7px 10px; cursor:pointer;">✂️ Nova Linha (ESC)</button>
+                                    <button onclick="window.__salvarChain3D()" style="background:${{qtdNovos>0?'#16a34a':'#1e293b'}}; color:white; border:1px solid #22c55e; border-radius:6px; padding:7px 13px; cursor:pointer; font-weight:bold;">💾 Gravar ${{qtdNovos}} Trecho(s) no Projeto</button>
+                                </div>
+                            ` : `
+                                <div style="border-left:1px solid #475569; padding-left:10px; color:#fde047;">
+                                    🖱️ Clique com o botão esquerdo em qualquer bloco no 3D para abrir a janela de Altura (Eixo Z).
+                                </div>
+                            `}}
+                        `;
+                    }};
+                    parentWin.__atualizarHud3D();
+
+                    // Atalho Tecla ESC para encerrar a linha atual e iniciar outro ramal
+                    if (!parentWin.__escListener3D) {{
+                        parentWin.__escListener3D = true;
+                        parentWin.addEventListener('keydown', function(e) {{
+                            if (e.key === 'Escape') {{
+                                parentWin.__novaLinha3D();
+                            }}
+                        }});
+                    }}
+
+                    // 2. Modal de Edição de Altura (Eixo Z)
                     let modalZ = parentDoc.getElementById('bim-modal-z3d');
                     if (!modalZ) {{
                         modalZ = parentDoc.createElement('div');
@@ -5382,16 +5271,7 @@ with tab_bim:
                             if (r.checked) {{ escopo = r.value; break; }}
                         }}
                         const payload = idAlvo + '|' + valZ + '|' + escopo + '|' + Date.now();
-                        const inputBridge = parentDoc.querySelector('input[aria-label="BRIDGE_Z3D_INPUT"]');
-                        if (inputBridge) {{
-                            const setter = Object.getOwnPropertyDescriptor(parentWin.HTMLInputElement.prototype, 'value').set;
-                            inputBridge.focus();
-                            setter.call(inputBridge, payload);
-                            inputBridge.dispatchEvent(new parentWin.Event('input', {{ bubbles: true }}));
-                            inputBridge.dispatchEvent(new parentWin.Event('change', {{ bubbles: true }}));
-                            inputBridge.dispatchEvent(new parentWin.KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-                            inputBridge.blur();
-                        }}
+                        enviarPayloadParaStreamlit(payload);
                         modalZ.style.display = 'none';
                     }};
 
@@ -5429,20 +5309,62 @@ with tab_bim:
                                 </label>
                             </div>
                             <div style="display:flex; gap:10px;">
-                                <button onclick="window.__aplicarModalZ3D('${{info.id}}')" style="flex:2; background:#0284c7; color:white; border:none; border-radius:8px; padding:11px; font-size:14px; font-weight:bold; cursor:pointer;">💾 Salvar e Atualizar Tudo (3D, 2D e Tabelas)</button>
+                                <button onclick="window.__aplicarModalZ3D('${{info.id}}')" style="flex:2; background:#0284c7; color:white; border:none; border-radius:8px; padding:11px; font-size:14px; font-weight:bold; cursor:pointer;">💾 Salvar e Atualizar Tudo</button>
                                 <button onclick="window.__fecharModalZ3D()" style="flex:0.8; background:#475569; color:white; border:none; border-radius:8px; padding:11px; font-size:13px; cursor:pointer;">Cancelar</button>
                             </div>
                         `;
                         modalZ.style.display = 'block';
-                        setTimeout(() => {{
-                            const inp = parentDoc.getElementById('bim-input-z-val');
-                            if (inp) {{ inp.focus(); inp.select(); }}
-                        }}, 40);
                     }}
 
-                    // 2. Localiza o gráfico 3D do Plotly e configura:
-                    //    - Botão do Meio (Scroll Click, button===1) => Orbitar
-                    //    - Botão Esquerdo (button===0) => Não orbita; clica no ponto e abre o Modal de Eixo Z!
+                    // 3. Desenha instantaneamente o tubo 3D na tela a cada clique em sequência (sem resetar a câmera!)
+                    function processarCliqueNoBloco3D(plot3d, idClicado) {{
+                        if (!idClicado || !parentWin.__blocosMeta3D[idClicado]) return;
+
+                        if (parentWin.__modoClique3D === 'Z') {{
+                            abrirModalZ3D(idClicado);
+                            return;
+                        }}
+
+                        const idAnt = parentWin.__pontoAnteriorChain3D;
+                        if (!idAnt) {{
+                            parentWin.__pontoAnteriorChain3D = idClicado;
+                            parentWin.__atualizarHud3D();
+                            return;
+                        }}
+
+                        if (idAnt === idClicado) return;
+
+                        const b1 = parentWin.__blocosMeta3D[idAnt];
+                        const b2 = parentWin.__blocosMeta3D[idClicado];
+                        if (b1 && b2 && parentWin.Plotly) {{
+                            const z1 = b1.z_base + b1.z_rel;
+                            const z2 = b2.z_base + b2.z_rel;
+                            const ehEsg = b1.eh_esgoto || b2.eh_esgoto;
+                            let xs, ys, zs;
+                            if (ehEsg || Math.hypot(b2.x - b1.x, b2.y - b1.y) < 0.08) {{
+                                xs = [b1.x, b2.x];
+                                ys = [b1.y, b2.y];
+                                zs = [z1, z2];
+                            }} else {{
+                                xs = [b1.x, b2.x, b2.x];
+                                ys = [b1.y, b2.y, b2.y];
+                                zs = [z1, z1, z2];
+                            }}
+                            parentWin.Plotly.addTraces(plot3d, [{{
+                                type: 'scatter3d',
+                                mode: 'lines+markers',
+                                x: xs, y: ys, z: zs,
+                                line: {{ color: ehEsg ? '#d97706' : '#0284c7', width: 7 }},
+                                marker: {{ size: 4, color: '#22c55e' }},
+                                name: `🔗 ${{idAnt}} ➔ ${{idClicado}}`
+                            }}]);
+                        }}
+
+                        parentWin.__paresTraced3D.push(idAnt + '>' + idClicado);
+                        parentWin.__pontoAnteriorChain3D = idClicado;
+                        parentWin.__atualizarHud3D();
+                    }}
+
                     function configurarMouse3D() {{
                         const plots = parentDoc.querySelectorAll('.js-plotly-plot');
                         let plot3d = null;
@@ -5464,6 +5386,7 @@ with tab_bim:
                         let isMmbOrbiting = false;
                         let mmbCanvas = null;
                         let lmbDownPos = null;
+                        let ultimoCliqueTs = 0;
 
                         function resolverIdDoPontoPlotly(pt) {{
                             if (!pt) return null;
@@ -5497,16 +5420,17 @@ with tab_bim:
                                 if (isMmbOrbiting) return;
                                 if (data && data.points && data.points.length > 0) {{
                                     const idC = resolverIdDoPontoPlotly(data.points[0]) || ultimoHoverId;
-                                    if (idC) abrirModalZ3D(idC);
+                                    if (idC && (Date.now() - ultimoCliqueTs > 180)) {{
+                                        ultimoCliqueTs = Date.now();
+                                        processarCliqueNoBloco3D(plot3d, idC);
+                                    }}
                                 }}
                             }});
                         }}
 
-                        // Intercepta Mousedown na cena 3D (Fase de Captura)
                         glContainer.addEventListener('mousedown', function(e) {{
                             if (e._isSyntheticMmb) return;
 
-                            // BOTÃO CENTRAL DO MOUSE (Clique no Scroll, button === 1) => ORBITAR!
                             if (e.button === 1) {{
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -5527,13 +5451,11 @@ with tab_bim:
                                 return;
                             }}
 
-                            // BOTÃO ESQUERDO DO MOUSE (button === 0) => APENAS SELECIONAR BLOCO (Não orbitar)
                             if (e.button === 0) {{
-                                lmbDownPos = {{ x: e.clientX, y: e.clientY, t: Date.now() }};
+                                lmbDownPos = {{ x: e.clientX, y: e.clientY }};
                             }}
                         }}, true);
 
-                        // Intercepta Mousemove na janela para converter arrasto do Botão Central em Orbit e bloquear Orbit no Botão Esquerdo
                         parentWin.addEventListener('mousemove', function(e) {{
                             if (e._isSyntheticMmb) return;
 
@@ -5563,7 +5485,6 @@ with tab_bim:
                                 return;
                             }}
 
-                            // Se o usuário estiver segurando o botão esquerdo na maquete 3D, impede que ela orbite
                             if (lmbDownPos && (e.buttons & 1) === 1) {{
                                 e.stopPropagation();
                                 e.stopImmediatePropagation();
@@ -5593,18 +5514,17 @@ with tab_bim:
                             if (e.button === 0 && lmbDownPos) {{
                                 const distClique = Math.hypot(e.clientX - lmbDownPos.x, e.clientY - lmbDownPos.y);
                                 lmbDownPos = null;
-                                // Fallback: se clicou com botão esquerdo sobre um ponto/tubo com tooltip ativo, abre o Modal Z!
-                                if (distClique < 8 && ultimoHoverId) {{
+                                if (distClique < 8 && ultimoHoverId && (Date.now() - ultimoCliqueTs > 180)) {{
                                     setTimeout(() => {{
-                                        if (modalZ.style.display !== 'block' && ultimoHoverId) {{
-                                            abrirModalZ3D(ultimoHoverId);
+                                        if (Date.now() - ultimoCliqueTs > 180 && ultimoHoverId) {{
+                                            ultimoCliqueTs = Date.now();
+                                            processarCliqueNoBloco3D(plot3d, ultimoHoverId);
                                         }}
-                                    }}, 60);
+                                    }}, 50);
                                 }}
                             }}
                         }}, true);
 
-                        // Impede o ícone de auto-rolagem do navegador ao clicar com o scroll no 3D
                         glContainer.addEventListener('auxclick', function(e) {{
                             if (e.button === 1) {{
                                 e.preventDefault();
